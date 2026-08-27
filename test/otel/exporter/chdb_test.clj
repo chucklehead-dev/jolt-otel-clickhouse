@@ -3,6 +3,7 @@
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-property-test :as property]
             [otel.logs :as logs]
             [otel.metrics :as metrics]
             [otel.resource :as resource]
@@ -78,6 +79,10 @@
            (:signal (ex-data (chdb-export/last-error exporter))))
     (check "declared signal still owns shutdown" true
            (export/shutdown-exporter! exporter)))
+  (doseq [{:keys [label result]} (property/run-properties!)]
+    (println "  hegel" label "seed" (:seed result))
+    (check (str "Hegel " label) true (:passed? result))
+    (check (str "Hegel " label " is deterministic") false (:flaky? result)))
   (if (zero? @failures)
     (println "all checks passed")
     (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
