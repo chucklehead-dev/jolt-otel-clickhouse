@@ -1,0 +1,7 @@
+{:paths ["src"]
+ :deps {io.github.jolt-lang/chdb {:local/root "/home/chuck/ai-src/jolt-chdb"}
+        io.github.jolt-lang/otel {:local/root "/home/chuck/ai-src/jolt-otel"}
+        org.clojure/data.json {:local/root "/home/chuck/ai-src/data.json"}}
+ :aliases {:test {:extra-paths ["test"]
+                  :main-opts ["-m" "otel.exporter.chdb-test"]}}
+ :tasks {test "jolt -M:test"}}
