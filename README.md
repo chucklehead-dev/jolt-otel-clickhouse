@@ -5,6 +5,29 @@ uses ClickStack's correlation and search column names (`TraceId`, `SpanId`,
 `ParentSpanId`, `ServiceName`, `SpanName`, `Duration`, `Body`, and attribute
 maps), so the demo and later ClickStack integration share the same query model.
 
+## Install
+
+Pin the exact commit you have reviewed:
+
+```clojure
+{:deps
+ {io.github.chucklehead-dev/jolt-otel-clickhouse
+  {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+   :git/sha "<full-commit-sha>"}}}
+```
+
+The placeholder must be replaced with a full 40-character commit SHA. The
+library also pins exact commits of `jolt-chdb`, `jolt-otel`, and `data.json`;
+aliases from those Git dependencies do not propagate to applications. Install
+the chDB native library explicitly with:
+
+```sh
+jolt -m jdbc.chdb.install
+```
+
+Set `JOLT_CHDB_LIB` instead when using an already installed compatible
+`libchdb`.
+
 ```clojure
 (def exporter (otel.exporter.chdb/exporter {:db-spec "chdb:telemetry.chdb"}))
 (def telemetry (otel.sdk/init! {:service-name "agent"
@@ -145,3 +168,12 @@ queries are individually capped, so a successful call returns at most
 pinned metric tables store `TimeUnix` at whole-second precision, so metric
 window membership is necessarily evaluated at that stored precision; trace and
 log windows retain their `DateTime64(9)` nanosecond precision.
+
+## Development and releases
+
+Use Jolt v0.7.27 or newer. Install the pinned native dependencies, then run
+`jolt -M:test`. A release is an immutable Git tag pointing at a commit for
+which the test workflow passed; consumers should continue to pin that commit
+SHA even when also recording the tag.
+
+This project is licensed under the Eclipse Public License 2.0; see `LICENSE`.

@@ -1,0 +1,37 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      JOLT_CACHE_DIR: ${{ github.workspace }}/.jolt-cache-v0.7.27
+      JOLT_GITLIBS_DIR: ${{ github.workspace }}/.jolt-gitlibs-v0.7.27
+      HEGEL_CACHE_DIR: ${{ github.workspace }}/.hegel-native
+      JOLT_CHDB_CACHE_DIR: ${{ github.workspace }}/.chdb-native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Jolt v0.7.27
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/jolt-bin"
+          curl -fsSL https://raw.githubusercontent.com/jolt-lang/jolt/v0.7.27/install \
+            | bash -s -- --dir "$install_dir" --version 0.7.27
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Assert Jolt version
+        shell: bash
+        run: test "$(jolt --version)" = "jolt v0.7.27"
+      - name: Install native test dependencies
+        run: |
+          set -euo pipefail
+          jolt -Srepro -m jdbc.chdb.install
+          jolt -Srepro -A:test -m hegel.install
+      - name: Test
+        run: jolt -Srepro -M:test
