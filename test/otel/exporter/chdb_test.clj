@@ -37,6 +37,9 @@
       (str/replace #"LowCardinality\(([^()]*)\)" "$1")
       (str/replace #"\s+" "")))
 
+(defn- normalize-describe-type [type]
+  (str/replace type #"\s+" ""))
+
 (def clickstack-trace-types
   {"Timestamp" "DateTime64(9)"
    "TraceId" "String" "SpanId" "String" "ParentSpanId" "String"
@@ -69,6 +72,23 @@
            (mapv (fn [column] [column (get actual column)])
                  schema/clickstack-trace-insert-columns))))
 
+(defn- run-clickstack-log-schema-checks [conn]
+  (let [described (jdbc/fetch conn "describe table otel_logs")
+        actual (into {} (map (fn [{:keys [name type]}]
+                               [name (normalize-describe-type type)]))
+                     described)
+        expected (mapv (fn [column]
+                         [column (get schema/clickstack-log-insert-types column)])
+                       schema/clickstack-log-insert-columns)]
+    (check "all official ClickStack log insert columns exist"
+           schema/clickstack-log-insert-columns
+           (filterv #(contains? actual %)
+                    schema/clickstack-log-insert-columns))
+    (check "ClickStack log insert types match the pinned collector"
+           expected
+           (mapv (fn [column] [column (get actual column)])
+                 schema/clickstack-log-insert-columns))))
+
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
   (with-open [conn (jdbc/connection "chdb::memory:")]
@@ -77,11 +97,13 @@
     (let [applied (jdbc/fetch conn
                               "select Version, Name, Checksum
                                  from otel_schema_migrations order by Version")]
-      (check "fresh database records migrations v1 and v2" [1 2] (mapv :version applied))
+      (check "fresh database records migrations v1 through v3" [1 2 3]
+             (mapv :version applied))
       (check "migration names are durable"
-             ["initial-otel-tables" "clickstack-trace-nested-and-lookup"]
+             ["initial-otel-tables" "clickstack-trace-nested-and-lookup"
+              "clickstack-log-insert-types"]
              (mapv :name applied))
-      (check "migration checksums are SHA-256" [64 64]
+      (check "migration checksums are SHA-256" [64 64 64]
              (mapv #(count (:checksum %)) applied))))
 
   (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
@@ -93,7 +115,7 @@
         (schema/migrate! conn))
       (with-open [conn (jdbc/connection db-spec)]
         (schema/migrate! conn)
-        (check "persistent database reopen keeps both migration records" 2
+        (check "persistent database reopen keeps all migration records" 3
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations"))))
       (finally
@@ -121,7 +143,7 @@
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (schema/migrate! conn)
-      (check "retry records both migrations exactly once" 2
+      (check "retry records all migrations exactly once" 3
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (check "retry completed the interrupted table" 1
@@ -151,11 +173,61 @@
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
       (schema/migrate! conn)
-      (check "partial v2 retry records v2 once" [1 2]
+      (check "partial v2 retry records remaining migrations once" [1 2 3]
              (mapv :version
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
       (run-clickstack-trace-schema-checks conn)))
+
+  ;; v3 is an in-place sequence of idempotent type/codec changes. A partial
+  ;; application is not recorded and retry must converge without changing the
+  ;; immutable v1/v2 history.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (let [execute! jdbc/execute!
+          failed? (atom false)
+          failure
+          (with-redefs [jdbc/execute!
+                        (fn
+                          ([connection statement]
+                           (if (and (= statement schema/log-resource-attributes-ddl)
+                                    (compare-and-set! failed? false true))
+                             (throw (ex-info "injected v3 migration failure" {}))
+                             (execute! connection statement)))
+                          ([connection statement options]
+                           (execute! connection statement options)))]
+            (thrown-data #(schema/migrate! conn)))]
+      (check "partial v3 failure identifies version" 3 (:version failure))
+      (check "partial v3 leaves v1/v2 recorded" [1 2]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (schema/migrate! conn)
+      (check "partial v3 retry records v3 once" [1 2 3]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (run-clickstack-log-schema-checks conn)))
+
+  ;; Exercise the v3 DDL against data shaped by the immutable v1 table, rather
+  ;; than proving type changes only on an empty fresh database.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (jdbc/execute! conn schema/logs-ddl)
+    (jdbc/execute!
+     conn
+     "insert into otel_logs
+        (Timestamp, Body, ResourceAttributes, LogAttributes)
+        values (fromUnixTimestamp64Nano(1700000000123456789), 'pre-v3',
+                map('service.name', 'legacy'), map('answer', '42'))")
+    (let [statements (:statements (nth schema/migrations 2))]
+      (doseq [statement statements] (jdbc/execute! conn statement))
+      (doseq [statement statements] (jdbc/execute! conn statement)))
+    (check "v3 preserves rows from the v1 physical schema"
+           ["pre-v3" {"service.name" "legacy"} {"answer" "42"}]
+           ((juxt :body :resourceattributes :logattributes)
+            (jdbc/fetch-one conn
+                            "select Body, ResourceAttributes, LogAttributes
+                               from otel_logs")))
+    (run-clickstack-log-schema-checks conn))
 
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (schema/migrate! conn)
@@ -189,7 +261,7 @@
       (check "exporter-owned dbspec selects logical OTel database" "otel"
              (:database (jdbc/fetch-one (:connection exporter)
                                         "select currentDatabase() database")))
-      (check "OTel migration history lives in selected database" 2
+      (check "OTel migration history lives in selected database" 3
              (:n (jdbc/fetch-one (:connection exporter)
                                  "select count() as n from otel_schema_migrations")))
       (check "OTel tables live in selected database" 5
@@ -219,7 +291,7 @@
              "application_otel"
              (:database (jdbc/fetch-one application-otel
                                         "select currentDatabase() database")))
-      (check "application-owned migration history uses selected database" 2
+      (check "application-owned migration history uses selected database" 3
              (:n (jdbc/fetch-one application-otel
                                  "select count() as n from otel_schema_migrations")))
       ;; Shared ownership remains unchanged: exporter shutdown must not close
@@ -233,7 +305,7 @@
     (check "default dbspec behavior remains compatible" "default"
            (:database (jdbc/fetch-one default-conn
                                       "select currentDatabase() database")))
-    (check "default database still receives migration history" 2
+    (check "default database still receives migration history" 3
            (:n (jdbc/fetch-one default-conn
                                "select count() as n from otel_schema_migrations")))))
 
@@ -252,6 +324,7 @@
                              :bridge-logging? false})]
       (try
         (run-clickstack-trace-schema-checks conn)
+        (run-clickstack-log-schema-checks conn)
         (let [linked (trace/span-context
                       {:trace-id "11111111111111111111111111111111"
                        :span-id "2222222222222222"
@@ -276,13 +349,45 @@
           (metrics/record! (metrics/histogram meter "latency" {:boundaries [10.0 100.0]}) 42)
           (check "metric export call succeeds" true
                  (export/export-metrics! exporter r (sdk-metrics/collect! provider))))
+        (check "canonical ClickStack log export succeeds" true
+               (sdk-logs/export-logs!
+                exporter
+                [{:timestamp-unix-nano 0
+                  :observed-time-unix-nano 1700000000123456789
+                  :trace-id "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  :span-id "bbbbbbbbbbbbbbbb"
+                  :trace-flags 257
+                  :severity-text "INFO2"
+                  :severity-number 265
+                  :body {"job" "refresh"}
+                  :event-name "cache.refresh"
+                  :resource (resource/resource
+                             {:service.name "log-worker"
+                              :deployment.environment.name "test"}
+                             {:schema-url "https://example.test/resource/1"})
+                  :scope {:name "demo.events"
+                          :version "2.1"
+                          :schema-url "https://example.test/scope/1"
+                          :attributes {:scope.mode "async"}}
+                  :attributes {:http.status_code 202
+                               :payload {"safe" true}}}]))
         ;; sdk/shutdown! reaches the log and span pipelines separately. Both
         ;; batch queues must drain even after the first signal shuts down.
         (sdk/shutdown! handle)
         (let [spans (jdbc/fetch conn
                                 "select TraceId, SpanId, ParentSpanId, SpanName, ServiceName, SpanAttributes from otel_traces order by Timestamp")
               log (jdbc/fetch-one conn
-                                  "select TraceId, SpanId, Body, ServiceName, SeverityText from otel_logs")
+                                  "select TraceId, SpanId, Body, ServiceName, SeverityText
+                                     from otel_logs where EventName=''")
+              canonical-log
+              (jdbc/fetch-one
+               conn
+               "select toUnixTimestamp64Nano(Timestamp) TimestampNanos,
+                       TraceId, SpanId, TraceFlags, SeverityText, SeverityNumber,
+                       ServiceName, Body, ResourceSchemaUrl, ResourceAttributes,
+                       ScopeSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes,
+                       LogAttributes, EventName
+                  from otel_logs where EventName='cache.refresh'")
               nested (jdbc/fetch-one
                       conn
                       "select `Events.Name` EventNames,
@@ -306,6 +411,31 @@
           (check "log body persisted" "calling upstream" (:body log))
           (check "log/span trace correlation" (:traceid (first spans)) (:traceid log))
           (check "severity uses ClickStack column" "INFO" (:severitytext log))
+          (check "zero event timestamp falls back to observed timestamp"
+                 1700000000123456789 (:timestampnanos canonical-log))
+          (check "log correlation IDs round-trip"
+                 ["aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" "bbbbbbbbbbbbbbbb"]
+                 [(:traceid canonical-log) (:spanid canonical-log)])
+          (check "collector uint8 conversion semantics round-trip" [1 9]
+                 [(:traceflags canonical-log) (:severitynumber canonical-log)])
+          (check "structured body uses pdata-compatible JSON text"
+                 "{\"job\":\"refresh\"}" (:body canonical-log))
+          (check "resource metadata round-trips"
+                 ["log-worker" "https://example.test/resource/1"
+                  {"service.name" "log-worker"
+                   "deployment.environment.name" "test"}]
+                 [(:servicename canonical-log)
+                  (:resourceschemaurl canonical-log)
+                  (:resourceattributes canonical-log)])
+          (check "scope metadata round-trips"
+                 ["https://example.test/scope/1" "demo.events" "2.1"
+                  {"scope.mode" "async"}]
+                 [(:scopeschemaurl canonical-log) (:scopename canonical-log)
+                  (:scopeversion canonical-log) (:scopeattributes canonical-log)])
+          (check "log attributes and EventName round-trip"
+                 [{"http.status_code" "202" "payload" "{\"safe\":true}"}
+                  "cache.refresh"]
+                 [(:logattributes canonical-log) (:eventname canonical-log)])
           (check "nested event name round-trips" ["request.enriched"]
                  (:eventnames nested))
           (check "nested event attributes round-trip" [{"component" "cache"}]
@@ -326,7 +456,7 @@
           (check "trace-ID lookup range is ordered" true
                  (<= (:startunix lookup) (:endunix lookup))))
         (chdb-export/exporter {:connection conn})
-        (check "exporter reopen does not duplicate migration history" 2
+        (check "exporter reopen does not duplicate migration history" 3
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations")))
         (check "ClickStack gauge table" 1

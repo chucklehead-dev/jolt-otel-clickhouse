@@ -11,15 +11,24 @@
   (cond (string? k) k (keyword? k) (subs (str k) 1) :else (str k)))
 
 (defn- value-string [v]
-  (if (or (sequential? v) (map? v)) (json/write-str v) (str v)))
+  (cond
+    (nil? v) ""
+    (or (sequential? v) (map? v)) (json/write-str v)
+    :else (str v)))
 
 (defn- attrs [m]
   (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))
 
-(defn- service-name [resource]
-  (or (get (:attributes resource) "service.name")
-      (get (:attributes resource) :service.name)
-      "unknown_service:jolt"))
+(defn- service-name [resource fallback]
+  (let [attributes (:attributes resource)]
+    (cond
+      (contains? attributes "service.name")
+      (value-string (get attributes "service.name"))
+
+      (contains? attributes :service.name)
+      (value-string (get attributes :service.name))
+
+      :else fallback)))
 
 (defn- timestamp [nanos]
   (let [seconds (quot nanos 1000000000)
@@ -52,6 +61,17 @@
                             links)
    "Links.Attributes" (mapv #(attrs (:attributes %)) links)})
 
+(defn- uint8 [value]
+  ;; pdata values are converted with Go's uint8 cast by the pinned exporter.
+  (bit-and (or value 0) 0xff))
+
+(defn- log-timestamp-nanos [record]
+  ;; pdata falls back to ObservedTimestamp when Timestamp is its zero value.
+  (let [event-time (or (:timestamp-unix-nano record) 0)]
+    (if (zero? event-time)
+      (or (:observed-time-unix-nano record) 0)
+      event-time)))
+
 (defn- span-row [span]
   (let [context (:span-context span)
         scope (:scope span)
@@ -66,7 +86,7 @@
       "TraceState" (trace-state-string (:trace-state context))
       "SpanName" (:name span)
       "SpanKind" (otel-enum-string (:kind span) :internal)
-      "ServiceName" (service-name resource)
+      "ServiceName" (service-name resource "unknown_service:jolt")
       "ResourceAttributes" (attrs (:attributes resource))
       "ScopeName" (or (:name scope) "")
       "ScopeVersion" (or (:version scope) "")
@@ -82,14 +102,15 @@
 (defn- log-row [record]
   (let [scope (:scope record)
         resource (:resource record)]
-    {"Timestamp" (timestamp (or (:timestamp-unix-nano record)
-                                (:observed-time-unix-nano record)))
+    {"Timestamp" (timestamp (log-timestamp-nanos record))
      "TraceId" (or (:trace-id record) "")
      "SpanId" (or (:span-id record) "")
-     "TraceFlags" (or (:trace-flags record) 0)
+     "TraceFlags" (uint8 (:trace-flags record))
      "SeverityText" (or (:severity-text record) "")
-     "SeverityNumber" (or (:severity-number record) 0)
-     "ServiceName" (service-name resource)
+     "SeverityNumber" (uint8 (:severity-number record))
+     ;; The pinned collector's GetServiceName uses an empty missing-value
+     ;; fallback, unlike the embedded span/metric compatibility default.
+     "ServiceName" (service-name resource "")
      "Body" (value-string (:body record))
      "ResourceSchemaUrl" (or (:schema-url resource) "")
      "ResourceAttributes" (attrs (:attributes resource))
@@ -99,6 +120,11 @@
      "ScopeAttributes" (attrs (:attributes scope))
      "LogAttributes" (attrs (:attributes record))
      "EventName" (or (:event-name record) "")}))
+
+(def ^:private log-insert-query
+  (str "insert into otel_logs ("
+       (str/join ", " schema/clickstack-log-insert-columns)
+       ")"))
 
 (defn- chunks [rows]
   (map #(str (json/write-str %) "\n") rows))
@@ -128,7 +154,7 @@
      {"ResourceAttributes" (attrs (:attributes resource))
       "ScopeName" (or (:name scope) "")
       "ScopeVersion" (or (:version scope) "")
-      "ServiceName" (service-name resource)
+      "ServiceName" (service-name resource "unknown_service:jolt")
       "MetricName" (:name metric)
       "MetricDescription" (or (:description metric) "")
       "MetricUnit" (or (:unit metric) "")
@@ -220,7 +246,7 @@
       false
       (try
         (when (seq records)
-          (insert-json-rows! connection "insert into otel_logs"
+          (insert-json-rows! connection log-insert-query
                              (map log-row records)))
         true
         (catch Throwable e

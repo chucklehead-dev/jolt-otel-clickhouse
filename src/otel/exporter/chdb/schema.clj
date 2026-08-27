@@ -105,12 +105,102 @@
        WHERE TraceId != ''
        GROUP BY TraceId")
 
+;; Migration v3 keeps v1's viewer-facing columns and table identity, while
+;; adopting the pinned collector's canonical log insert types and codecs. Each
+;; MODIFY is independently retry-safe because chDB has no DDL transactions.
+(def log-timestamp-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS Timestamp
+     DateTime64(9) CODEC(Delta(8), ZSTD(1))")
+
+(def log-trace-id-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS TraceId
+     String CODEC(ZSTD(1))")
+
+(def log-span-id-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS SpanId
+     String CODEC(ZSTD(1))")
+
+(def log-severity-text-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS SeverityText
+     LowCardinality(String) CODEC(ZSTD(1))")
+
+(def log-service-name-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ServiceName
+     LowCardinality(String) CODEC(ZSTD(1))")
+
+(def log-body-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS Body
+     String CODEC(ZSTD(1))")
+
+(def log-resource-schema-url-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ResourceSchemaUrl
+     LowCardinality(String) CODEC(ZSTD(1))")
+
+(def log-resource-attributes-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ResourceAttributes
+     Map(LowCardinality(String), String) CODEC(ZSTD(1))")
+
+(def log-scope-schema-url-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ScopeSchemaUrl
+     LowCardinality(String) CODEC(ZSTD(1))")
+
+(def log-scope-name-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ScopeName
+     String CODEC(ZSTD(1))")
+
+(def log-scope-version-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ScopeVersion
+     LowCardinality(String) CODEC(ZSTD(1))")
+
+(def log-scope-attributes-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS ScopeAttributes
+     Map(LowCardinality(String), String) CODEC(ZSTD(1))")
+
+(def log-attributes-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS LogAttributes
+     Map(LowCardinality(String), String) CODEC(ZSTD(1))")
+
+(def log-event-name-ddl
+  "ALTER TABLE otel_logs MODIFY COLUMN IF EXISTS EventName
+     String CODEC(ZSTD(1))")
+
 (def clickstack-trace-insert-columns
   ["Timestamp" "TraceId" "SpanId" "ParentSpanId" "TraceState"
    "SpanName" "SpanKind" "ServiceName" "ResourceAttributes" "ScopeName"
    "ScopeVersion" "SpanAttributes" "Duration" "StatusCode" "StatusMessage"
    "Events.Timestamp" "Events.Name" "Events.Attributes" "Links.TraceId"
    "Links.SpanId" "Links.TraceState" "Links.Attributes"])
+
+(def clickstack-log-base-insert-columns
+  "The pinned collector's unconditional log insert columns, in order."
+  ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText"
+   "SeverityNumber" "ServiceName" "Body" "ResourceSchemaUrl"
+   "ResourceAttributes" "ScopeSchemaUrl" "ScopeName" "ScopeVersion"
+   "ScopeAttributes" "LogAttributes"])
+
+(def clickstack-log-insert-columns
+  "The collector base insert plus its EventName schema feature. The embedded
+  schema has always included EventName, so its exporter uses the complete fixed
+  list rather than negotiating the optional column on every open."
+  (conj clickstack-log-base-insert-columns "EventName"))
+
+(def clickstack-log-insert-types
+  {"Timestamp" "DateTime64(9)"
+   "TraceId" "String"
+   "SpanId" "String"
+   "TraceFlags" "UInt8"
+   "SeverityText" "LowCardinality(String)"
+   "SeverityNumber" "UInt8"
+   "ServiceName" "LowCardinality(String)"
+   "Body" "String"
+   "ResourceSchemaUrl" "LowCardinality(String)"
+   "ResourceAttributes" "Map(LowCardinality(String),String)"
+   "ScopeSchemaUrl" "LowCardinality(String)"
+   "ScopeName" "String"
+   "ScopeVersion" "LowCardinality(String)"
+   "ScopeAttributes" "Map(LowCardinality(String),String)"
+   "LogAttributes" "Map(LowCardinality(String),String)"
+   "EventName" "String"})
 
 (def migrations
   "Ordered migration registry. Entries are append-only once released. New
@@ -128,7 +218,23 @@
                  trace-links-trace-state-ddl
                  trace-links-attributes-ddl
                  trace-id-ts-ddl
-                 trace-id-ts-mv-ddl]}])
+                 trace-id-ts-mv-ddl]}
+   {:version 3
+    :name "clickstack-log-insert-types"
+    :statements [log-timestamp-ddl
+                 log-trace-id-ddl
+                 log-span-id-ddl
+                 log-severity-text-ddl
+                 log-service-name-ddl
+                 log-body-ddl
+                 log-resource-schema-url-ddl
+                 log-resource-attributes-ddl
+                 log-scope-schema-url-ddl
+                 log-scope-name-ddl
+                 log-scope-version-ddl
+                 log-scope-attributes-ddl
+                 log-attributes-ddl
+                 log-event-name-ddl]}])
 
 (defn- migration-source [{:keys [statements]}]
   (str/join "\n-- jolt-otel-clickhouse migration statement --\n" statements))

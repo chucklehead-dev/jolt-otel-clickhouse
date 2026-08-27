@@ -1,0 +1,35 @@
+{:source {:repository "https://github.com/open-telemetry/opentelemetry-collector-contrib"
+          :commit "aad2838d6990eb031e7f4913269c3153cb5c2b4a"
+          :files [{:path "exporter/clickhouseexporter/internal/sqltemplates/logs_table.sql"
+                   :sha256 "6312d33a6179b0c07f8238957cb6549fd96da9ac0512f284e4d77faceada6e4f"}
+                  {:path "exporter/clickhouseexporter/internal/sqltemplates/logs_insert.sql"
+                   :sha256 "851b5eb04a037c15812b0e42720532b79ac09bb46c18db348248901dae349284"}
+                  {:path "exporter/clickhouseexporter/exporter_logs.go"
+                   :sha256 "c72c5f7ebcff417fd197a228a6566be2355192641a64ae736594eec08cd7d989"}]}
+ :base-insert-columns ["Timestamp" "TraceId" "SpanId" "TraceFlags"
+                       "SeverityText" "SeverityNumber" "ServiceName" "Body"
+                       "ResourceSchemaUrl" "ResourceAttributes" "ScopeSchemaUrl"
+                       "ScopeName" "ScopeVersion" "ScopeAttributes" "LogAttributes"]
+ :feature-insert-columns ["EventName"]
+ :insert-types {"Timestamp" "DateTime64(9)"
+                "TraceId" "String"
+                "SpanId" "String"
+                "TraceFlags" "UInt8"
+                "SeverityText" "LowCardinality(String)"
+                "SeverityNumber" "UInt8"
+                "ServiceName" "LowCardinality(String)"
+                "Body" "String"
+                "ResourceSchemaUrl" "LowCardinality(String)"
+                "ResourceAttributes" "Map(LowCardinality(String),String)"
+                "ScopeSchemaUrl" "LowCardinality(String)"
+                "ScopeName" "String"
+                "ScopeVersion" "LowCardinality(String)"
+                "ScopeAttributes" "Map(LowCardinality(String),String)"
+                "LogAttributes" "Map(LowCardinality(String),String)"
+                "EventName" "String"}
+ :embedded-v3 {:insert-columns ["Timestamp" "TraceId" "SpanId" "TraceFlags"
+                                "SeverityText" "SeverityNumber" "ServiceName" "Body"
+                                "ResourceSchemaUrl" "ResourceAttributes"
+                                "ScopeSchemaUrl" "ScopeName" "ScopeVersion"
+                                "ScopeAttributes" "LogAttributes" "EventName"]
+               :retained-viewer-columns ["EventName"]}}

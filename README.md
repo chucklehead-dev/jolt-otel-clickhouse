@@ -52,11 +52,15 @@ descriptive `last-error` instead of failing later against a closed connection.
 Migration v2 adds ClickStack's seven physical `Events.*` and `Links.*` Nested
 subcolumns and the `otel_traces_trace_id_ts` lookup table/materialized view.
 Span export fills the parallel arrays and continues filling `EventsJSON` and
-`LinksJSON` for the lightweight embedded viewer. The trace insert column set is
-therefore compatible with the pinned collector trace exporter; trace state and
-span kind/status strings also follow its pdata wire values. This is bounded
-trace parity, not a claim that the log and metric tables are drop-in ClickStack
-schemas: metric exemplars and several resource/scope metadata columns remain.
+`LinksJSON` for the lightweight embedded viewer. Migration v3 normalizes all
+16 embedded log insert columns to the pinned collector's types and codecs. Log
+export uses that explicit column list, including its supported `EventName`
+feature, and follows the collector's timestamp fallback, pdata string, and
+`UInt8` conversion semantics. These are bounded trace/log insert parity, not a
+claim that the physical tables or metric schemas are drop-in ClickStack:
+metric exemplars and several resource/scope metadata columns remain, and the
+embedded log table does not yet mirror ClickStack's partitions, skip indexes,
+materialized Kubernetes columns, TTL, comments, or MergeTree settings.
 
 ## Schema migrations
 
@@ -74,6 +78,13 @@ existing trace tables in place with idempotent `ADD COLUMN IF NOT EXISTS`
 statements, then creates the trace-ID time lookup table and view. Its source
 provenance and exact collector insert column order are recorded in
 `docs/fixtures/clickstack-traces-aad2838d.edn`.
+
+Migration v3 adopts existing log tables in place through retry-safe `MODIFY
+COLUMN IF EXISTS` statements. Its exact source hashes, base/feature insert
+columns, and collector types are recorded in
+`docs/fixtures/clickstack-logs-aad2838d.edn`. The pre-existing `EventName`
+column is retained for the embedded viewer and matches the pinned collector's
+schema-detected optional feature.
 
 Migration history is local to the connection's selected logical database. Each
 logical database is therefore independently initialized and validated.

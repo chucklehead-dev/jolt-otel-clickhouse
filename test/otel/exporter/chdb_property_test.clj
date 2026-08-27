@@ -6,6 +6,7 @@
             [hegel.stateful :as hs]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as sdk-logs]))
 
@@ -91,6 +92,8 @@
                                        :alphabet "0123456789abcdef"}))
            attr-key (h/draw! (g/string {:max-size 24}))
            text (h/draw! (g/string {:max-size 80}))
+           trace-flags (h/draw! (g/integer 0 1024))
+           severity-number (h/draw! (g/integer 0 1024))
            nested [text {"line\nbreak" text}]
            attributes {attr-key nested :plain text}
            event {:name text :timestamp-unix-nano 1000000002
@@ -107,11 +110,15 @@
                  :scope {:name text :version "1"}
                  :resource {:attributes {:service.name text}}
                  :attributes attributes :events [event] :links [link]}
-           log {:timestamp-unix-nano 1000000002
-                :trace-id trace-id :span-id span-id :trace-flags 1
-                :severity-text "INFO" :severity-number 9 :body nested
-                :scope {:name text :attributes attributes}
-                :resource {:attributes {:service.name text}}
+           log {:timestamp-unix-nano 0
+                :observed-time-unix-nano 1000000002
+                :trace-id trace-id :span-id span-id :trace-flags trace-flags
+                :severity-text "INFO" :severity-number severity-number :body nested
+                :event-name text
+                :scope {:name text :version "1" :schema-url "scope-schema"
+                        :attributes attributes}
+                :resource {:schema-url "resource-schema"
+                           :attributes {:service.name text :resource attributes}}
                 :attributes attributes}
            captured (atom [])
            exporter (chdb-export/->ChdbExporter
@@ -134,15 +141,42 @@
        (let [[[span-table span-lines] [log-table log-lines]] @captured
              span-wire (json/read-str (first span-lines))
              log-wire (json/read-str (first log-lines))]
-         (check! (= ["insert into otel_traces" "insert into otel_logs"]
-                    [span-table log-table])
+         (check! (= "insert into otel_traces" span-table)
                  "otel-exporter/table-routing" "signal used the wrong table" {})
+         (check! (= (str "insert into otel_logs ("
+                         (str/join ", " schema/clickstack-log-insert-columns)
+                         ")")
+                    log-table)
+                 "otel-exporter/log-insert-columns"
+                 "log insert columns differ from the pinned collector order" {})
          (check! (= [trace-id span-id trace-id span-id]
                     [(get span-wire "TraceId") (get span-wire "SpanId")
                      (get log-wire "TraceId") (get log-wire "SpanId")])
                  "otel-exporter/correlation" "wire rows lost correlation IDs" {})
          (check! (= (json/write-str nested) (get log-wire "Body"))
                  "otel-exporter/log-body" "structured log body was not JSON-safe" {})
+         (check! (= "1.000000002"
+                    (get log-wire "Timestamp"))
+                 "otel-exporter/log-observed-time"
+                 "zero event time did not fall back to observed time" {})
+         (check! (= [(bit-and trace-flags 0xff)
+                     (bit-and severity-number 0xff)]
+                    [(get log-wire "TraceFlags")
+                     (get log-wire "SeverityNumber")])
+                 "otel-exporter/log-uint8"
+                 "log uint8 fields differ from collector conversion" {})
+         (check! (= ["resource-schema" "scope-schema" text "1" text]
+                    [(get log-wire "ResourceSchemaUrl")
+                     (get log-wire "ScopeSchemaUrl")
+                     (get log-wire "ScopeName")
+                     (get log-wire "ScopeVersion")
+                     (get log-wire "EventName")])
+                 "otel-exporter/log-metadata"
+                 "canonical log metadata was lost" {})
+         (check! (= (json/write-str nested)
+                    (get-in log-wire ["LogAttributes" attr-key]))
+                 "otel-exporter/log-attributes"
+                 "structured log attributes were not string-normalized" {})
          (check! (= 1 (count (json/read-str (get span-wire "EventsJSON"))))
                  "otel-exporter/span-events" "span event JSON did not round-trip" {})
          (check! (= [text] (get span-wire "Events.Name"))
