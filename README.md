@@ -109,3 +109,39 @@ be retried on the next open. The bootstrap `CREATE TABLE IF NOT EXISTS
 otel_schema_migrations` is the only operation outside the versioned registry.
 Keep application startup for one database serialized; cross-process migration
 locking is not part of this initial foundation.
+
+## Bounded attribute explorer
+
+`otel.exporter.chdb.explorer/top-values` provides a small, read-only query API
+for reusable viewers. A request must name one signal, one or more allowlisted
+fields, a half-open epoch-nanosecond time window, and a per-field result limit:
+
+```clojure
+(explorer/top-values
+ conn {:signal :spans
+       :fields [:service-name :http-request-method]
+       :start-unix-nano start
+       :end-unix-nano end
+       :limit 20})
+;; => [{:signal :spans, :field :service-name, :value "api", :count 12} ...]
+```
+
+The hard limits are a 24-hour window, 8 fields, 100 buckets per field, and 256
+UTF-8 characters per returned value (128 by default). Long values are grouped
+by their displayed prefix. `supported-fields` returns the complete closed
+allowlist. Spans support service, span name/kind/status/scope, HTTP method and
+status, and deployment environment. Logs support service, severity, event,
+scope, and deployment environment. Metrics support service, metric name/unit,
+scope, and deployment environment across the union of gauge, sum, and
+histogram tables.
+
+All identifiers and semantic attribute keys are library-owned SQL fragments;
+caller-controlled signal or field strings are rejected and scalar values are
+bound parameters. This first layer intentionally does not expose arbitrary map
+keys, free-form SQL, pagination, approximate cardinality, metric-kind facets,
+or separate per-kind metric results. Empty strings are omitted. The per-field
+queries are individually capped, so a successful call returns at most
+`fields * limit` rows and may observe concurrent inserts between fields. The
+pinned metric tables store `TimeUnix` at whole-second precision, so metric
+window membership is necessarily evaluated at that stored precision; trace and
+log windows retain their `DateTime64(9)` nanosecond precision.

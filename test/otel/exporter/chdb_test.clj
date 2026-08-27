@@ -4,6 +4,7 @@
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-explorer-test :as explorer-test]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-property-test :as property]
             [otel.logs :as logs]
@@ -599,6 +600,7 @@
     (println "  hegel" label "seed" (:seed result))
     (check (str "Hegel " label) true (:passed? result))
     (check (str "Hegel " label " is deterministic") false (:flaky? result)))
+  (explorer-test/run check)
   (if (zero? @failures)
     (println "all checks passed")
     (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
