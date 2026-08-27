@@ -72,6 +72,44 @@
 (defn- chunks [rows]
   (map #(str (json/write-str %) "\n") rows))
 
+(defn- temporality-code [value]
+  (case value :delta 1 :cumulative 2 0))
+
+(defn- metric-rows [resource collected]
+  (for [{:keys [scope metrics]} collected
+        metric metrics
+        point (:data-points metric)]
+    (merge
+     {"ResourceAttributes" (attrs (:attributes resource))
+      "ScopeName" (or (:name scope) "")
+      "ScopeVersion" (or (:version scope) "")
+      "ServiceName" (service-name resource)
+      "MetricName" (:name metric)
+      "MetricDescription" (or (:description metric) "")
+      "MetricUnit" (or (:unit metric) "")
+      "Attributes" (attrs (:attributes point))
+      "StartTimeUnix" (timestamp (or (:start-time-unix-nano point)
+                                     (:time-unix-nano point)))
+      "TimeUnix" (timestamp (:time-unix-nano point))}
+     (case (:type metric)
+       :gauge {"Value" (double (:value point))}
+       :sum {"Value" (double (:value point))
+             "AggregationTemporality" (temporality-code (:temporality metric))
+             "IsMonotonic" (boolean (:monotonic? metric))}
+       :histogram {"Count" (:count point)
+                   "Sum" (double (:sum point))
+                   "BucketCounts" (:bucket-counts point)
+                   "ExplicitBounds" (:explicit-bounds metric)
+                   "Min" (double (or (:min point) 0.0))
+                   "Max" (double (or (:max point) 0.0))
+                   "AggregationTemporality" (temporality-code (:temporality metric))}))))
+
+(defn- export-metric-type! [connection type rows]
+  (let [selected (filter #(= type (:_type %)) rows)]
+    (when (seq selected)
+      (chdb/stream-insert! connection (str "insert into otel_metrics_" (name type))
+                           (chunks (map #(dissoc % :_type) selected))))))
+
 (defrecord ChdbExporter [connection owned? state]
   export/SpanExporter
   (export-spans! [_ spans]
@@ -90,6 +128,26 @@
     (let [[old _] (swap-vals! state assoc :shutdown? true)]
       (when (and owned? (not (:shutdown? old))) (.close connection)))
     true)
+
+  export/MetricExporter
+  (export-metrics! [_ resource collected]
+    (if (:shutdown? @state)
+      false
+      (try
+        (let [rows (for [{:keys [scope metrics]} collected
+                         metric metrics
+                         point (:data-points metric)
+                         :let [row (first (metric-rows resource
+                                                       [{:scope scope
+                                                         :metrics [(assoc metric :data-points [point])]}]))]]
+                     (assoc row :_type (:type metric)))]
+          (doseq [type [:gauge :sum :histogram]]
+            (export-metric-type! connection type rows)))
+        true
+        (catch Throwable e
+          (swap! state assoc :last-error e)
+          false))))
+  (shutdown-metric-exporter! [this] (export/shutdown-exporter! this))
 
   logs/LogRecordExporter
   (export-logs! [_ records]
