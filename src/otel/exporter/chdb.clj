@@ -1,7 +1,6 @@
 (ns otel.exporter.chdb
   "Direct Jolt OTel exporter for an embedded/in-process chDB database."
   (:require [clojure.data.json :as json]
-            [jdbc.chdb :as chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
@@ -72,6 +71,20 @@
 (defn- chunks [rows]
   (map #(str (json/write-str %) "\n") rows))
 
+(def ^:private max-insert-bytes (* 8 1024 1024))
+
+(defn- insert-json-rows!
+  "Insert one SDK-bounded batch through chDB's ordinary query API. libchdb
+  26.7's streaming-insert API corrupts ClickHouse ThreadStatus nesting under
+  long-lived multi-signal exporters; the query API does not share that path."
+  [connection query rows]
+  (let [payload (apply str (chunks rows))
+        size (alength (.getBytes payload "UTF-8"))]
+    (when (> size max-insert-bytes)
+      (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                      {:bytes size :limit max-insert-bytes})))
+    (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload))))
+
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
 
@@ -107,8 +120,9 @@
 (defn- export-metric-type! [connection type rows]
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
-      (chdb/stream-insert! connection (str "insert into otel_metrics_" (name type))
-                           (chunks (map #(dissoc % :_type) selected))))))
+      (insert-json-rows! connection
+                         (str "insert into otel_metrics_" (name type))
+                         (map #(dissoc % :_type) selected)))))
 
 (defn- signal-open? [owned? expected-signals state signal]
   (cond
@@ -137,8 +151,8 @@
       false
       (try
         (when (seq spans)
-          (chdb/stream-insert! connection "insert into otel_traces"
-                               (chunks (map span-row spans))))
+          (insert-json-rows! connection "insert into otel_traces"
+                             (map span-row spans)))
         true
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -174,8 +188,8 @@
       false
       (try
         (when (seq records)
-          (chdb/stream-insert! connection "insert into otel_logs"
-                               (chunks (map log-row records))))
+          (insert-json-rows! connection "insert into otel_logs"
+                             (map log-row records)))
         true
         (catch Throwable e
           (swap! state assoc :last-error e)

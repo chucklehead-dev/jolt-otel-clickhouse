@@ -14,9 +14,11 @@ maps), so the demo and later ClickStack integration share the same query model.
 
 The exporter implements span, log, and metric exporter protocols. Metrics use
 ClickStack's `otel_metrics_gauge`, `otel_metrics_sum`, and
-`otel_metrics_histogram` table names. It uses
-chDB's streaming insert API, returns `false` instead of throwing into observed
-application code, and exposes `last-error` for diagnostics. Pass an existing
+`otel_metrics_histogram` table names. It sends each SDK-bounded batch through
+chDB's ordinary query API with `FORMAT JSONEachRow` and an 8 MiB safety limit.
+libchdb 26.7's streaming-insert API corrupts ClickHouse `ThreadStatus` nesting
+for this multi-signal exporter. Export returns `false` instead of throwing into
+observed application code and exposes `last-error` for diagnostics. Pass an existing
 `:connection` when the application UI also queries the database; that keeps
 connection ownership with the application.
 

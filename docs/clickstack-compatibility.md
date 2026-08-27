@@ -27,7 +27,8 @@ The drop-in gate is mechanical:
 5. Treat later collector schema changes as explicit migrations, never as
    require-time DDL mutation.
 
-For embedded workloads the current streaming batches are appropriate. For a
+For embedded workloads the current bounded `FORMAT JSONEachRow` query batches
+avoid libchdb 26.7's broken streaming-insert `ThreadStatus` lifecycle. For a
 server ClickHouse target, keep the same exporter protocol but add a separate
 network driver/collector path; do not make the chDB FFI driver pretend to be a
 remote ClickHouse client.

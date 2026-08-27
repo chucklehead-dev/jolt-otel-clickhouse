@@ -1,9 +1,10 @@
 (ns otel.exporter.chdb-property-test
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [hegel.core :as h]
             [hegel.generator :as g]
             [hegel.stateful :as hs]
-            [jdbc.chdb :as jdbc-chdb]
+            [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as sdk-logs]))
@@ -111,9 +112,15 @@
                      {} false #{:spans :logs :metrics}
                      (atom {:closed-signals #{}
                             :connection-closed? false :last-error nil}))]
-       (with-redefs [jdbc-chdb/stream-insert!
-                     (fn [_ table rows]
-                       (swap! captured conj [table (vec rows)]))]
+       (with-redefs [jdbc/execute!
+                     (fn [_ statement]
+                       (let [[table payload]
+                             (str/split
+                              statement #" FORMAT JSONEachRow\n" 2)]
+                         (swap! captured conj
+                                [table (vec (remove str/blank?
+                                                    (str/split-lines payload)))])
+                         0))]
          (check! (export/export-spans! exporter [span])
                  "otel-exporter/span-export" "span export failed" {})
          (check! (sdk-logs/export-logs! exporter [log])
