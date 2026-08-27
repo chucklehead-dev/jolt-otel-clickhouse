@@ -36,15 +36,10 @@
     (format "%d.%09d" seconds remainder)))
 
 (defn- metric-timestamp [nanos]
-  ;; chDB's JSONEachRow DateTime64 parser accepts numeric zero as the pdata
-  ;; absent-start sentinel, but rejects the equivalent text "0.000000000".
-  (if (zero? nanos)
-    0
-    (let [seconds (quot nanos 1000000000)
-          remainder (mod nanos 1000000000)]
-      ;; ClickHouse recognizes the decimal Unix form only with a ten-digit
-      ;; seconds field; padding also covers valid early-epoch metric points.
-      (format "%010d.%09d" seconds remainder))))
+  ;; The pinned ClickStack collector stores metric timestamps as DateTime,
+  ;; whose wire value is whole Unix seconds. The pdata zero value remains the
+  ;; absent-start sentinel; subsecond precision is intentionally truncated.
+  (quot nanos 1000000000))
 
 (defn- trace-state-string [state]
   (cond

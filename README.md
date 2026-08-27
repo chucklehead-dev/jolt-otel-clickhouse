@@ -92,12 +92,10 @@ schema-detected optional feature.
 
 Migration v4 adopts the collector insert schemas for the three metric kinds
 the current SDK produces. It adds canonical resource/scope metadata, flag, and
-exemplar columns, normalizes compatible v1 types/codecs in place, and preserves
-existing rows. `StartTimeUnix` and `TimeUnix` intentionally remain
-`DateTime64(9)`: changing the former would discard existing subsecond data, and
-every v1 table sorts on the latter so ClickHouse rejects changing it in place
-without a table rebuild. The exact source hashes, insert order, model defaults,
-and these compatible type exceptions are recorded in
+exemplar columns and normalizes compatible types/codecs. The initial schema
+uses the pinned collector's `DateTime` types for `StartTimeUnix` and `TimeUnix`;
+there is no pre-release legacy timestamp layout to preserve. The exact source
+hashes, insert order, and model defaults are recorded in
 `docs/fixtures/clickstack-metrics-aad2838d.edn`.
 
 Migration history is local to the connection's selected logical database. Each

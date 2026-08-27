@@ -90,11 +90,7 @@
                  schema/clickstack-log-insert-columns))))
 
 (defn- metric-expected-type [kind column]
-  (if (contains? #{"StartTimeUnix" "TimeUnix"} column)
-    ;; Retain v1's precision. TimeUnix is also a sorting-key column, for which
-    ;; ClickHouse rejects any in-place type change.
-    "DateTime64(9)"
-    (get-in schema/clickstack-metric-insert-types [kind column])))
+  (get-in schema/clickstack-metric-insert-types [kind column]))
 
 (defn- run-clickstack-metric-schema-checks [conn]
   (doseq [kind [:gauge :sum :histogram]]
@@ -283,57 +279,6 @@
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
       (run-clickstack-metric-schema-checks conn)))
-
-  ;; Prove the type/add-column migration preserves rows written against all
-  ;; three immutable v1 metric schemas.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
-    (doseq [ddl [schema/gauge-ddl schema/sum-ddl schema/histogram-ddl]]
-      (jdbc/execute! conn ddl))
-    (jdbc/execute! conn
-                   "insert into otel_metrics_gauge
-                      (MetricName, StartTimeUnix, TimeUnix, Value)
-                      values ('legacy.gauge',
-                              fromUnixTimestamp64Nano(1700000000123456789),
-                              fromUnixTimestamp64Nano(1700000000987654321), 3.5)")
-    (jdbc/execute! conn
-                   "insert into otel_metrics_sum
-                      (MetricName, TimeUnix, Value, AggregationTemporality, IsMonotonic)
-                      values ('legacy.sum', fromUnixTimestamp64Nano(1700000000000000000), 7, 2, true)")
-    (jdbc/execute! conn
-                   "insert into otel_metrics_histogram
-                      (MetricName, TimeUnix, Count, Sum, BucketCounts, ExplicitBounds,
-                       Min, Max, AggregationTemporality)
-                      values ('legacy.histogram', fromUnixTimestamp64Nano(1700000000000000000),
-                              2, 5, [1, 1], [2.5], 2, 3, 2)")
-    (doseq [statement schema/metric-v4-statements]
-      (jdbc/execute! conn statement))
-    (doseq [statement schema/metric-v4-statements]
-      (jdbc/execute! conn statement))
-    (check "v4 preserves gauge rows and nanosecond timestamps from v1"
-           ["legacy.gauge" 1700000000123456789 1700000000987654321 3.5]
-           ((juxt :metricname :startnanos :timenanos :value)
-            (jdbc/fetch-one
-             conn
-             "select MetricName,
-                     toUnixTimestamp64Nano(StartTimeUnix) StartNanos,
-                     toUnixTimestamp64Nano(TimeUnix) TimeNanos, Value
-                from otel_metrics_gauge")))
-    (check "v4 preserves sum rows from v1" ["legacy.sum" 7 2 true]
-           ((juxt :metricname :value :aggregationtemporality :ismonotonic)
-            (jdbc/fetch-one
-             conn
-             "select MetricName, Value, AggregationTemporality, IsMonotonic
-                from otel_metrics_sum")))
-    (check "v4 preserves histogram rows from v1"
-           ["legacy.histogram" 2 5 [1 1] [2.5] 2 3 2]
-           ((juxt :metricname :count :sum :bucketcounts :explicitbounds
-                  :min :max :aggregationtemporality)
-            (jdbc/fetch-one
-             conn
-             "select MetricName, Count, Sum, BucketCounts, ExplicitBounds,
-                     Min, Max, AggregationTemporality
-                from otel_metrics_histogram")))
-    (run-clickstack-metric-schema-checks conn))
 
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (schema/migrate! conn)

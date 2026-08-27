@@ -77,11 +77,4 @@
   :canonical-zero ["ScopeDroppedAttrCount" "Flags"]
   :unsupported ["non-empty exemplars" "non-zero point flags"
                 "scope dropped attributes" "exponential histograms" "summaries"]}
- :embedded-v4
- {:compatible-type-exceptions
-  {"StartTimeUnix" {:collector "DateTime"
-                    :embedded "DateTime64(9)"
-                    :reason "in-place conversion would discard existing subsecond data"}
-   "TimeUnix" {:collector "DateTime"
-               :embedded "DateTime64(9)"
-               :reason "v1 sorting-key column cannot be modified in place"}}}}
+ :embedded-v4 {:compatible-type-exceptions {}}}

@@ -30,7 +30,7 @@
 (def metric-common
   "ResourceAttributes Map(String, String), ScopeName String, ScopeVersion String,
    ServiceName String, MetricName String, MetricDescription String, MetricUnit String,
-   Attributes Map(String, String), StartTimeUnix DateTime64(9), TimeUnix DateTime64(9)")
+   Attributes Map(String, String), StartTimeUnix DateTime, TimeUnix DateTime")
 
 (def gauge-ddl
   (str "CREATE TABLE IF NOT EXISTS otel_metrics_gauge (" metric-common

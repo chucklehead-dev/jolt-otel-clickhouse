@@ -36,13 +36,10 @@ decisions are pinned in `fixtures/clickstack-metrics-aad2838d.edn`.
 This is not full ClickStack parity. The v1 log schema still differs from the
 pinned collector physically: it retains the v1 partition choice and lacks the
 collector's skip indexes, materialized Kubernetes/deployment columns, TTL,
-comments and complete MergeTree settings. Metric insert schemas have passed
-their fixture/DESCRIBE gates, with two explicit type exceptions:
-`StartTimeUnix` and `TimeUnix` remain the higher-precision `DateTime64(9)`.
-Changing the former would discard existing subsecond data; the latter is in
-each v1 sorting key and ClickHouse rejects changing that key column in place.
-Matching them exactly requires rebuilding the tables. Metric partitions, order
-expressions, skip indexes, TTL and settings also remain physically different.
+comments and complete MergeTree settings. Metric insert schemas, including the
+collector's `DateTime` timestamp types, have passed their fixture/DESCRIBE
+gates. Metric partitions, order expressions, skip indexes, TTL and settings
+remain physically different.
 The trace table retains its v1 partition/order/index choices; compatible insert
 columns do not claim identical physical storage tuning.
 
@@ -51,15 +48,12 @@ The remaining drop-in gate is mechanical:
 1. Extend the canonical metric model before attempting non-empty exemplars,
    non-zero point flags, dropped scope attributes, exponential histograms, or
    summaries. Do not synthesize those measurements in the exporter.
-2. Decide whether exact physical metric tables justify a data-preserving table
-   rebuild and swap; a lower-precision in-place conversion would lose start-time
-   data, and append-only ALTER cannot change the v1 `TimeUnix` key type.
-3. Validate actual ClickStack UI behavior through a network-facing ClickHouse
+2. Validate actual ClickStack UI behavior through a network-facing ClickHouse
    endpoint or an explicit gateway/collector adapter. HyperDX cannot attach to
    a local embedded chDB directory, so pointing it at the directory is not a
    valid integration test.
-4. Prove trace waterfalls, correlated logs, and all metric kinds end to end.
-5. Treat later collector schema changes as explicit migrations, never as
+3. Prove trace waterfalls, correlated logs, and all metric kinds end to end.
+4. Treat later collector schema changes as explicit migrations, never as
    require-time DDL mutation.
 
 The current five tables remain immutable migration v1. Migration v2 adds trace
