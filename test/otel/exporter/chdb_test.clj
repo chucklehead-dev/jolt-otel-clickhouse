@@ -101,9 +101,79 @@
              (:type failure))
       (check "checksum drift identifies version" 1 (:version failure)))))
 
+(defn- run-logical-database-checks []
+  (println "logical database namespace")
+  (let [base {:vendor "chdb" :name ":memory:"}
+        project (jdbc/connection (assoc base :database "project"))
+        exporter (chdb-export/exporter
+                  {:db-spec (assoc base :database "otel")
+                   :signals #{:spans}})]
+    (try
+      ;; These deliberately collide with exporter-owned names. Their schemas
+      ;; are application data, not an OTel migration registry or trace table.
+      (jdbc/execute! project
+                     "create table otel_traces (ProjectValue String) engine=Memory")
+      (jdbc/execute! project
+                     "create table otel_schema_migrations (ProjectValue String) engine=Memory")
+      (jdbc/execute! project
+                     ["insert into otel_traces values (?)" "project-trace"])
+      (jdbc/execute! project
+                     ["insert into otel_schema_migrations values (?)" "project-history"])
+      (check "exporter-owned dbspec selects logical OTel database" "otel"
+             (:database (jdbc/fetch-one (:connection exporter)
+                                        "select currentDatabase() database")))
+      (check "OTel migration history lives in selected database" 1
+             (:n (jdbc/fetch-one (:connection exporter)
+                                 "select count() as n from otel_schema_migrations")))
+      (check "OTel tables live in selected database" 5
+             (:n (jdbc/fetch-one
+                  (:connection exporter)
+                  "select count() as n from system.tables
+                     where database=currentDatabase()
+                       and name in ('otel_traces', 'otel_logs',
+                                    'otel_metrics_gauge', 'otel_metrics_sum',
+                                    'otel_metrics_histogram')")))
+      (check "same-named project trace table remains isolated" "project-trace"
+             (:projectvalue (jdbc/fetch-one project
+                                            "select ProjectValue from otel_traces")))
+      (check "same-named project history table remains isolated" "project-history"
+             (:projectvalue
+              (jdbc/fetch-one project
+                              "select ProjectValue from otel_schema_migrations")))
+      (finally
+        (export/shutdown-exporter! exporter)
+        (.close project))))
+
+  (with-open [application-otel
+              (jdbc/connection {:vendor "chdb" :name ":memory:"
+                                :database "application_otel"})]
+    (let [exporter (chdb-export/exporter {:connection application-otel})]
+      (check "application-owned connection keeps its selected database"
+             "application_otel"
+             (:database (jdbc/fetch-one application-otel
+                                        "select currentDatabase() database")))
+      (check "application-owned migration history uses selected database" 1
+             (:n (jdbc/fetch-one application-otel
+                                 "select count() as n from otel_schema_migrations")))
+      ;; Shared ownership remains unchanged: exporter shutdown must not close
+      ;; the application's connection.
+      (export/shutdown-exporter! exporter)
+      (check "application connection remains usable after exporter shutdown" 1
+             (:n (jdbc/fetch-one application-otel "select 1 as n")))))
+
+  (with-open [default-conn (jdbc/connection "chdb::memory:")]
+    (chdb-export/exporter {:connection default-conn})
+    (check "default dbspec behavior remains compatible" "default"
+           (:database (jdbc/fetch-one default-conn
+                                      "select currentDatabase() database")))
+    (check "default database still receives migration history" 1
+           (:n (jdbc/fetch-one default-conn
+                               "select count() as n from otel_schema_migrations")))))
+
 (defn -main [& _]
   (reset! failures 0)
   (run-migration-checks)
+  (run-logical-database-checks)
   (println "embedded chDB OTel exporter")
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (let [exporter (chdb-export/exporter {:connection conn})

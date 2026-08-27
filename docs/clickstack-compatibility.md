@@ -33,6 +33,13 @@ time. Later ClickStack parity work must append consecutive, idempotent migration
 entries rather than edit v1. This foundation intentionally does not yet add the
 collector's missing columns, lookup tables, TTLs, or destructive retention.
 
+An exporter-owned chDB map dbspec may select a logical `:database`. The fixed
+OTel table names and migration registry are created inside that database, so
+telemetry can coexist with application tables in another logical database on
+the same physical chDB path. Application-owned connections retain their
+already-selected database; the exporter does not change it or add raw table
+prefix configuration.
+
 For embedded workloads the current bounded `FORMAT JSONEachRow` query batches
 avoid libchdb 26.7's broken streaming-insert `ThreadStatus` lifecycle. For a
 server ClickHouse target, keep the same exporter protocol but add a separate

@@ -199,12 +199,15 @@
 
 (defn exporter
   "Create a span+log+metric exporter. Supply :connection to share ownership
-  with an application, or :db-spec for an exporter-owned one. :signals declares
-  enabled SDK signals so an owned connection closes after every pipeline; it
-  defaults to the SDK defaults, spans+metrics. Export calls for an undeclared
-  signal fail visibly through a false result and last-error. Unless
-  :create-schema? is false, startup applies and validates the ordered schema
-  migration registry."
+  with an application, or :db-spec for an exporter-owned one. A chDB map dbspec
+  may include :database to create/select an isolated logical database. A shared
+  :connection is used in its already selected database; the exporter never
+  issues USE or qualifies table names. :signals declares enabled SDK signals so
+  an owned connection closes after every pipeline; it defaults to the SDK
+  defaults, spans+metrics. Export calls for an undeclared signal fail visibly
+  through a false result and last-error. Unless :create-schema? is false,
+  startup applies and validates the ordered schema migration registry in that
+  selected database."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals]
      :or {db-spec "chdb::memory:" create-schema? true

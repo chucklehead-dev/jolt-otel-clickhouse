@@ -12,6 +12,27 @@ maps), so the demo and later ClickStack integration share the same query model.
                                 :logs? true}))
 ```
 
+An exporter-owned connection can keep telemetry isolated in a logical database
+on the application's one active physical chDB path:
+
+```clojure
+(otel.exporter.chdb/exporter
+ {:db-spec {:vendor "chdb"
+            :name "/var/lib/my-app/chdb"
+            :database "otel"}})
+```
+
+The chDB driver validates, creates, and selects `:database` when it opens the
+connection. Schema migrations and exports continue to use the fixed unqualified
+names `otel_schema_migrations`, `otel_traces`, `otel_logs`, and
+`otel_metrics_*`; they therefore live in the selected database without an
+unsafe table-prefix option. Multiple logical databases may use those same
+names on the one physical path without colliding.
+
+When supplying an application-owned `:connection`, select its logical database
+in that connection's dbspec. The exporter uses its current database naturally
+and never issues `USE`; shutdown also leaves the shared connection open.
+
 The exporter implements span, log, and metric exporter protocols. Metrics use
 ClickStack's `otel_metrics_gauge`, `otel_metrics_sum`, and
 `otel_metrics_histogram` table names. It sends each SDK-bounded batch through
@@ -44,6 +65,9 @@ the ordered SQL statements, and UTC application timestamp. Reopening a database
 is idempotent; a changed name/checksum, duplicate version, gap, or database from
 a newer migration plan fails startup with diagnostic `ex-data` instead of
 silently mutating history.
+
+Migration history is local to the connection's selected logical database. Each
+logical database is therefore independently initialized and validated.
 
 chDB has no transactions. Each migration must therefore contain only
 idempotent statements. The runner records a version after every statement has
