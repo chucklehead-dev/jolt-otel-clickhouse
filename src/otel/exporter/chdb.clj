@@ -110,8 +110,16 @@
       (chdb/stream-insert! connection (str "insert into otel_metrics_" (name type))
                            (chunks (map #(dissoc % :_type) selected))))))
 
-(defn- signal-open? [state signal]
-  (not (contains? (:closed-signals @state) signal)))
+(defn- signal-open? [owned? expected-signals state signal]
+  (cond
+    (and owned? (not (contains? expected-signals signal)))
+    (do (swap! state assoc :last-error
+               (ex-info (str "OTel signal is not enabled for this exporter: " (name signal))
+                        {:signal signal :expected-signals expected-signals}))
+        false)
+
+    (contains? (:closed-signals @state) signal) false
+    :else true))
 
 (defn- close-signal! [connection owned? expected-signals state signal]
   (let [[_ new] (swap-vals! state update :closed-signals conj signal)]
@@ -125,7 +133,7 @@
 (defrecord ChdbExporter [connection owned? expected-signals state]
   export/SpanExporter
   (export-spans! [_ spans]
-    (if-not (signal-open? state :spans)
+    (if-not (signal-open? owned? expected-signals state :spans)
       false
       (try
         (when (seq spans)
@@ -141,7 +149,7 @@
 
   export/MetricExporter
   (export-metrics! [_ resource collected]
-    (if-not (signal-open? state :metrics)
+    (if-not (signal-open? owned? expected-signals state :metrics)
       false
       (try
         (let [rows (for [{:keys [scope metrics]} collected
@@ -162,7 +170,7 @@
 
   logs/LogRecordExporter
   (export-logs! [_ records]
-    (if-not (signal-open? state :logs)
+    (if-not (signal-open? owned? expected-signals state :logs)
       false
       (try
         (when (seq records)
@@ -179,7 +187,8 @@
   "Create a span+log+metric exporter. Supply :connection to share ownership
   with an application, or :db-spec for an exporter-owned one. :signals declares
   enabled SDK signals so an owned connection closes after every pipeline; it
-  defaults to the SDK defaults, spans+metrics."
+  defaults to the SDK defaults, spans+metrics. Export calls for an undeclared
+  signal fail visibly through a false result and last-error."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals]
      :or {db-spec "chdb::memory:" create-schema? true

@@ -8,6 +8,7 @@
             [otel.resource :as resource]
             [otel.sdk :as sdk]
             [otel.sdk.export :as export]
+            [otel.sdk.logs :as sdk-logs]
             [otel.sdk.metrics :as sdk-metrics]
             [otel.trace :as trace]))
 
@@ -69,6 +70,14 @@
         (check "ClickStack histogram table" 1
                (:n (jdbc/fetch-one conn "select count() as n from otel_metrics_histogram")))
         (finally (sdk/shutdown! handle)))))
+  (let [exporter (chdb-export/exporter {:db-spec "chdb::memory:"
+                                        :signals #{:spans}})]
+    (check "undeclared signal export is rejected" false
+           (sdk-logs/export-logs! exporter []))
+    (check "undeclared signal failure is diagnosable" :logs
+           (:signal (ex-data (chdb-export/last-error exporter))))
+    (check "declared signal still owns shutdown" true
+           (export/shutdown-exporter! exporter)))
   (if (zero? @failures)
     (println "all checks passed")
     (throw (ex-info (str @failures " checks failed") {:failures @failures}))))

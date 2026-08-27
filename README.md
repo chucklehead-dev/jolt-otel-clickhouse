@@ -22,7 +22,9 @@ connection ownership with the application.
 
 When the exporter owns its connection and logs are enabled, declare all active
 signals: `{:signals #{:spans :metrics :logs}}`. Shutdown is tracked per signal,
-so the SDK's metric shutdown cannot disable a later log/span batch drain.
+so the SDK's metric shutdown cannot disable a later log/span batch drain. An
+export attempt for a signal omitted from this set returns `false` and records a
+descriptive `last-error` instead of failing later against a closed connection.
 
 The first schema keeps span events and links as JSON strings and omits collector
 columns that Jolt does not yet emit (exemplars and scope attributes). A later
