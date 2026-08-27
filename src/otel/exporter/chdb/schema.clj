@@ -54,12 +54,81 @@
      AppliedAt DateTime64(9, 'UTC')
    ) ENGINE=MergeTree ORDER BY Version")
 
+;; Migration v1 is immutable. ClickStack's collector writes Nested values as
+;; seven parallel arrays; adding their physical subcolumns is the idempotent
+;; way to adopt an existing v1 table without rebuilding it or dropping the
+;; viewer-compatible JSON columns.
+(def trace-events-timestamp-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Events.Timestamp`
+     Array(DateTime64(9)) CODEC(ZSTD(1))")
+
+(def trace-events-name-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Events.Name`
+     Array(LowCardinality(String)) CODEC(ZSTD(1))")
+
+(def trace-events-attributes-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Events.Attributes`
+     Array(Map(LowCardinality(String), String)) CODEC(ZSTD(1))")
+
+(def trace-links-trace-id-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Links.TraceId`
+     Array(String) CODEC(ZSTD(1))")
+
+(def trace-links-span-id-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Links.SpanId`
+     Array(String) CODEC(ZSTD(1))")
+
+(def trace-links-trace-state-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Links.TraceState`
+     Array(String) CODEC(ZSTD(1))")
+
+(def trace-links-attributes-ddl
+  "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `Links.Attributes`
+     Array(Map(LowCardinality(String), String)) CODEC(ZSTD(1))")
+
+(def trace-id-ts-ddl
+  "CREATE TABLE IF NOT EXISTS otel_traces_trace_id_ts (
+     TraceId String CODEC(ZSTD(1)),
+     Start DateTime CODEC(Delta, ZSTD(1)),
+     End DateTime CODEC(Delta, ZSTD(1)),
+     INDEX idx_trace_id TraceId TYPE bloom_filter(0.01) GRANULARITY 1
+   ) ENGINE=MergeTree
+     PARTITION BY toDate(Start)
+     ORDER BY (TraceId, Start)
+     SETTINGS index_granularity=8192, ttl_only_drop_parts=1")
+
+(def trace-id-ts-mv-ddl
+  "CREATE MATERIALIZED VIEW IF NOT EXISTS otel_traces_trace_id_ts_mv
+     TO otel_traces_trace_id_ts
+     AS SELECT TraceId, min(Timestamp) AS Start, max(Timestamp) AS End
+       FROM otel_traces
+       WHERE TraceId != ''
+       GROUP BY TraceId")
+
+(def clickstack-trace-insert-columns
+  ["Timestamp" "TraceId" "SpanId" "ParentSpanId" "TraceState"
+   "SpanName" "SpanKind" "ServiceName" "ResourceAttributes" "ScopeName"
+   "ScopeVersion" "SpanAttributes" "Duration" "StatusCode" "StatusMessage"
+   "Events.Timestamp" "Events.Name" "Events.Attributes" "Links.TraceId"
+   "Links.SpanId" "Links.TraceState" "Links.Attributes"])
+
 (def migrations
   "Ordered migration registry. Entries are append-only once released. New
   migrations must use a consecutive version and idempotent statements."
   [{:version 1
     :name "initial-otel-tables"
-    :statements [traces-ddl logs-ddl gauge-ddl sum-ddl histogram-ddl]}])
+    :statements [traces-ddl logs-ddl gauge-ddl sum-ddl histogram-ddl]}
+   {:version 2
+    :name "clickstack-trace-nested-and-lookup"
+    :statements [trace-events-timestamp-ddl
+                 trace-events-name-ddl
+                 trace-events-attributes-ddl
+                 trace-links-trace-id-ddl
+                 trace-links-span-id-ddl
+                 trace-links-trace-state-ddl
+                 trace-links-attributes-ddl
+                 trace-id-ts-ddl
+                 trace-id-ts-mv-ddl]}])
 
 (defn- migration-source [{:keys [statements]}]
   (str/join "\n-- jolt-otel-clickhouse migration statement --\n" statements))

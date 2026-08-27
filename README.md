@@ -49,11 +49,14 @@ so the SDK's metric shutdown cannot disable a later log/span batch drain. An
 export attempt for a signal omitted from this set returns `false` and records a
 descriptive `last-error` instead of failing later against a closed connection.
 
-The first schema keeps span events and links as JSON strings and omits collector
-columns that Jolt does not yet emit (exemplars and scope attributes). A later
-full ClickStack compatibility gate will migrate those to the collector's exact
-`Nested` layout; the important source names and correlation columns are already
-aligned.
+Migration v2 adds ClickStack's seven physical `Events.*` and `Links.*` Nested
+subcolumns and the `otel_traces_trace_id_ts` lookup table/materialized view.
+Span export fills the parallel arrays and continues filling `EventsJSON` and
+`LinksJSON` for the lightweight embedded viewer. The trace insert column set is
+therefore compatible with the pinned collector trace exporter; trace state and
+span kind/status strings also follow its pdata wire values. This is bounded
+trace parity, not a claim that the log and metric tables are drop-in ClickStack
+schemas: metric exemplars and several resource/scope metadata columns remain.
 
 ## Schema migrations
 
@@ -65,6 +68,12 @@ the ordered SQL statements, and UTC application timestamp. Reopening a database
 is idempotent; a changed name/checksum, duplicate version, gap, or database from
 a newer migration plan fails startup with diagnostic `ex-data` instead of
 silently mutating history.
+
+Migration v1 remains the immutable five-table baseline. Migration v2 adopts
+existing trace tables in place with idempotent `ADD COLUMN IF NOT EXISTS`
+statements, then creates the trace-ID time lookup table and view. Its source
+provenance and exact collector insert column order are recorded in
+`docs/fixtures/clickstack-traces-aad2838d.edn`.
 
 Migration history is local to the connection's selected logical database. Each
 logical database is therefore independently initialized and validated.

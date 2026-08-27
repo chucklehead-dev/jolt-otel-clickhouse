@@ -1,0 +1,19 @@
+{:source {:repository "https://github.com/open-telemetry/opentelemetry-collector-contrib"
+          :commit "aad2838d6990eb031e7f4913269c3153cb5c2b4a"
+          :files [{:path "exporter/clickhouseexporter/internal/sqltemplates/traces_table.sql"
+                   :sha256 "aa2836fcb333ed589d5c2144e15bd9166258bf7add456b3a89ebad574a7a2503"}
+                  {:path "exporter/clickhouseexporter/internal/sqltemplates/traces_insert.sql"
+                   :sha256 "ef0775ab6af3424ae33c22d8487270e7c66b40a871f0c53d153166a8f5ce7685"}
+                  {:path "exporter/clickhouseexporter/internal/sqltemplates/traces_id_ts_lookup_table.sql"
+                   :sha256 "855d83811f78b141757c71a7598ed64bc8768bbf67fac1ddb90d52d392347042"}
+                  {:path "exporter/clickhouseexporter/internal/sqltemplates/traces_id_ts_lookup_mv.sql"
+                   :sha256 "642782a70c4467b189f2a0e6d3ccfb88ef175411d360e046c43f01245d7fd406"}]}
+ :insert-columns ["Timestamp" "TraceId" "SpanId" "ParentSpanId" "TraceState"
+                  "SpanName" "SpanKind" "ServiceName" "ResourceAttributes"
+                  "ScopeName" "ScopeVersion" "SpanAttributes" "Duration"
+                  "StatusCode" "StatusMessage" "Events.Timestamp" "Events.Name"
+                  "Events.Attributes" "Links.TraceId" "Links.SpanId"
+                  "Links.TraceState" "Links.Attributes"]
+ :embedded-v2 {:retained-columns ["EventsJSON" "LinksJSON"]
+               :lookup-table "otel_traces_trace_id_ts"
+               :lookup-view "otel_traces_trace_id_ts_mv"}}

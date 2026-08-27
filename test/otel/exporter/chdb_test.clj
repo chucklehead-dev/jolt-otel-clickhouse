@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-test
   (:require [db.jdbc]
+            [clojure.string :as str]
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
@@ -31,6 +32,43 @@
       (doseq [file (reverse (file-seq root))]
         (.delete file)))))
 
+(defn- normalize-clickstack-type [type]
+  (-> type
+      (str/replace #"LowCardinality\(([^()]*)\)" "$1")
+      (str/replace #"\s+" "")))
+
+(def clickstack-trace-types
+  {"Timestamp" "DateTime64(9)"
+   "TraceId" "String" "SpanId" "String" "ParentSpanId" "String"
+   "TraceState" "String" "SpanName" "String" "SpanKind" "String"
+   "ServiceName" "String" "ResourceAttributes" "Map(String,String)"
+   "ScopeName" "String" "ScopeVersion" "String"
+   "SpanAttributes" "Map(String,String)" "Duration" "UInt64"
+   "StatusCode" "String" "StatusMessage" "String"
+   "Events.Timestamp" "Array(DateTime64(9))"
+   "Events.Name" "Array(String)"
+   "Events.Attributes" "Array(Map(String,String))"
+   "Links.TraceId" "Array(String)" "Links.SpanId" "Array(String)"
+   "Links.TraceState" "Array(String)"
+   "Links.Attributes" "Array(Map(String,String))"})
+
+(defn- run-clickstack-trace-schema-checks [conn]
+  (let [described (jdbc/fetch conn "describe table otel_traces")
+        actual (into {} (map (fn [{:keys [name type]}]
+                               [name (normalize-clickstack-type type)]))
+                     described)
+        expected (mapv (fn [column]
+                         [column (get clickstack-trace-types column)])
+                       schema/clickstack-trace-insert-columns)]
+    (check "all official ClickStack trace insert columns exist"
+           schema/clickstack-trace-insert-columns
+           (filterv #(contains? actual %)
+                    schema/clickstack-trace-insert-columns))
+    (check "normalized ClickStack trace insert types are compatible"
+           expected
+           (mapv (fn [column] [column (get actual column)])
+                 schema/clickstack-trace-insert-columns))))
+
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
   (with-open [conn (jdbc/connection "chdb::memory:")]
@@ -39,10 +77,11 @@
     (let [applied (jdbc/fetch conn
                               "select Version, Name, Checksum
                                  from otel_schema_migrations order by Version")]
-      (check "fresh database records migration v1" [1] (mapv :version applied))
-      (check "migration name is durable" ["initial-otel-tables"]
+      (check "fresh database records migrations v1 and v2" [1 2] (mapv :version applied))
+      (check "migration names are durable"
+             ["initial-otel-tables" "clickstack-trace-nested-and-lookup"]
              (mapv :name applied))
-      (check "migration checksum is SHA-256" [64]
+      (check "migration checksums are SHA-256" [64 64]
              (mapv #(count (:checksum %)) applied))))
 
   (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
@@ -54,7 +93,7 @@
         (schema/migrate! conn))
       (with-open [conn (jdbc/connection db-spec)]
         (schema/migrate! conn)
-        (check "persistent database reopen keeps one migration record" 1
+        (check "persistent database reopen keeps both migration records" 2
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations"))))
       (finally
@@ -82,13 +121,41 @@
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (schema/migrate! conn)
-      (check "retry records migration exactly once" 1
+      (check "retry records both migrations exactly once" 2
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (check "retry completed the interrupted table" 1
              (:n (jdbc/fetch-one conn
                                   "select count() as n from system.tables
                                      where database=currentDatabase() and name='otel_logs'")))))
+
+  ;; A partially applied v2 must leave the immutable v1 history intact and
+  ;; safely resume its IF NOT EXISTS ALTER/CREATE statements.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (let [execute! jdbc/execute!
+          failed? (atom false)
+          failure
+          (with-redefs [jdbc/execute!
+                        (fn
+                          ([connection statement]
+                           (if (and (= statement schema/trace-links-span-id-ddl)
+                                    (compare-and-set! failed? false true))
+                             (throw (ex-info "injected v2 migration failure" {}))
+                             (execute! connection statement)))
+                          ([connection statement options]
+                           (execute! connection statement options)))]
+            (thrown-data #(schema/migrate! conn)))]
+      (check "partial v2 failure identifies version" 2 (:version failure))
+      (check "partial v2 leaves only v1 recorded" [1]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (schema/migrate! conn)
+      (check "partial v2 retry records v2 once" [1 2]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (run-clickstack-trace-schema-checks conn)))
 
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (schema/migrate! conn)
@@ -122,7 +189,7 @@
       (check "exporter-owned dbspec selects logical OTel database" "otel"
              (:database (jdbc/fetch-one (:connection exporter)
                                         "select currentDatabase() database")))
-      (check "OTel migration history lives in selected database" 1
+      (check "OTel migration history lives in selected database" 2
              (:n (jdbc/fetch-one (:connection exporter)
                                  "select count() as n from otel_schema_migrations")))
       (check "OTel tables live in selected database" 5
@@ -152,7 +219,7 @@
              "application_otel"
              (:database (jdbc/fetch-one application-otel
                                         "select currentDatabase() database")))
-      (check "application-owned migration history uses selected database" 1
+      (check "application-owned migration history uses selected database" 2
              (:n (jdbc/fetch-one application-otel
                                  "select count() as n from otel_schema_migrations")))
       ;; Shared ownership remains unchanged: exporter shutdown must not close
@@ -166,7 +233,7 @@
     (check "default dbspec behavior remains compatible" "default"
            (:database (jdbc/fetch-one default-conn
                                       "select currentDatabase() database")))
-    (check "default database still receives migration history" 1
+    (check "default database still receives migration history" 2
            (:n (jdbc/fetch-one default-conn
                                "select count() as n from otel_schema_migrations")))))
 
@@ -184,14 +251,23 @@
                              :logs? true
                              :bridge-logging? false})]
       (try
-        (trace/with-span [outer (sdk/tracer "demo.http") "GET /outbound"
-                          {:kind :server :attributes {:http.route "/outbound"}}]
-          (logs/emit! (sdk/logger "demo.http")
-                      {:body "calling upstream" :severity :info
-                       :attributes {:http.method "GET"}})
-          (trace/with-span [inner (sdk/tracer "demo.client") "GET example"
-                            {:kind :client}]
-            (trace/set-status! inner :ok)))
+        (run-clickstack-trace-schema-checks conn)
+        (let [linked (trace/span-context
+                      {:trace-id "11111111111111111111111111111111"
+                       :span-id "2222222222222222"
+                       :trace-state [["vendor" "state"]]
+                       :sampled? true})]
+          (trace/with-span [outer (sdk/tracer "demo.http") "GET /outbound"
+                            {:kind :server :attributes {:http.route "/outbound"}}]
+            (trace/add-event! outer "request.enriched" {:component "cache"}
+                              1700000000000000002)
+            (trace/add-link! outer linked {:rel "follows"})
+            (logs/emit! (sdk/logger "demo.http")
+                        {:body "calling upstream" :severity :info
+                         :attributes {:http.method "GET"}})
+            (trace/with-span [inner (sdk/tracer "demo.client") "GET example"
+                              {:kind :client}]
+              (trace/set-status! inner :ok))))
         (let [r (resource/resource {:service.name "ring-demo"})
               provider (sdk-metrics/meter-provider {:resource r})
               meter (sdk-metrics/get-meter provider {:name "demo.metrics"})]
@@ -206,7 +282,22 @@
         (let [spans (jdbc/fetch conn
                                 "select TraceId, SpanId, ParentSpanId, SpanName, ServiceName, SpanAttributes from otel_traces order by Timestamp")
               log (jdbc/fetch-one conn
-                                  "select TraceId, SpanId, Body, ServiceName, SeverityText from otel_logs")]
+                                  "select TraceId, SpanId, Body, ServiceName, SeverityText from otel_logs")
+              nested (jdbc/fetch-one
+                      conn
+                      "select `Events.Name` EventNames,
+                              `Events.Attributes` EventAttributes,
+                              `Links.TraceId` LinkTraceIds,
+                              `Links.TraceState` LinkTraceStates,
+                              `Links.Attributes` LinkAttributes,
+                              EventsJSON, LinksJSON
+                         from otel_traces where SpanName='GET /outbound'")
+              lookup (jdbc/fetch-one
+                      conn
+                      ["select TraceId, toUnixTimestamp(Start) StartUnix,
+                               toUnixTimestamp(End) EndUnix
+                          from otel_traces_trace_id_ts where TraceId=?"
+                       (:traceid (first spans))])]
           (check "parent and child spans persisted" 2 (count spans))
           (check "ClickStack service column" #{"ring-demo"}
                  (set (map :servicename spans)))
@@ -214,9 +305,28 @@
                  (= (:spanid (first spans)) (:parentspanid (second spans))))
           (check "log body persisted" "calling upstream" (:body log))
           (check "log/span trace correlation" (:traceid (first spans)) (:traceid log))
-          (check "severity uses ClickStack column" "INFO" (:severitytext log)))
+          (check "severity uses ClickStack column" "INFO" (:severitytext log))
+          (check "nested event name round-trips" ["request.enriched"]
+                 (:eventnames nested))
+          (check "nested event attributes round-trip" [{"component" "cache"}]
+                 (:eventattributes nested))
+          (check "nested link trace ID round-trips"
+                 ["11111111111111111111111111111111"] (:linktraceids nested))
+          (check "nested link trace state uses W3C raw form" ["vendor=state"]
+                 (:linktracestates nested))
+          (check "nested link attributes round-trip" [{"rel" "follows"}]
+                 (:linkattributes nested))
+          (check "legacy viewer event JSON remains populated" true
+                 (str/includes? (:eventsjson nested) "request.enriched"))
+          (check "legacy viewer link JSON remains populated" true
+                 (str/includes? (:linksjson nested)
+                                "11111111111111111111111111111111"))
+          (check "trace-ID lookup materialized view receives trace" (:traceid (first spans))
+                 (:traceid lookup))
+          (check "trace-ID lookup range is ordered" true
+                 (<= (:startunix lookup) (:endunix lookup))))
         (chdb-export/exporter {:connection conn})
-        (check "exporter reopen does not duplicate migration history" 1
+        (check "exporter reopen does not duplicate migration history" 2
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations")))
         (check "ClickStack gauge table" 1

@@ -93,14 +93,20 @@
            text (h/draw! (g/string {:max-size 80}))
            nested [text {"line\nbreak" text}]
            attributes {attr-key nested :plain text}
-           span {:span-context {:trace-id trace-id :span-id span-id}
+           event {:name text :timestamp-unix-nano 1000000002
+                  :attributes attributes}
+           link {:span-context {:trace-id trace-id :span-id span-id
+                                :trace-state [["vendor" "state"]]}
+                 :attributes {:relation text}}
+           span {:span-context {:trace-id trace-id :span-id span-id
+                                :trace-state [["root" "sampled"]]}
                  :parent-span-id "" :name text :kind :server
                  :start-time-unix-nano 1000000001
                  :end-time-unix-nano 1000000011
                  :status {:code :ok :description text}
                  :scope {:name text :version "1"}
                  :resource {:attributes {:service.name text}}
-                 :attributes attributes :events [nested] :links []}
+                 :attributes attributes :events [event] :links [link]}
            log {:timestamp-unix-nano 1000000002
                 :trace-id trace-id :span-id span-id :trace-flags 1
                 :severity-text "INFO" :severity-number 9 :body nested
@@ -137,8 +143,24 @@
                  "otel-exporter/correlation" "wire rows lost correlation IDs" {})
          (check! (= (json/write-str nested) (get log-wire "Body"))
                  "otel-exporter/log-body" "structured log body was not JSON-safe" {})
-         (check! (= [nested] (json/read-str (get span-wire "EventsJSON")))
+         (check! (= 1 (count (json/read-str (get span-wire "EventsJSON"))))
                  "otel-exporter/span-events" "span event JSON did not round-trip" {})
+         (check! (= [text] (get span-wire "Events.Name"))
+                 "otel-exporter/nested-event-name" "nested event name was lost" {})
+         (check! (= [trace-id] (get span-wire "Links.TraceId"))
+                 "otel-exporter/nested-link-trace" "nested link trace ID was lost" {})
+         (check! (= (json/write-str nested)
+                    (get-in span-wire ["Events.Attributes" 0 attr-key]))
+                 "otel-exporter/nested-event-attributes"
+                 "nested event attributes were not string-normalized" {})
+         (check! (= ["vendor=state"] (get span-wire "Links.TraceState"))
+                 "otel-exporter/nested-link-state" "nested link trace state was not raw" {})
+         (check! (= "root=sampled" (get span-wire "TraceState"))
+                 "otel-exporter/trace-state" "span trace state was not raw" {})
+         (check! (= ["Server" "Ok"]
+                    [(get span-wire "SpanKind") (get span-wire "StatusCode")])
+                 "otel-exporter/trace-enums"
+                 "span enum strings differ from collector pdata values" {})
          (check! (= (json/write-str nested)
                     (get-in span-wire ["SpanAttributes" attr-key]))
                  "otel-exporter/attributes" "structured attribute did not round-trip" {}))))))

@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb
   "Direct Jolt OTel exporter for an embedded/in-process chDB database."
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
@@ -25,27 +26,58 @@
         remainder (mod nanos 1000000000)]
     (format "%d.%09d" seconds remainder)))
 
+(defn- trace-state-string [state]
+  (cond
+    (nil? state) ""
+    (string? state) state
+    (sequential? state)
+    (str/join "," (map (fn [[k v]] (str k "=" v)) state))
+    :else (str state)))
+
+(defn- otel-enum-string [value fallback]
+  ;; Matches pdata SpanKind.String()/StatusCode.String() used by the pinned
+  ;; collector exporter (for example Server, Client, Ok, Error, Unset).
+  (str/capitalize (name (or value fallback))))
+
+(defn- event-columns [events]
+  {"Events.Timestamp" (mapv #(timestamp (:timestamp-unix-nano %)) events)
+   "Events.Name" (mapv #(or (:name %) "") events)
+   "Events.Attributes" (mapv #(attrs (:attributes %)) events)})
+
+(defn- link-columns [links]
+  {"Links.TraceId" (mapv #(or (get-in % [:span-context :trace-id]) "") links)
+   "Links.SpanId" (mapv #(or (get-in % [:span-context :span-id]) "") links)
+   "Links.TraceState" (mapv #(trace-state-string
+                              (get-in % [:span-context :trace-state]))
+                            links)
+   "Links.Attributes" (mapv #(attrs (:attributes %)) links)})
+
 (defn- span-row [span]
   (let [context (:span-context span)
         scope (:scope span)
-        resource (:resource span)]
-    {"Timestamp" (timestamp (:start-time-unix-nano span))
-     "TraceId" (or (:trace-id context) "")
-     "SpanId" (or (:span-id context) "")
-     "ParentSpanId" (or (:parent-span-id span) "")
-     "TraceState" (value-string (or (:trace-state context) ""))
-     "SpanName" (:name span)
-     "SpanKind" (name (:kind span))
-     "ServiceName" (service-name resource)
-     "ResourceAttributes" (attrs (:attributes resource))
-     "ScopeName" (or (:name scope) "")
-     "ScopeVersion" (or (:version scope) "")
-     "SpanAttributes" (attrs (:attributes span))
-     "Duration" (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
-     "StatusCode" (name (get-in span [:status :code] :unset))
-     "StatusMessage" (or (get-in span [:status :description]) "")
-     "EventsJSON" (json/write-str (:events span))
-     "LinksJSON" (json/write-str (:links span))}))
+        resource (:resource span)
+        events (or (:events span) [])
+        links (or (:links span) [])]
+    (merge
+     {"Timestamp" (timestamp (:start-time-unix-nano span))
+      "TraceId" (or (:trace-id context) "")
+      "SpanId" (or (:span-id context) "")
+      "ParentSpanId" (or (:parent-span-id span) "")
+      "TraceState" (trace-state-string (:trace-state context))
+      "SpanName" (:name span)
+      "SpanKind" (otel-enum-string (:kind span) :internal)
+      "ServiceName" (service-name resource)
+      "ResourceAttributes" (attrs (:attributes resource))
+      "ScopeName" (or (:name scope) "")
+      "ScopeVersion" (or (:version scope) "")
+      "SpanAttributes" (attrs (:attributes span))
+      "Duration" (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
+      "StatusCode" (otel-enum-string (get-in span [:status :code]) :unset)
+      "StatusMessage" (or (get-in span [:status :description]) "")
+      "EventsJSON" (json/write-str events)
+      "LinksJSON" (json/write-str links)}
+     (event-columns events)
+     (link-columns links))))
 
 (defn- log-row [record]
   (let [scope (:scope record)
