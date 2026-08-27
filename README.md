@@ -20,6 +20,10 @@ application code, and exposes `last-error` for diagnostics. Pass an existing
 `:connection` when the application UI also queries the database; that keeps
 connection ownership with the application.
 
+When the exporter owns its connection and logs are enabled, declare all active
+signals: `{:signals #{:spans :metrics :logs}}`. Shutdown is tracked per signal,
+so the SDK's metric shutdown cannot disable a later log/span batch drain.
+
 The first schema keeps span events and links as JSON strings and omits collector
 columns that Jolt does not yet emit (exemplars and scope attributes). A later
 full ClickStack compatibility gate will migrate those to the collector's exact

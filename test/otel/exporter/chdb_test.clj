@@ -26,7 +26,7 @@
     (let [exporter (chdb-export/exporter {:connection conn})
           handle (sdk/init! {:service-name "ring-demo"
                              :exporter exporter
-                             :processor :simple
+                             :processor :batch
                              :metrics? false
                              :logs? true
                              :bridge-logging? false})]
@@ -39,7 +39,6 @@
           (trace/with-span [inner (sdk/tracer "demo.client") "GET example"
                             {:kind :client}]
             (trace/set-status! inner :ok)))
-        (sdk/force-flush! handle)
         (let [r (resource/resource {:service.name "ring-demo"})
               provider (sdk-metrics/meter-provider {:resource r})
               meter (sdk-metrics/get-meter provider {:name "demo.metrics"})]
@@ -48,6 +47,9 @@
           (metrics/record! (metrics/histogram meter "latency" {:boundaries [10.0 100.0]}) 42)
           (check "metric export call succeeds" true
                  (export/export-metrics! exporter r (sdk-metrics/collect! provider))))
+        ;; sdk/shutdown! reaches the log and span pipelines separately. Both
+        ;; batch queues must drain even after the first signal shuts down.
+        (sdk/shutdown! handle)
         (let [spans (jdbc/fetch conn
                                 "select TraceId, SpanId, ParentSpanId, SpanName, ServiceName, SpanAttributes from otel_traces order by Timestamp")
               log (jdbc/fetch-one conn

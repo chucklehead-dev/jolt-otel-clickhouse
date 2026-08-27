@@ -110,10 +110,22 @@
       (chdb/stream-insert! connection (str "insert into otel_metrics_" (name type))
                            (chunks (map #(dissoc % :_type) selected))))))
 
-(defrecord ChdbExporter [connection owned? state]
+(defn- signal-open? [state signal]
+  (not (contains? (:closed-signals @state) signal)))
+
+(defn- close-signal! [connection owned? expected-signals state signal]
+  (let [[_ new] (swap-vals! state update :closed-signals conj signal)]
+    (when (and owned?
+               (not (:connection-closed? new))
+               (every? (:closed-signals new) expected-signals))
+      (.close connection)
+      (swap! state assoc :connection-closed? true)))
+  true)
+
+(defrecord ChdbExporter [connection owned? expected-signals state]
   export/SpanExporter
   (export-spans! [_ spans]
-    (if (:shutdown? @state)
+    (if-not (signal-open? state :spans)
       false
       (try
         (when (seq spans)
@@ -125,13 +137,11 @@
           false))))
   (flush-exporter! [_] true)
   (shutdown-exporter! [_]
-    (let [[old _] (swap-vals! state assoc :shutdown? true)]
-      (when (and owned? (not (:shutdown? old))) (.close connection)))
-    true)
+    (close-signal! connection owned? expected-signals state :spans))
 
   export/MetricExporter
   (export-metrics! [_ resource collected]
-    (if (:shutdown? @state)
+    (if-not (signal-open? state :metrics)
       false
       (try
         (let [rows (for [{:keys [scope metrics]} collected
@@ -147,11 +157,12 @@
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
-  (shutdown-metric-exporter! [this] (export/shutdown-exporter! this))
+  (shutdown-metric-exporter! [_]
+    (close-signal! connection owned? expected-signals state :metrics))
 
   logs/LogRecordExporter
   (export-logs! [_ records]
-    (if (:shutdown? @state)
+    (if-not (signal-open? state :logs)
       false
       (try
         (when (seq records)
@@ -161,19 +172,26 @@
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
-  (shutdown-log-exporter! [this] (export/shutdown-exporter! this)))
+  (shutdown-log-exporter! [_]
+    (close-signal! connection owned? expected-signals state :logs)))
 
 (defn exporter
-  "Create a span+log exporter. Supply :connection to share ownership with an
-  application, or :db-spec (default chdb::memory:) for an exporter-owned one."
+  "Create a span+log+metric exporter. Supply :connection to share ownership
+  with an application, or :db-spec for an exporter-owned one. :signals declares
+  enabled SDK signals so an owned connection closes after every pipeline; it
+  defaults to the SDK defaults, spans+metrics."
   ([] (exporter {}))
-  ([{:keys [connection db-spec create-schema?]
-     :or {db-spec "chdb::memory:" create-schema? true}}]
+  ([{:keys [connection db-spec create-schema? signals]
+     :or {db-spec "chdb::memory:" create-schema? true
+          signals #{:spans :metrics}}}]
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))]
      (try
        (when create-schema? (schema/ensure-schema! conn))
-       (->ChdbExporter conn owned? (atom {:shutdown? false :last-error nil}))
+       (->ChdbExporter conn owned? (set signals)
+                       (atom {:closed-signals #{}
+                              :connection-closed? false
+                              :last-error nil}))
        (catch Throwable t
          (when owned? (.close conn))
          (throw t))))))
