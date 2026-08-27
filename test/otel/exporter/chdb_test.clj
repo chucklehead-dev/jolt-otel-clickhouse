@@ -89,6 +89,31 @@
            (mapv (fn [column] [column (get actual column)])
                  schema/clickstack-log-insert-columns))))
 
+(defn- metric-expected-type [kind column]
+  (if (contains? #{"StartTimeUnix" "TimeUnix"} column)
+    ;; Retain v1's precision. TimeUnix is also a sorting-key column, for which
+    ;; ClickHouse rejects any in-place type change.
+    "DateTime64(9)"
+    (get-in schema/clickstack-metric-insert-types [kind column])))
+
+(defn- run-clickstack-metric-schema-checks [conn]
+  (doseq [kind [:gauge :sum :histogram]]
+    (let [columns (get schema/clickstack-metric-insert-columns kind)
+          described (jdbc/fetch
+                     conn
+                     (str "describe table " (get schema/metric-table-names kind)))
+          actual (into {} (map (fn [{:keys [name type]}]
+                                 [name (normalize-describe-type type)]))
+                       described)
+          expected (mapv (fn [column]
+                           [column (metric-expected-type kind column)])
+                         columns)]
+      (check (str "all official ClickStack " (name kind) " insert columns exist")
+             columns (filterv #(contains? actual %) columns))
+      (check (str "ClickStack " (name kind) " insert types match documented contract")
+             expected
+             (mapv (fn [column] [column (get actual column)]) columns)))))
+
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
   (with-open [conn (jdbc/connection "chdb::memory:")]
@@ -97,13 +122,14 @@
     (let [applied (jdbc/fetch conn
                               "select Version, Name, Checksum
                                  from otel_schema_migrations order by Version")]
-      (check "fresh database records migrations v1 through v3" [1 2 3]
+      (check "fresh database records migrations v1 through v4" [1 2 3 4]
              (mapv :version applied))
       (check "migration names are durable"
              ["initial-otel-tables" "clickstack-trace-nested-and-lookup"
-              "clickstack-log-insert-types"]
+              "clickstack-log-insert-types"
+              "clickstack-canonical-metric-inserts"]
              (mapv :name applied))
-      (check "migration checksums are SHA-256" [64 64 64]
+      (check "migration checksums are SHA-256" [64 64 64 64]
              (mapv #(count (:checksum %)) applied))))
 
   (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
@@ -115,7 +141,7 @@
         (schema/migrate! conn))
       (with-open [conn (jdbc/connection db-spec)]
         (schema/migrate! conn)
-        (check "persistent database reopen keeps all migration records" 3
+        (check "persistent database reopen keeps all migration records" 4
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations"))))
       (finally
@@ -143,7 +169,7 @@
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (schema/migrate! conn)
-      (check "retry records all migrations exactly once" 3
+      (check "retry records all migrations exactly once" 4
              (:n (jdbc/fetch-one conn
                                   "select count() as n from otel_schema_migrations")))
       (check "retry completed the interrupted table" 1
@@ -173,7 +199,7 @@
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
       (schema/migrate! conn)
-      (check "partial v2 retry records remaining migrations once" [1 2 3]
+      (check "partial v2 retry records remaining migrations once" [1 2 3 4]
              (mapv :version
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
@@ -202,7 +228,7 @@
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
       (schema/migrate! conn)
-      (check "partial v3 retry records v3 once" [1 2 3]
+      (check "partial v3 retry records remaining migrations once" [1 2 3 4]
              (mapv :version
                    (jdbc/fetch conn
                                "select Version from otel_schema_migrations order by Version")))
@@ -228,6 +254,86 @@
                             "select Body, ResourceAttributes, LogAttributes
                                from otel_logs")))
     (run-clickstack-log-schema-checks conn))
+
+  ;; v4 spans three existing tables. Failure after earlier actions must retain
+  ;; the immutable v1-v3 prefix and retry every IF EXISTS/IF NOT EXISTS action.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (let [execute! jdbc/execute!
+          failed? (atom false)
+          fail-statement (nth schema/metric-v4-statements 17)
+          failure
+          (with-redefs [jdbc/execute!
+                        (fn
+                          ([connection statement]
+                           (if (and (= statement fail-statement)
+                                    (compare-and-set! failed? false true))
+                             (throw (ex-info "injected v4 migration failure" {}))
+                             (execute! connection statement)))
+                          ([connection statement options]
+                           (execute! connection statement options)))]
+            (thrown-data #(schema/migrate! conn)))]
+      (check "partial v4 failure identifies version" 4 (:version failure))
+      (check "partial v4 leaves v1-v3 recorded" [1 2 3]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (schema/migrate! conn)
+      (check "partial v4 retry records v4 once" [1 2 3 4]
+             (mapv :version
+                   (jdbc/fetch conn
+                               "select Version from otel_schema_migrations order by Version")))
+      (run-clickstack-metric-schema-checks conn)))
+
+  ;; Prove the type/add-column migration preserves rows written against all
+  ;; three immutable v1 metric schemas.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (doseq [ddl [schema/gauge-ddl schema/sum-ddl schema/histogram-ddl]]
+      (jdbc/execute! conn ddl))
+    (jdbc/execute! conn
+                   "insert into otel_metrics_gauge
+                      (MetricName, StartTimeUnix, TimeUnix, Value)
+                      values ('legacy.gauge',
+                              fromUnixTimestamp64Nano(1700000000123456789),
+                              fromUnixTimestamp64Nano(1700000000987654321), 3.5)")
+    (jdbc/execute! conn
+                   "insert into otel_metrics_sum
+                      (MetricName, TimeUnix, Value, AggregationTemporality, IsMonotonic)
+                      values ('legacy.sum', fromUnixTimestamp64Nano(1700000000000000000), 7, 2, true)")
+    (jdbc/execute! conn
+                   "insert into otel_metrics_histogram
+                      (MetricName, TimeUnix, Count, Sum, BucketCounts, ExplicitBounds,
+                       Min, Max, AggregationTemporality)
+                      values ('legacy.histogram', fromUnixTimestamp64Nano(1700000000000000000),
+                              2, 5, [1, 1], [2.5], 2, 3, 2)")
+    (doseq [statement schema/metric-v4-statements]
+      (jdbc/execute! conn statement))
+    (doseq [statement schema/metric-v4-statements]
+      (jdbc/execute! conn statement))
+    (check "v4 preserves gauge rows and nanosecond timestamps from v1"
+           ["legacy.gauge" 1700000000123456789 1700000000987654321 3.5]
+           ((juxt :metricname :startnanos :timenanos :value)
+            (jdbc/fetch-one
+             conn
+             "select MetricName,
+                     toUnixTimestamp64Nano(StartTimeUnix) StartNanos,
+                     toUnixTimestamp64Nano(TimeUnix) TimeNanos, Value
+                from otel_metrics_gauge")))
+    (check "v4 preserves sum rows from v1" ["legacy.sum" 7 2 true]
+           ((juxt :metricname :value :aggregationtemporality :ismonotonic)
+            (jdbc/fetch-one
+             conn
+             "select MetricName, Value, AggregationTemporality, IsMonotonic
+                from otel_metrics_sum")))
+    (check "v4 preserves histogram rows from v1"
+           ["legacy.histogram" 2 5 [1 1] [2.5] 2 3 2]
+           ((juxt :metricname :count :sum :bucketcounts :explicitbounds
+                  :min :max :aggregationtemporality)
+            (jdbc/fetch-one
+             conn
+             "select MetricName, Count, Sum, BucketCounts, ExplicitBounds,
+                     Min, Max, AggregationTemporality
+                from otel_metrics_histogram")))
+    (run-clickstack-metric-schema-checks conn))
 
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (schema/migrate! conn)
@@ -261,7 +367,7 @@
       (check "exporter-owned dbspec selects logical OTel database" "otel"
              (:database (jdbc/fetch-one (:connection exporter)
                                         "select currentDatabase() database")))
-      (check "OTel migration history lives in selected database" 3
+      (check "OTel migration history lives in selected database" 4
              (:n (jdbc/fetch-one (:connection exporter)
                                  "select count() as n from otel_schema_migrations")))
       (check "OTel tables live in selected database" 5
@@ -291,7 +397,7 @@
              "application_otel"
              (:database (jdbc/fetch-one application-otel
                                         "select currentDatabase() database")))
-      (check "application-owned migration history uses selected database" 3
+      (check "application-owned migration history uses selected database" 4
              (:n (jdbc/fetch-one application-otel
                                  "select count() as n from otel_schema_migrations")))
       ;; Shared ownership remains unchanged: exporter shutdown must not close
@@ -305,7 +411,7 @@
     (check "default dbspec behavior remains compatible" "default"
            (:database (jdbc/fetch-one default-conn
                                       "select currentDatabase() database")))
-    (check "default database still receives migration history" 3
+    (check "default database still receives migration history" 4
            (:n (jdbc/fetch-one default-conn
                                "select count() as n from otel_schema_migrations")))))
 
@@ -325,6 +431,7 @@
       (try
         (run-clickstack-trace-schema-checks conn)
         (run-clickstack-log-schema-checks conn)
+        (run-clickstack-metric-schema-checks conn)
         (let [linked (trace/span-context
                       {:trace-id "11111111111111111111111111111111"
                        :span-id "2222222222222222"
@@ -341,12 +448,26 @@
             (trace/with-span [inner (sdk/tracer "demo.client") "GET example"
                               {:kind :client}]
               (trace/set-status! inner :ok))))
-        (let [r (resource/resource {:service.name "ring-demo"})
+        (let [r (resource/resource
+                 {:service.name "ring-demo" :deployment.environment.name "test"}
+                 {:schema-url "https://example.test/metric-resource/1"})
               provider (sdk-metrics/meter-provider {:resource r})
-              meter (sdk-metrics/get-meter provider {:name "demo.metrics"})]
-          (metrics/add! (metrics/counter meter "requests") 2 {:route "/work"})
-          (metrics/set-value! (metrics/gauge meter "queue.depth") 3)
-          (metrics/record! (metrics/histogram meter "latency" {:boundaries [10.0 100.0]}) 42)
+              meter (sdk-metrics/get-meter
+                     provider {:name "demo.metrics" :version "2.0"
+                               :schema-url "https://example.test/metric-scope/1"})]
+          (metrics/add! (metrics/counter meter "requests"
+                                         {:description "accepted requests"
+                                          :unit "{request}"})
+                        2 {:route "/work"})
+          (metrics/set-value! (metrics/gauge meter "queue.depth"
+                                             {:description "queued work"
+                                              :unit "{item}"})
+                              3)
+          (metrics/record! (metrics/histogram
+                            meter "latency" {:boundaries [10.0 100.0]
+                                             :description "request latency"
+                                             :unit "ms"})
+                           42 {:route "/work"})
           (check "metric export call succeeds" true
                  (export/export-metrics! exporter r (sdk-metrics/collect! provider))))
         (check "canonical ClickStack log export succeeds" true
@@ -456,7 +577,7 @@
           (check "trace-ID lookup range is ordered" true
                  (<= (:startunix lookup) (:endunix lookup))))
         (chdb-export/exporter {:connection conn})
-        (check "exporter reopen does not duplicate migration history" 3
+        (check "exporter reopen does not duplicate migration history" 4
                (:n (jdbc/fetch-one conn
                                     "select count() as n from otel_schema_migrations")))
         (check "ClickStack gauge table" 1
@@ -465,6 +586,61 @@
                (:n (jdbc/fetch-one conn "select count() as n from otel_metrics_sum")))
         (check "ClickStack histogram table" 1
                (:n (jdbc/fetch-one conn "select count() as n from otel_metrics_histogram")))
+        (let [gauge (jdbc/fetch-one
+                     conn
+                     "select ResourceAttributes, ResourceSchemaUrl, ScopeName,
+                             ScopeVersion, ScopeAttributes, ScopeDroppedAttrCount,
+                             ScopeSchemaUrl, ServiceName, MetricName,
+                             MetricDescription, MetricUnit, Attributes,
+                             toUnixTimestamp(StartTimeUnix) StartUnix, Flags,
+                             `Exemplars.FilteredAttributes` ExemplarAttrs,
+                             `Exemplars.TimeUnix` ExemplarTimes,
+                             `Exemplars.Value` ExemplarValues,
+                             `Exemplars.SpanId` ExemplarSpanIds,
+                             `Exemplars.TraceId` ExemplarTraceIds, Value
+                        from otel_metrics_gauge")
+              sum (jdbc/fetch-one
+                   conn
+                   "select MetricName, Value, Flags, AggregationTemporality,
+                           IsMonotonic, `Exemplars.TraceId` ExemplarTraceIds
+                      from otel_metrics_sum")
+              histogram (jdbc/fetch-one
+                         conn
+                         "select MetricName, Count, Sum, BucketCounts,
+                                 ExplicitBounds, Flags, Min, Max,
+                                 AggregationTemporality,
+                                 `Exemplars.TraceId` ExemplarTraceIds
+                            from otel_metrics_histogram")]
+          (check "canonical metric resource/scope metadata round-trips"
+                 [{"service.name" "ring-demo"
+                   "deployment.environment.name" "test"}
+                  "https://example.test/metric-resource/1"
+                  "demo.metrics" "2.0" {}
+                  0 "https://example.test/metric-scope/1" "ring-demo"]
+                 [(:resourceattributes gauge) (:resourceschemaurl gauge)
+                  (:scopename gauge) (:scopeversion gauge)
+                  (:scopeattributes gauge) (:scopedroppedattrcount gauge)
+                  (:scopeschemaurl gauge) (:servicename gauge)])
+          (check "gauge canonical defaults and descriptor round-trip"
+                 ["queue.depth" "queued work" "{item}" {} 0 0
+                  [] [] [] [] [] 3]
+                 [(:metricname gauge) (:metricdescription gauge)
+                  (:metricunit gauge) (:attributes gauge) (:startunix gauge)
+                  (:flags gauge) (:exemplarattrs gauge) (:exemplartimes gauge)
+                  (:exemplarvalues gauge) (:exemplarspanids gauge)
+                  (:exemplartraceids gauge) (:value gauge)])
+          (check "sum canonical fields round-trip"
+                 ["requests" 2 0 2 true []]
+                 [(:metricname sum) (:value sum) (:flags sum)
+                  (:aggregationtemporality sum) (:ismonotonic sum)
+                  (:exemplartraceids sum)])
+          (check "histogram canonical fields round-trip"
+                 ["latency" 1 42 [0 1 0] [10 100] 0 42 42 2 []]
+                 [(:metricname histogram) (:count histogram) (:sum histogram)
+                  (:bucketcounts histogram) (:explicitbounds histogram)
+                  (:flags histogram) (:min histogram) (:max histogram)
+                  (:aggregationtemporality histogram)
+                  (:exemplartraceids histogram)]))
         (finally (sdk/shutdown! handle)))))
   (let [exporter (chdb-export/exporter {:db-spec "chdb::memory:"
                                         :signals #{:spans}})]

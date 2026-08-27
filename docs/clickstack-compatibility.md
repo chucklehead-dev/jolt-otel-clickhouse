@@ -24,21 +24,36 @@ event names. A zero event timestamp falls back to observed time, and the two
 `UInt8` fields use the collector's cast semantics. Provenance is pinned in
 `fixtures/clickstack-logs-aad2838d.edn`.
 
+Migration v4 provides **bounded canonical metric insert compatibility** for
+gauge, sum, and explicit histogram—the kinds the current jolt-otel SDK can
+produce. All pinned collector insert columns exist, exports use the exact
+per-kind column order, and resource/scope schema URLs survive. Scope attributes
+are emitted when present. Because the canonical model has no point flags,
+dropped scope-attribute count, or exemplars, those columns carry the truthful
+defaults `0`, `0`, and five aligned empty arrays. Provenance and model-boundary
+decisions are pinned in `fixtures/clickstack-metrics-aad2838d.edn`.
+
 This is not full ClickStack parity. The v1 log schema still differs from the
 pinned collector physically: it retains the v1 partition choice and lacks the
 collector's skip indexes, materialized Kubernetes/deployment columns, TTL,
-comments and complete MergeTree settings. Metric tables still omit schema
-URLs, scope attributes, flags and exemplars, and their complete insert lists
-have not yet passed the same fixture/DESCRIBE gate. The trace table also
-retains the v1 partition/order/index choices; compatible insert columns do not
-claim identical physical storage tuning.
+comments and complete MergeTree settings. Metric insert schemas have passed
+their fixture/DESCRIBE gates, with two explicit type exceptions:
+`StartTimeUnix` and `TimeUnix` remain the higher-precision `DateTime64(9)`.
+Changing the former would discard existing subsecond data; the latter is in
+each v1 sorting key and ClickHouse rejects changing that key column in place.
+Matching them exactly requires rebuilding the tables. Metric partitions, order
+expressions, skip indexes, TTL and settings also remain physically different.
+The trace table retains its v1 partition/order/index choices; compatible insert
+columns do not claim identical physical storage tuning.
 
 The remaining drop-in gate is mechanical:
 
-1. Pin the collector metric templates and add equivalent provenance fixtures,
-   migrations, encoders, and normalized `DESCRIBE` gates.
-2. Add every required metric field; keep optional fields empty rather than
-   changing their types.
+1. Extend the canonical metric model before attempting non-empty exemplars,
+   non-zero point flags, dropped scope attributes, exponential histograms, or
+   summaries. Do not synthesize those measurements in the exporter.
+2. Decide whether exact physical metric tables justify a data-preserving table
+   rebuild and swap; a lower-precision in-place conversion would lose start-time
+   data, and append-only ALTER cannot change the v1 `TimeUnix` key type.
 3. Validate actual ClickStack UI behavior through a network-facing ClickHouse
    endpoint or an explicit gateway/collector adapter. HyperDX cannot attach to
    a local embedded chDB directory, so pointing it at the directory is not a
@@ -49,9 +64,10 @@ The remaining drop-in gate is mechanical:
 
 The current five tables remain immutable migration v1. Migration v2 adds trace
 Nested subcolumns and lookup objects; migration v3 modifies existing log column
-types/codecs in place. Neither migration rebuilds v1 or uses destructive
-retention. `otel_schema_migrations` records each name, computed SHA-256, and
-applied time. Later parity work must append consecutive, idempotent migrations.
+types/codecs; migration v4 adds and normalizes the supported canonical metric
+insert columns. None rebuilds v1 or uses destructive retention.
+`otel_schema_migrations` records each name, computed SHA-256, and applied time.
+Later parity work must append consecutive, idempotent migrations.
 
 An exporter-owned chDB map dbspec may select a logical `:database`. The fixed
 OTel table names and migration registry are created inside that database, so

@@ -56,11 +56,15 @@ Span export fills the parallel arrays and continues filling `EventsJSON` and
 16 embedded log insert columns to the pinned collector's types and codecs. Log
 export uses that explicit column list, including its supported `EventName`
 feature, and follows the collector's timestamp fallback, pdata string, and
-`UInt8` conversion semantics. These are bounded trace/log insert parity, not a
-claim that the physical tables or metric schemas are drop-in ClickStack:
-metric exemplars and several resource/scope metadata columns remain, and the
-embedded log table does not yet mirror ClickStack's partitions, skip indexes,
-materialized Kubernetes columns, TTL, comments, or MergeTree settings.
+`UInt8` conversion semantics. Migration v4 adds the pinned gauge, sum, and
+explicit-histogram insert columns and types. Resource/scope schema URLs are
+preserved; fields absent from the current canonical metric model use their
+truthful empty defaults: zero flags/dropped-attribute count and five aligned
+empty exemplar arrays. These are bounded trace/log/metric insert parity, not a
+claim that the physical tables are drop-in ClickStack. In particular,
+non-empty exemplars, non-zero point flags, dropped scope attributes,
+exponential histograms, and summaries are not modeled, and the embedded tables
+do not mirror every partition, skip index, TTL, comment, or MergeTree setting.
 
 ## Schema migrations
 
@@ -85,6 +89,16 @@ columns, and collector types are recorded in
 `docs/fixtures/clickstack-logs-aad2838d.edn`. The pre-existing `EventName`
 column is retained for the embedded viewer and matches the pinned collector's
 schema-detected optional feature.
+
+Migration v4 adopts the collector insert schemas for the three metric kinds
+the current SDK produces. It adds canonical resource/scope metadata, flag, and
+exemplar columns, normalizes compatible v1 types/codecs in place, and preserves
+existing rows. `StartTimeUnix` and `TimeUnix` intentionally remain
+`DateTime64(9)`: changing the former would discard existing subsecond data, and
+every v1 table sorts on the latter so ClickHouse rejects changing it in place
+without a table rebuild. The exact source hashes, insert order, model defaults,
+and these compatible type exceptions are recorded in
+`docs/fixtures/clickstack-metrics-aad2838d.edn`.
 
 Migration history is local to the connection's selected logical database. Each
 logical database is therefore independently initialized and validated.

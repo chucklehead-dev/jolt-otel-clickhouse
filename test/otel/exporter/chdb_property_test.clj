@@ -199,6 +199,94 @@
                     (get-in span-wire ["SpanAttributes" attr-key]))
                  "otel-exporter/attributes" "structured attribute did not round-trip" {}))))))
 
+(defn- metric-wire-property []
+  (h/run-test!
+   {:name "otel exporter canonical metric wire rows"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 120}
+   (fn [_]
+     (let [text (h/draw! (g/string {:max-size 48}))
+           value (h/draw! (g/integer -1000 1000))
+           resource {:schema-url "resource-schema"
+                     :attributes {:service.name text :resource.value value}}
+           scope {:name text :version "1" :schema-url "scope-schema"
+                  :attributes {:scope.value value}}
+           collected
+           [{:scope scope
+             :metrics
+             [{:type :gauge :name "g" :description text :unit "1"
+               :data-points [{:attributes {:k value}
+                              :time-unix-nano 2000000002 :value value}]}
+              {:type :sum :name "s" :description text :unit "1"
+               :temporality :delta :monotonic? false
+               :data-points [{:attributes {:k value}
+                              :start-time-unix-nano 1000000001
+                              :time-unix-nano 2000000002 :value value}]}
+              {:type :histogram :name "h" :description text :unit "ms"
+               :temporality :cumulative :explicit-bounds [10.0]
+               :data-points [{:attributes {:k value}
+                              :start-time-unix-nano 1000000001
+                              :time-unix-nano 2000000002 :count 1
+                              :sum value :bucket-counts [1 0]
+                              :min value :max value}]}]}]
+           captured (atom [])
+           exporter (chdb-export/->ChdbExporter
+                     {} false #{:metrics}
+                     (atom {:closed-signals #{}
+                            :connection-closed? false :last-error nil}))]
+       (with-redefs [jdbc/execute!
+                     (fn [_ statement]
+                       (let [[query payload]
+                             (str/split statement #" FORMAT JSONEachRow\n" 2)]
+                         (swap! captured conj
+                                [query (json/read-str
+                                        (first (remove str/blank?
+                                                       (str/split-lines payload))))])
+                         0))]
+         (check! (export/export-metrics! exporter resource collected)
+                 "otel-exporter/metric-export" "metric export failed" {}))
+       (let [rows (into {} (map (fn [[query row]]
+                                  [(get row "MetricName") [query row]]))
+                        @captured)]
+         (check! (= #{"g" "s" "h"} (set (keys rows)))
+                 "otel-exporter/metric-routing"
+                 "supported metric kinds did not each produce one row" {})
+         (doseq [[kind metric-name] [[:gauge "g"] [:sum "s"] [:histogram "h"]]]
+           (let [[query row] (get rows metric-name)]
+             (check! (= (str "insert into " (get schema/metric-table-names kind)
+                             " (" (str/join ", "
+                                             (get schema/clickstack-metric-insert-columns kind))
+                             ")")
+                        query)
+                     "otel-exporter/metric-insert-columns"
+                     "metric insert columns differ from the pinned collector" {:kind kind})
+             (check! (= [0 [] [] [] [] []]
+                        [(get row "Flags")
+                         (get row "Exemplars.FilteredAttributes")
+                         (get row "Exemplars.TimeUnix")
+                         (get row "Exemplars.Value")
+                         (get row "Exemplars.SpanId")
+                         (get row "Exemplars.TraceId")])
+                     "otel-exporter/metric-unmodeled-defaults"
+                     "unmodeled metric fields did not use canonical empty defaults"
+                     {:kind kind})
+             (check! (= ["resource-schema" "scope-schema" text "1"
+                          {"scope.value" (str value)} 0]
+                        [(get row "ResourceSchemaUrl") (get row "ScopeSchemaUrl")
+                         (get row "ScopeName") (get row "ScopeVersion")
+                         (get row "ScopeAttributes")
+                         (get row "ScopeDroppedAttrCount")])
+                     "otel-exporter/metric-metadata"
+                     "representable metric metadata was lost" {:kind kind})))
+         (check! (= 0 (get-in rows ["g" 1 "StartTimeUnix"]))
+                 "otel-exporter/gauge-zero-start"
+                 "absent gauge start time was fabricated" {})
+         (check! (= [1 2]
+                    [(get-in rows ["s" 1 "AggregationTemporality"])
+                     (get-in rows ["h" 1 "AggregationTemporality"])])
+                 "otel-exporter/metric-temporality"
+                 "metric temporality codes differ from pdata" {}))))))
+
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
-   {:label "JSON safety and correlation" :result (wire-json-property)}])
+   {:label "JSON safety and correlation" :result (wire-json-property)}
+   {:label "canonical metric wire rows" :result (metric-wire-property)}])

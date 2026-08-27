@@ -202,6 +202,129 @@
    "LogAttributes" "Map(LowCardinality(String),String)"
    "EventName" "String"})
 
+;; Migration v4 adopts the pinned collector insert shapes for the three metric
+;; kinds the current jolt-otel SDK can produce. ADD/MODIFY actions remain
+;; independent and retry-safe; the data model has no non-empty exemplars or
+;; point flags, so their canonical columns are populated with empty/zero values
+;; by the exporter rather than invented measurements.
+(def metric-table-names
+  {:gauge "otel_metrics_gauge"
+   :sum "otel_metrics_sum"
+   :histogram "otel_metrics_histogram"})
+
+(def metric-common-insert-columns
+  ["ResourceAttributes" "ResourceSchemaUrl" "ScopeName" "ScopeVersion"
+   "ScopeAttributes" "ScopeDroppedAttrCount" "ScopeSchemaUrl" "ServiceName"
+   "MetricName" "MetricDescription" "MetricUnit" "Attributes"
+   "StartTimeUnix" "TimeUnix"])
+
+(def metric-exemplar-insert-columns
+  ["Exemplars.FilteredAttributes" "Exemplars.TimeUnix" "Exemplars.Value"
+   "Exemplars.SpanId" "Exemplars.TraceId"])
+
+(def clickstack-metric-insert-columns
+  {:gauge (vec (concat metric-common-insert-columns
+                       ["Value" "Flags"] metric-exemplar-insert-columns))
+   :sum (vec (concat metric-common-insert-columns
+                     ["Value" "Flags"] metric-exemplar-insert-columns
+                     ["AggregationTemporality" "IsMonotonic"]))
+   :histogram (vec (concat metric-common-insert-columns
+                           ["Count" "Sum" "BucketCounts" "ExplicitBounds"]
+                           metric-exemplar-insert-columns
+                           ["Flags" "Min" "Max" "AggregationTemporality"]))})
+
+(def metric-common-insert-types
+  {"ResourceAttributes" "Map(LowCardinality(String),String)"
+   "ResourceSchemaUrl" "String"
+   "ScopeName" "String"
+   "ScopeVersion" "String"
+   "ScopeAttributes" "Map(LowCardinality(String),String)"
+   "ScopeDroppedAttrCount" "UInt32"
+   "ScopeSchemaUrl" "String"
+   "ServiceName" "LowCardinality(String)"
+   "MetricName" "LowCardinality(String)"
+   "MetricDescription" "String"
+   "MetricUnit" "String"
+   "Attributes" "Map(LowCardinality(String),String)"
+   "StartTimeUnix" "DateTime"
+   "TimeUnix" "DateTime"})
+
+(def metric-exemplar-insert-types
+  {"Exemplars.FilteredAttributes"
+   "Array(Map(LowCardinality(String),String))"
+   "Exemplars.TimeUnix" "Array(DateTime)"
+   "Exemplars.Value" "Array(Float64)"
+   "Exemplars.SpanId" "Array(String)"
+   "Exemplars.TraceId" "Array(String)"})
+
+(def clickstack-metric-insert-types
+  {:gauge (merge metric-common-insert-types metric-exemplar-insert-types
+                 {"Value" "Float64" "Flags" "UInt32"})
+   :sum (merge metric-common-insert-types metric-exemplar-insert-types
+               {"Value" "Float64" "Flags" "UInt32"
+                "AggregationTemporality" "Int32" "IsMonotonic" "Bool"})
+   :histogram (merge metric-common-insert-types metric-exemplar-insert-types
+                     {"Count" "UInt64" "Sum" "Float64"
+                      "BucketCounts" "Array(UInt64)"
+                      "ExplicitBounds" "Array(Float64)" "Flags" "UInt32"
+                      "Min" "Float64" "Max" "Float64"
+                      "AggregationTemporality" "Int32"})})
+
+(def ^:private metric-common-actions
+  [[:modify "ResourceAttributes" "Map(LowCardinality(String), String) CODEC(ZSTD(1))"]
+   [:add "ResourceSchemaUrl" "String CODEC(ZSTD(1))"]
+   [:modify "ScopeName" "String CODEC(ZSTD(1))"]
+   [:modify "ScopeVersion" "String CODEC(ZSTD(1))"]
+   [:add "ScopeAttributes" "Map(LowCardinality(String), String) CODEC(ZSTD(1))"]
+   [:add "ScopeDroppedAttrCount" "UInt32 CODEC(ZSTD(1))"]
+   [:add "ScopeSchemaUrl" "String CODEC(ZSTD(1))"]
+   [:modify "ServiceName" "LowCardinality(String) CODEC(ZSTD(1))"]
+   [:modify "MetricName" "LowCardinality(String) CODEC(ZSTD(1))"]
+   [:modify "MetricDescription" "String CODEC(ZSTD(1))"]
+   [:modify "MetricUnit" "String CODEC(ZSTD(1))"]
+   [:modify "Attributes" "Map(LowCardinality(String), String) CODEC(ZSTD(1))"]])
+
+(def ^:private metric-exemplar-actions
+  [[:add "Exemplars.FilteredAttributes"
+    "Array(Map(LowCardinality(String), String)) CODEC(ZSTD(1))"]
+   [:add "Exemplars.TimeUnix" "Array(DateTime) CODEC(ZSTD(1))"]
+   [:add "Exemplars.Value" "Array(Float64) CODEC(ZSTD(1))"]
+   [:add "Exemplars.SpanId" "Array(String) CODEC(ZSTD(1))"]
+   [:add "Exemplars.TraceId" "Array(String) CODEC(ZSTD(1))"]])
+
+(def ^:private metric-kind-actions
+  {:gauge [[:modify "Value" "Float64 CODEC(ZSTD(1))"]
+           [:add "Flags" "UInt32 CODEC(ZSTD(1))"]]
+   :sum [[:modify "Value" "Float64 CODEC(ZSTD(1))"]
+         [:add "Flags" "UInt32 CODEC(ZSTD(1))"]
+         [:modify "AggregationTemporality" "Int32 CODEC(ZSTD(1))"]
+         [:modify "IsMonotonic" "Boolean CODEC(Delta, ZSTD(1))"]]
+   :histogram [[:modify "Count" "UInt64 CODEC(Delta, ZSTD(1))"]
+               [:modify "Sum" "Float64 CODEC(ZSTD(1))"]
+               [:modify "BucketCounts" "Array(UInt64) CODEC(ZSTD(1))"]
+               [:modify "ExplicitBounds" "Array(Float64) CODEC(ZSTD(1))"]
+               [:add "Flags" "UInt32 CODEC(ZSTD(1))"]
+               [:modify "Min" "Float64 CODEC(ZSTD(1))"]
+               [:modify "Max" "Float64 CODEC(ZSTD(1))"]
+               [:modify "AggregationTemporality" "Int32 CODEC(ZSTD(1))"]]})
+
+(defn- metric-alter-ddl [table [operation column definition]]
+  (str "ALTER TABLE " table " "
+       (case operation :add "ADD" :modify "MODIFY")
+       " COLUMN IF " (case operation :add "NOT EXISTS " :modify "EXISTS ")
+       "`" column "` " definition))
+
+(def metric-v4-statements
+  (vec
+   (mapcat
+    (fn [kind]
+      (let [table (get metric-table-names kind)]
+        (map #(metric-alter-ddl table %)
+             (concat metric-common-actions
+                     (get metric-kind-actions kind)
+                     metric-exemplar-actions))))
+    [:gauge :sum :histogram])))
+
 (def migrations
   "Ordered migration registry. Entries are append-only once released. New
   migrations must use a consecutive version and idempotent statements."
@@ -234,7 +357,10 @@
                  log-scope-version-ddl
                  log-scope-attributes-ddl
                  log-attributes-ddl
-                 log-event-name-ddl]}])
+                 log-event-name-ddl]}
+   {:version 4
+    :name "clickstack-canonical-metric-inserts"
+    :statements metric-v4-statements}])
 
 (defn- migration-source [{:keys [statements]}]
   (str/join "\n-- jolt-otel-clickhouse migration statement --\n" statements))

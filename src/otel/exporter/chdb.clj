@@ -35,6 +35,17 @@
         remainder (mod nanos 1000000000)]
     (format "%d.%09d" seconds remainder)))
 
+(defn- metric-timestamp [nanos]
+  ;; chDB's JSONEachRow DateTime64 parser accepts numeric zero as the pdata
+  ;; absent-start sentinel, but rejects the equivalent text "0.000000000".
+  (if (zero? nanos)
+    0
+    (let [seconds (quot nanos 1000000000)
+          remainder (mod nanos 1000000000)]
+      ;; ClickHouse recognizes the decimal Unix form only with a ten-digit
+      ;; seconds field; padding also covers valid early-epoch metric points.
+      (format "%010d.%09d" seconds remainder))))
+
 (defn- trace-state-string [state]
   (cond
     (nil? state) ""
@@ -146,22 +157,46 @@
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
 
+(def ^:private empty-metric-exemplars
+  {"Exemplars.FilteredAttributes" []
+   "Exemplars.TimeUnix" []
+   "Exemplars.Value" []
+   "Exemplars.SpanId" []
+   "Exemplars.TraceId" []})
+
+(def ^:private metric-insert-queries
+  (into {}
+        (map (fn [[kind columns]]
+               [kind (str "insert into " (get schema/metric-table-names kind)
+                          " (" (str/join ", " columns) ")")]))
+        schema/clickstack-metric-insert-columns))
+
 (defn- metric-rows [resource collected]
   (for [{:keys [scope metrics]} collected
         metric metrics
         point (:data-points metric)]
     (merge
+     empty-metric-exemplars
      {"ResourceAttributes" (attrs (:attributes resource))
+      "ResourceSchemaUrl" (or (:schema-url resource) "")
       "ScopeName" (or (:name scope) "")
       "ScopeVersion" (or (:version scope) "")
-      "ServiceName" (service-name resource "unknown_service:jolt")
+      "ScopeAttributes" (attrs (:attributes scope))
+      ;; The current SDK scope never drops accepted attributes.
+      "ScopeDroppedAttrCount" 0
+      "ScopeSchemaUrl" (or (:schema-url scope) "")
+      "ServiceName" (service-name resource "")
       "MetricName" (:name metric)
       "MetricDescription" (or (:description metric) "")
       "MetricUnit" (or (:unit metric) "")
       "Attributes" (attrs (:attributes point))
-      "StartTimeUnix" (timestamp (or (:start-time-unix-nano point)
-                                     (:time-unix-nano point)))
-      "TimeUnix" (timestamp (:time-unix-nano point))}
+      ;; Gauge start time is absent in the canonical SDK model and therefore
+      ;; remains the pdata zero value rather than being fabricated from TimeUnix.
+      "StartTimeUnix" (metric-timestamp
+                       (or (:start-time-unix-nano point) 0))
+      "TimeUnix" (metric-timestamp (or (:time-unix-nano point) 0))
+      ;; No-recorded-value flags are not modeled; zero is the canonical default.
+      "Flags" 0}
      (case (:type metric)
        :gauge {"Value" (double (:value point))}
        :sum {"Value" (double (:value point))
@@ -179,7 +214,7 @@
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
       (insert-json-rows! connection
-                         (str "insert into otel_metrics_" (name type))
+                         (get metric-insert-queries type)
                          (map #(dissoc % :_type) selected)))))
 
 (defn- signal-open? [owned? expected-signals state signal]
