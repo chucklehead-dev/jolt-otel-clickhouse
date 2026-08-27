@@ -27,6 +27,12 @@ The drop-in gate is mechanical:
 5. Treat later collector schema changes as explicit migrations, never as
    require-time DDL mutation.
 
+The migration seam now exists: the current five tables are immutable migration
+v1, and `otel_schema_migrations` records its name, computed SHA-256, and applied
+time. Later ClickStack parity work must append consecutive, idempotent migration
+entries rather than edit v1. This foundation intentionally does not yet add the
+collector's missing columns, lookup tables, TTLs, or destructive retention.
+
 For embedded workloads the current bounded `FORMAT JSONEachRow` query batches
 avoid libchdb 26.7's broken streaming-insert `ThreadStatus` lifecycle. For a
 server ClickHouse target, keep the same exporter protocol but add a separate

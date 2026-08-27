@@ -33,3 +33,23 @@ columns that Jolt does not yet emit (exemplars and scope attributes). A later
 full ClickStack compatibility gate will migrate those to the collector's exact
 `Nested` layout; the important source names and correlation columns are already
 aligned.
+
+## Schema migrations
+
+Exporter startup runs `otel.exporter.chdb.schema/migrate!`. Migration v1 owns
+the five existing OTel tables, so databases created by earlier releases are
+adopted without rebuilding or deleting them. Applied migrations are recorded in
+`otel_schema_migrations` with a consecutive version, stable name, SHA-256 of
+the ordered SQL statements, and UTC application timestamp. Reopening a database
+is idempotent; a changed name/checksum, duplicate version, gap, or database from
+a newer migration plan fails startup with diagnostic `ex-data` instead of
+silently mutating history.
+
+chDB has no transactions. Each migration must therefore contain only
+idempotent statements. The runner records a version after every statement has
+succeeded; a statement or registry-write failure reports its phase, version,
+name, checksum, and statement context, leaves the migration unrecorded, and can
+be retried on the next open. The bootstrap `CREATE TABLE IF NOT EXISTS
+otel_schema_migrations` is the only operation outside the versioned registry.
+Keep application startup for one database serialized; cross-process migration
+locking is not part of this initial foundation.

@@ -3,6 +3,7 @@
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-property-test :as property]
             [otel.logs :as logs]
             [otel.metrics :as metrics]
@@ -21,8 +22,88 @@
     (do (swap! failures inc)
         (println "  FAIL" label "- expected" (pr-str expected) "got" (pr-str actual)))))
 
+(defn- thrown-data [f]
+  (try (f) nil (catch Throwable error (ex-data error))))
+
+(defn- delete-tree! [path]
+  (let [root (java.io.File. path)]
+    (when (.exists root)
+      (doseq [file (reverse (file-seq root))]
+        (.delete file)))))
+
+(defn- run-migration-checks []
+  (println "versioned chDB schema migrations")
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (schema/migrate! conn)
+    (schema/migrate! conn)
+    (let [applied (jdbc/fetch conn
+                              "select Version, Name, Checksum
+                                 from otel_schema_migrations order by Version")]
+      (check "fresh database records migration v1" [1] (mapv :version applied))
+      (check "migration name is durable" ["initial-otel-tables"]
+             (mapv :name applied))
+      (check "migration checksum is SHA-256" [64]
+             (mapv #(count (:checksum %)) applied))))
+
+  (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
+        path (.getAbsolutePath placeholder)
+        db-spec (str "chdb:" path)]
+    (.delete placeholder)
+    (try
+      (with-open [conn (jdbc/connection db-spec)]
+        (schema/migrate! conn))
+      (with-open [conn (jdbc/connection db-spec)]
+        (schema/migrate! conn)
+        (check "persistent database reopen keeps one migration record" 1
+               (:n (jdbc/fetch-one conn
+                                    "select count() as n from otel_schema_migrations"))))
+      (finally
+        (delete-tree! path))))
+
+  ;; chDB has no DDL transaction. Simulate a crash/failure after v1's first
+  ;; statement and prove the unrecorded, idempotent migration can be retried.
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (let [execute! jdbc/execute!
+          failed? (atom false)
+          failure
+          (with-redefs [jdbc/execute!
+                        (fn
+                          ([connection statement]
+                           (if (and (= statement schema/logs-ddl)
+                                    (compare-and-set! failed? false true))
+                             (throw (ex-info "injected migration failure" {}))
+                             (execute! connection statement)))
+                          ([connection statement options]
+                           (execute! connection statement options)))]
+            (thrown-data #(schema/migrate! conn)))]
+      (check "failed migration identifies statement phase" :statement (:phase failure))
+      (check "failed migration identifies version" 1 (:version failure))
+      (check "failed migration remains unrecorded" 0
+             (:n (jdbc/fetch-one conn
+                                  "select count() as n from otel_schema_migrations")))
+      (schema/migrate! conn)
+      (check "retry records migration exactly once" 1
+             (:n (jdbc/fetch-one conn
+                                  "select count() as n from otel_schema_migrations")))
+      (check "retry completed the interrupted table" 1
+             (:n (jdbc/fetch-one conn
+                                  "select count() as n from system.tables
+                                     where database=currentDatabase() and name='otel_logs'")))))
+
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (schema/migrate! conn)
+    (jdbc/execute! conn
+                   "alter table otel_schema_migrations
+                      update Checksum=repeat('0', 64) where Version=1
+                      settings mutations_sync=2")
+    (let [failure (thrown-data #(schema/migrate! conn))]
+      (check "checksum drift fails closed" :otel.exporter.chdb.schema/migration-drift
+             (:type failure))
+      (check "checksum drift identifies version" 1 (:version failure)))))
+
 (defn -main [& _]
   (reset! failures 0)
+  (run-migration-checks)
   (println "embedded chDB OTel exporter")
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (let [exporter (chdb-export/exporter {:connection conn})
@@ -64,6 +145,10 @@
           (check "log body persisted" "calling upstream" (:body log))
           (check "log/span trace correlation" (:traceid (first spans)) (:traceid log))
           (check "severity uses ClickStack column" "INFO" (:severitytext log)))
+        (chdb-export/exporter {:connection conn})
+        (check "exporter reopen does not duplicate migration history" 1
+               (:n (jdbc/fetch-one conn
+                                    "select count() as n from otel_schema_migrations")))
         (check "ClickStack gauge table" 1
                (:n (jdbc/fetch-one conn "select count() as n from otel_metrics_gauge")))
         (check "ClickStack sum table" 1
