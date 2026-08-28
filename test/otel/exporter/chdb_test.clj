@@ -4,6 +4,7 @@
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [jolt.process :as process]
+            [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-explorer-test :as explorer-test]
             [otel.exporter.chdb.schema :as schema]
@@ -387,11 +388,54 @@
            (:n (jdbc/fetch-one default-conn
                                "select count() as n from otel_schema_migrations")))))
 
+(defn- run-instrumentation-suppression-checks []
+  (println "telemetry database self-observation suppression")
+  (let [seen (atom [])
+        exporter (chdb-export/exporter
+                  {:connection :fake :create-schema? false :signals #{:spans}})
+        span {:name "test"
+              :kind :internal
+              :start-time-unix-nano 1
+              :end-time-unix-nano 2
+              :span-context {:trace-id "11111111111111111111111111111111"
+                             :span-id "2222222222222222"}
+              :resource {:attributes {}}
+              :scope {:name "test"}
+              :attributes {}
+              :events []
+              :links []
+              :status {:code :unset}}]
+    (with-redefs [jdbc/execute!
+                  (fn [_ _]
+                    (swap! seen conj (context/instrumentation-suppressed?))
+                    {:count 1})]
+      (check "span export succeeds under suppression"
+             true (export/export-spans! exporter [span])))
+    (check "exporter suppresses its own database instrumentation"
+           [true] @seen))
+  (let [seen (atom [])]
+    (with-redefs [jdbc/execute!
+                  (fn [& _]
+                    (swap! seen conj (context/instrumentation-suppressed?))
+                    {:count 0})
+                  jdbc/fetch-one
+                  (fn [& _]
+                    (swap! seen conj (context/instrumentation-suppressed?))
+                    {:checksum (apply str (repeat 64 "0"))})
+                  jdbc/fetch
+                  (fn [& _]
+                    (swap! seen conj (context/instrumentation-suppressed?))
+                    [])]
+      (schema/migrate! :fake))
+    (check "schema migration suppresses every database operation"
+           true (and (seq @seen) (every? true? @seen)))))
+
 (defn -main [& _]
   (reset! failures 0)
   (run-clean-explorer-load-check)
   (run-migration-checks)
   (run-logical-database-checks)
+  (run-instrumentation-suppression-checks)
   (println "embedded chDB OTel exporter")
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (let [exporter (chdb-export/exporter {:connection conn})

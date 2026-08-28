@@ -6,7 +6,8 @@
   ;; java.sql class shims, including ResultSet. Own that ordering here so a
   ;; standalone explorer consumer needs no undocumented bootstrap require.
   (:require [db.jdbc]
-            [jdbc.core :as jdbc]))
+            [jdbc.core :as jdbc]
+            [otel.context :as context]))
 
 (def max-time-range-nanos
   "Largest accepted half-open query window (24 hours)."
@@ -196,12 +197,13 @@
   [connection options]
   (let [{:keys [signal config fields start end limit text-length]}
         (validate-request! connection options)]
-    (vec
-     (mapcat
-      (fn [field]
-        (mapv #(assoc % :signal signal :field field)
-              (jdbc/fetch connection
-                          [(distribution-query config field)
-                           text-length start end limit]
-                          {:max-rows limit})))
-      fields))))
+    (context/with-instrumentation-suppressed
+      (vec
+       (mapcat
+        (fn [field]
+          (mapv #(assoc % :signal signal :field field)
+                (jdbc/fetch connection
+                            [(distribution-query config field)
+                             text-length start end limit]
+                            {:max-rows limit})))
+        fields)))))

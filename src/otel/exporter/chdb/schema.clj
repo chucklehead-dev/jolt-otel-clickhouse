@@ -6,7 +6,8 @@
   transactions, so every migration statement must be idempotent: a failed
   migration is left unrecorded and is retried on the next open."
   (:require [clojure.string :as str]
-            [jdbc.core :as jdbc]))
+            [jdbc.core :as jdbc]
+            [otel.context :as context]))
 
 (def traces-ddl
   "CREATE TABLE IF NOT EXISTS otel_traces (
@@ -437,12 +438,7 @@
          :phase :record :version version :name name :checksum checksum}
         cause)))))
 
-(defn migrate!
-  "Create the migration registry, validate its immutable history, and apply
-  pending migrations in order. Returns conn. Because chDB has no transactions,
-  failed migration DDL is deliberately not recorded and must be idempotent so a
-  later call can retry it safely."
-  [conn]
+(defn- migrate-unsuppressed! [conn]
   (jdbc/execute! conn migration-table-ddl)
   (let [plan (->> (validate-plan! migrations)
                   (mapv #(assoc % :checksum (migration-checksum conn %))))
@@ -452,6 +448,15 @@
             :when (not (contains? applied-versions (:version migration)))]
       (apply-migration! conn migration)))
   conn)
+
+(defn migrate!
+  "Create the migration registry, validate its immutable history, and apply
+  pending migrations in order. Returns conn. Because chDB has no transactions,
+  failed migration DDL is deliberately not recorded and must be idempotent so a
+  later call can retry it safely."
+  [conn]
+  (context/with-instrumentation-suppressed
+    (migrate-unsuppressed! conn)))
 
 (defn ensure-schema!
   "Compatibility alias for migrate!."

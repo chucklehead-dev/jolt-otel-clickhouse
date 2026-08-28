@@ -2,6 +2,7 @@
   (:require [db.jdbc]
             [jdbc.chdb]
             [jdbc.core :as jdbc]
+            [otel.context :as context]
             [otel.exporter.chdb.explorer :as explorer]
             [otel.exporter.chdb.schema :as schema]))
 
@@ -27,7 +28,9 @@
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [conn sqlvec opts]
-                    (swap! calls conj [conn sqlvec opts])
+                    (swap! calls conj
+                           [conn sqlvec opts
+                            (context/instrumentation-suppressed?)])
                     [{:value "api" :count 3}])]
       (check "explorer returns host-neutral rows tagged with signal and field"
              [{:value "api" :count 3 :signal :spans :field :service-name}
@@ -36,8 +39,12 @@
               :fake-connection
               (request {:fields [:service-name :http-request-method]
                         :limit 7 :max-text-length 42})))
-      (let [[_ [service-sql & service-params] service-opts] (first @calls)
-            [_ [http-sql & http-params] http-opts] (second @calls)]
+      (let [[_ [service-sql & service-params] service-opts service-suppressed?]
+            (first @calls)
+            [_ [http-sql & http-params] http-opts http-suppressed?]
+            (second @calls)]
+        (check "explorer suppresses its own database instrumentation"
+               [true true] [service-suppressed? http-suppressed?])
         (check "explorer binds every caller-controlled scalar"
                [42 1700000000000000000 1700000001000000000 7]
                service-params)

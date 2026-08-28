@@ -3,6 +3,7 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [jdbc.core :as jdbc]
+            [otel.context :as context]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
@@ -147,7 +148,8 @@
     (when (> size max-insert-bytes)
       (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
                       {:bytes size :limit max-insert-bytes})))
-    (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload))))
+    (context/with-instrumentation-suppressed
+      (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload)))))
 
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
