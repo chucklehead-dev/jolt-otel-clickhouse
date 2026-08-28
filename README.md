@@ -71,6 +71,12 @@ signals: `{:signals #{:spans :metrics :logs}}`. Shutdown is tracked per signal,
 so the SDK's metric shutdown cannot disable a later log/span batch drain. An
 export attempt for a signal omitted from this set returns `false` and records a
 descriptive `last-error` instead of failing later against a closed connection.
+The final signal atomically claims the one connection close before calling the
+connection. Concurrent and repeated shutdowns therefore cannot close it twice.
+A shutdown racing an in-progress close reports that the close was accepted. If
+the owning close call throws, that call and every later shutdown return `false`;
+the exporter records the terminal failure in `last-error` and does not retry a
+potentially partial native teardown.
 
 Migration v2 adds ClickStack's seven physical `Events.*` and `Links.*` Nested
 subcolumns and the `otel_traces_trace_id_ts` lookup table/materialized view.

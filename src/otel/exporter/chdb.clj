@@ -226,13 +226,47 @@
     :else true))
 
 (defn- close-signal! [connection owned? expected-signals state signal]
-  (let [[_ new] (swap-vals! state update :closed-signals conj signal)]
-    (when (and owned?
-               (not (:connection-closed? new))
-               (every? (:closed-signals new) expected-signals))
-      (.close connection)
-      (swap! state assoc :connection-closed? true)))
-  true)
+  ;; Claim the terminal close in the same atomic transition that records the
+  ;; last signal.  Marking the connection closed only after the external call
+  ;; leaves a window where another signal can invoke .close a second time.
+  (let [[old new]
+        (swap-vals!
+         state
+         (fn [snapshot]
+           (let [next (update snapshot :closed-signals conj signal)]
+             (if (and owned?
+                      (not (:connection-close-claimed? next))
+                      (every? (:closed-signals next) expected-signals))
+               (assoc next
+                      :connection-close-claimed? true
+                      :connection-close-status :closing)
+               next))))
+        claimed? (and (not (:connection-close-claimed? old))
+                      (:connection-close-claimed? new))]
+    (if-not claimed?
+      ;; A shutdown racing the owner observes that close has been accepted.
+      ;; Once it completes, every repeated shutdown returns its stable result.
+      (if (contains? new :connection-close-result)
+        (:connection-close-result new)
+        true)
+      (try
+        (.close connection)
+        (swap! state assoc
+               :connection-closed? true
+               :connection-close-status :closed
+               :connection-close-result true)
+        true
+        (catch Throwable error
+          ;; Closing an owned native handle is terminal even on failure: a
+          ;; blind retry could double-free a resource that closed partially.
+          ;; Keep the failed claim and expose the original error diagnostically.
+          (swap! state assoc
+                 :connection-closed? false
+                 :connection-close-status :failed
+                 :connection-close-result false
+                 :connection-close-error error
+                 :last-error error)
+          false)))))
 
 (defrecord ChdbExporter [connection owned? expected-signals state]
   export/SpanExporter
@@ -308,6 +342,8 @@
        (when create-schema? (schema/ensure-schema! conn))
        (->ChdbExporter conn owned? (set signals)
                        (atom {:closed-signals #{}
+                              :connection-close-claimed? false
+                              :connection-close-status :open
                               :connection-closed? false
                               :last-error nil}))
        (catch Throwable t

@@ -4,6 +4,7 @@
             [hegel.core :as h]
             [hegel.generator :as g]
             [hegel.stateful :as hs]
+            [hegel.trace :as ht]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.schema :as schema]
@@ -51,8 +52,190 @@
   (let [should-close? (every? closed expected)
         snapshot @(:state exporter)]
     (and (= (if should-close? 1 0) @close-count)
+         (= should-close? (:connection-close-claimed? snapshot))
+         (= (if should-close? :closed :open)
+            (:connection-close-status snapshot))
          (= should-close? (:connection-closed? snapshot))
          (= closed (:closed-signals snapshot)))))
+
+(defn- record-event! [journal event]
+  (swap! journal
+         (fn [events]
+           (conj events (assoc event :seq (inc (count events))))))
+  nil)
+
+(defn- traced-shutdown!
+  [journal exporter signal operation-id expected-result]
+  (record-event! journal {:kind :shutdown :phase :enter
+                          :operation-id operation-id :signal signal})
+  (try
+    (let [result (signal-shutdown! exporter signal)]
+      (record-event! journal {:kind :shutdown :phase :return
+                              :operation-id operation-id :signal signal
+                              :result result :expected-result expected-result})
+      result)
+    (catch Throwable error
+      (record-event! journal {:kind :shutdown :phase :throw
+                              :operation-id operation-id :signal signal})
+      (throw error))))
+
+(defn- shutdown-history-rule [expected-operation-count]
+  (ht/event-model
+   :owned-connection-close-history
+   {:initial {:active #{} :completed #{} :close-count 0 :valid? true}
+    :step
+    (fn [model event]
+      (case [(:kind event) (:phase event)]
+        [:shutdown :enter]
+        (let [operation-id (:operation-id event)]
+          (-> model
+              (update :active conj operation-id)
+              (update :valid? #(and %
+                                    (not (contains? (:active model) operation-id))
+                                    (not (contains? (:completed model) operation-id))))))
+
+        [:shutdown :return]
+        (let [operation-id (:operation-id event)]
+          (-> model
+              (update :active disj operation-id)
+              (update :completed conj operation-id)
+              (update :valid? #(and %
+                                    (contains? (:active model) operation-id)
+                                    (= (:expected-result event) (:result event))))))
+
+        [:connection :close]
+        (update model :close-count inc)
+
+        (assoc model :valid? false)))
+    :invariant (fn [model _]
+                 (and (:valid? model) (<= (:close-count model) 1)))
+    :final (fn [model]
+             (and (:valid? model)
+                  (empty? (:active model))
+                  (= expected-operation-count (count (:completed model)))
+                  (= 1 (:close-count model))))}))
+
+(defn- await! [value origin]
+  (let [result (deref value 2000 ::timeout)]
+    (check! (not= ::timeout result) origin "concurrent shutdown timed out" {})
+    result))
+
+(defn- close-race-history-property []
+  (h/run-test!
+   {:name "otel exporter concurrent close history"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 72}
+   (fn [_]
+     (let [expected (h/draw! (g/set {:min-size 1 :max-size 3}
+                                    (g/sampled-from signals)))
+           terminal-signal (h/draw! (g/sampled-from (vec expected)))
+           racing-signals
+           (h/draw! (g/vector {:min-size 1 :max-size 8}
+                              (g/sampled-from signals)))
+           journal (atom [])
+           operation-id (atom -1)
+           close-count (atom 0)
+           close-entered (promise)
+           release-close (promise)
+           connection
+           {:close
+            (fn [_]
+              (let [invocation (swap! close-count inc)]
+                (record-event! journal {:kind :connection :phase :close
+                                        :invocation invocation})
+                ;; Hold the winning call open while the caller executes every
+                ;; generated racing shutdown. A pre-fix exporter enters .close
+                ;; again here; the claimed exporter returns without doing so.
+                (when (= 1 invocation)
+                  (deliver close-entered true)
+                  (await! release-close
+                          "otel-exporter/close-race-release-timeout"))))}
+           exporter (chdb-export/->ChdbExporter
+                     connection true expected
+                     (atom {:closed-signals #{}
+                            :connection-close-claimed? false
+                            :connection-close-status :open
+                            :connection-closed? false :last-error nil}))
+           invoke! (fn [signal]
+                     (traced-shutdown! journal exporter signal
+                                       (swap! operation-id inc) true))
+           ;; Leave exactly one expected signal open. The generated racing
+           ;; history can then mix all three protocol shutdown entry points.
+           _ (doseq [signal (disj expected terminal-signal)]
+               (check! (invoke! signal)
+                       "otel-exporter/pre-terminal-shutdown-result"
+                       "non-terminal signal shutdown failed"
+                       {:signal signal :expected expected}))
+           winner (future (invoke! terminal-signal))]
+       (try
+         (await! close-entered "otel-exporter/close-race-enter-timeout")
+         (doseq [signal racing-signals]
+           (check! (invoke! signal)
+                   "otel-exporter/racing-shutdown-result"
+                   "shutdown racing an accepted close did not succeed"
+                   {:signal signal :expected expected}))
+         (finally
+           (deliver release-close true)))
+       (check! (await! winner "otel-exporter/close-race-winner-timeout")
+               "otel-exporter/close-race-winner-result"
+               "winning shutdown did not complete successfully"
+               {:signal terminal-signal})
+       (doseq [signal (conj racing-signals terminal-signal)]
+         (check! (invoke! signal)
+                 "otel-exporter/repeated-shutdown-result"
+                 "repeated shutdown did not preserve close success"
+                 {:signal signal :expected expected}))
+       (let [events @journal
+             operation-count (inc @operation-id)]
+         (ht/check! events
+                    [(ht/contiguous-sequence :close-history-contiguous)
+                     (shutdown-history-rule operation-count)]
+                    {:max-events 48}))))))
+
+(defn- close-failure-history-property []
+  (h/run-test!
+   {:name "otel exporter terminal close failure history"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 48}
+   (fn [_]
+     (let [signal (h/draw! (g/sampled-from signals))
+           repetitions (h/draw! (g/integer 1 8))
+           journal (atom [])
+           close-count (atom 0)
+           failure (ex-info "synthetic connection close failure"
+                            {:type ::synthetic-close-failure})
+           connection
+           {:close
+            (fn [_]
+              (let [invocation (swap! close-count inc)]
+                (record-event! journal {:kind :connection :phase :close
+                                        :invocation invocation})
+                (throw failure)))}
+           exporter (chdb-export/->ChdbExporter
+                     connection true #{signal}
+                     (atom {:closed-signals #{}
+                            :connection-close-claimed? false
+                            :connection-close-status :open
+                            :connection-closed? false :last-error nil}))]
+       (check! (false? (traced-shutdown! journal exporter signal 0 false))
+               "otel-exporter/close-failure-result"
+               "the shutdown which observed close failure did not return false"
+               {:signal signal})
+       (doseq [operation-id (range 1 (inc repetitions))]
+         (check! (false? (traced-shutdown! journal exporter signal operation-id false))
+                 "otel-exporter/close-failure-repeat-result"
+                 "repeated shutdown retried or forgot a terminal close failure"
+                 {:signal signal :operation-id operation-id}))
+       (let [snapshot @(:state exporter)]
+         (check! (and (= :failed (:connection-close-status snapshot))
+                      (false? (:connection-closed? snapshot))
+                      (identical? failure (:connection-close-error snapshot))
+                      (identical? failure (:last-error snapshot)))
+                 "otel-exporter/close-failure-state"
+                 "terminal close failure was not retained diagnostically"
+                 {:signal signal :state snapshot}))
+       (ht/check! @journal
+                  [(ht/contiguous-sequence :close-failure-history-contiguous)
+                   (shutdown-history-rule (inc repetitions))]
+                  {:max-events 24})))))
 
 (defn- lifecycle-property []
   (h/run-test!
@@ -67,6 +250,8 @@
            exporter (chdb-export/->ChdbExporter
                      connection true expected
                      (atom {:closed-signals #{}
+                            :connection-close-claimed? false
+                            :connection-close-status :open
                             :connection-closed? false
                             :last-error nil}))]
        (hs/run!
@@ -288,5 +473,7 @@
 
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
+   {:label "concurrent close history" :result (close-race-history-property)}
+   {:label "terminal close failure history" :result (close-failure-history-property)}
    {:label "JSON safety and correlation" :result (wire-json-property)}
    {:label "canonical metric wire rows" :result (metric-wire-property)}])
