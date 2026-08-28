@@ -2,7 +2,11 @@
   "Bounded, read-only distributions over the embedded ClickStack-shaped
   telemetry tables. Caller data is used only as query parameters; every table,
   timestamp column, and explored expression comes from a closed allowlist."
-  (:require [jdbc.core :as jdbc]))
+  ;; db.jdbc must load before jdbc.core is compiled: it installs Jolt's
+  ;; java.sql class shims, including ResultSet. Own that ordering here so a
+  ;; standalone explorer consumer needs no undocumented bootstrap require.
+  (:require [db.jdbc]
+            [jdbc.core :as jdbc]))
 
 (def max-time-range-nanos
   "Largest accepted half-open query window (24 hours)."
