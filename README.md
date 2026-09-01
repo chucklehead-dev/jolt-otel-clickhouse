@@ -177,7 +177,7 @@ log windows retain their `DateTime64(9)` nanosecond precision.
 
 ## Development and releases
 
-Use Jolt v0.7.27 or newer. Install the pinned native dependencies, then run
+Use Jolt v0.8.0 or newer. Install the pinned native dependencies, then run
 `jolt -M:test`. A release is an immutable Git tag pointing at a commit for
 which the test workflow passed; consumers should continue to pin that commit
 SHA even when also recording the tag.
