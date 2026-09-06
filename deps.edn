@@ -11,7 +11,7 @@
          :git/sha "932444043c0c06f9e295ba4963419b2481e9dd07"}}
  :aliases {:benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
-           :test {:extra-paths ["test"]
+           :test {:extra-paths ["test" "bench"]
                   :extra-deps
                   {io.github.chucklehead-dev/jolt-hegel
                    {:git/url "https://github.com/chucklehead-dev/jolt-hegel.git"

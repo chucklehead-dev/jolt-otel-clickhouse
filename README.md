@@ -189,22 +189,21 @@ batches directly through the ClickStack-compatible exporter into embedded
 chDB. It measures backend work, not HTTP client performance. Every run fails on
 stored-count disagreement and reports per-signal batch p50/p95/p99/max latency,
 total stored items per second, representative dashboard-query latency, and raw
-Jolt CPU/real/GC/memory counters for ingestion and querying.
-`live-heap-bytes + gc-bytes` is reported only as an allocation proxy; the
-independently sampled raw counters remain in the report.
+Jolt CPU/real/GC/memory counters for ingestion and querying. The derived
+Scheme-heap allocation total is exact for Chez-managed memory, but excludes
+native chDB allocation; calling-thread CPU likewise excludes chDB workers.
 
-Run the default 5,000-item in-memory baseline through the required toolchain
-wrapper:
+Run the default 5,000-item in-memory baseline:
 
 ```sh
-/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 jolt -M:benchmark
+jolt -M:benchmark
 ```
 
 The optional arguments are `<db-spec> <batches> <items-per-batch>
 <query-iterations> [output.edn]`. Use a fresh filesystem dbspec to compare
 persistent storage. Performance numbers are evidence rather than CI
-thresholds; a small correctness gate can use the same runner with bounded
-counts.
+thresholds. The test suite runs the same reconciled workload at bounded counts
+as a compile and correctness gate.
 
 The dated baseline and runtime availability matrix are in
 [`docs/benchmarks/jolt-chdb-backend.md`](docs/benchmarks/jolt-chdb-backend.md).

@@ -12,23 +12,24 @@ Chez Scheme 10.4.1, chDB through `jolt-chdb` commit
 Intel i7-1185G7 (4 cores/8 threads). These are single-run reference values, not
 CI thresholds.
 
-| Backend | Items/s | Span p50/p95 | Log p50/p95 | Metrics p50/p95 | Query p50/p95 | Ingest allocation proxy | GC count |
+| Backend | Items/s | Span p50/p95 | Log p50/p95 | Metrics p50/p95 | Query p50/p95 | Scheme heap allocated | GC count |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| memory | 1,001 | 53.60/59.19 ms | 37.71/45.62 ms | 153.82/163.31 ms | 4.46/5.37 ms | 3,537,460,576 B | 210 |
-| filesystem | 977 | 54.36/76.12 ms | 39.08/43.45 ms | 153.71/165.22 ms | 4.55/7.33 ms | 3,537,460,576 B | 210 |
+| memory | 1,011 | 52.08/70.25 ms | 37.30/46.46 ms | 149.96/164.68 ms | 4.80/9.21 ms | 3,539,478,208 B | 211 |
+| filesystem | 1,020 | 51.61/63.58 ms | 36.24/46.95 ms | 147.88/166.95 ms | 4.33/5.21 ms | 3,538,790,512 B | 211 |
 
-The filesystem run was about 2.5% slower in aggregate. The essentially
-identical allocation proxy and collection count indicate that encoding and
-export object churn dominate this small workload more than persistence does.
-That is a hypothesis for the next profile, not a causal conclusion from two
-single runs.
+Aggregate throughput differed by less than 1% in this single comparison. The
+allocation total is exact for the Chez-managed Scheme heap, but excludes native
+chDB/C++ allocations; calling-thread CPU also excludes chDB worker threads.
+Consequently these counters cannot attribute the difference to persistence or
+encoding. Repeated runs with process RSS and native profiling are required for
+that comparison.
 
 ## Runtime availability
 
 | Runtime | Real chDB backend | Comparable baseline |
 | --- | --- | --- |
 | Jolt | yes, native `jolt-chdb` driver | captured above |
-| Babashka | not yet; needs the proposed `babashka.ffi` backend | unavailable |
+| Babashka | not yet; needs a real `babashka.ffi` chDB backend | unavailable |
 | JVM Clojure | not yet; needs a real chDB native backend | unavailable |
 
 Mock or client-only numbers must not fill the unavailable cells. Once those

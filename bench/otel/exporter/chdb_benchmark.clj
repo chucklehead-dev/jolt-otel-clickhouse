@@ -65,7 +65,7 @@
      :attributes {:route (str "/synthetic/" (mod index 8))}
      :count 1
      :sum value
-     :bucket-counts [0 1 0]
+     :bucket-counts (if (<= value 10.0) [1 0 0] [0 1 0])
      :min value
      :max value}))
 
@@ -92,32 +92,32 @@
                  :explicit-bounds [10.0 100.0]
                  :data-points (mapv histogram-point indexes)}]}]))
 
-(defn- snapshot []
-  ;; These are independent host snapshots. Retain raw values so collector and
-  ;; scheduler effects stay visible instead of disappearing into one ratio.
+(defn- counter-sample []
+  ;; Each host counter takes its own statistics sample; this map is not atomic.
+  ;; Retain raw values so sampling skew and collector effects stay visible.
   {:nano-time (System/nanoTime)
-   :cpu-nanos (host/cpu-nanos)
+   :calling-thread-cpu-nanos (host/cpu-nanos)
    :real-nanos (host/real-nanos)
    :gc-count (host/gc-count)
-   :gc-cpu-nanos (host/gc-cpu-nanos)
-   :gc-real-nanos (host/gc-real-nanos)
+   :process-gc-cpu-nanos (host/gc-cpu-nanos)
+   :process-gc-real-nanos (host/gc-real-nanos)
    :gc-bytes (host/gc-bytes)
-   :live-heap-bytes (host/bytes-allocated)
+   :live-scheme-heap-bytes (host/bytes-allocated)
    :current-memory-bytes (host/current-memory-bytes)
    :maximum-memory-bytes (host/maximum-memory-bytes)})
 
 (defn- counter-delta [before after]
-  (let [counter-keys [:nano-time :cpu-nanos :real-nanos :gc-count
-                      :gc-cpu-nanos :gc-real-nanos :gc-bytes
-                      :live-heap-bytes :current-memory-bytes
+  (let [counter-keys [:nano-time :calling-thread-cpu-nanos :real-nanos :gc-count
+                      :process-gc-cpu-nanos :process-gc-real-nanos :gc-bytes
+                      :live-scheme-heap-bytes :current-memory-bytes
                       :maximum-memory-bytes]
         deltas (into {}
                      (map (fn [key]
                             [key (- (get after key) (get before key))]))
                      counter-keys)]
-    (assoc deltas :allocation-proxy-bytes
-           (- (+ (:live-heap-bytes after) (:gc-bytes after))
-              (+ (:live-heap-bytes before) (:gc-bytes before))))))
+    (assoc deltas :scheme-heap-bytes-allocated
+           (- (+ (:live-scheme-heap-bytes after) (:gc-bytes after))
+              (+ (:live-scheme-heap-bytes before) (:gc-bytes before))))))
 
 (defn- timed-nanos [f]
   (let [start (System/nanoTime)
@@ -140,9 +140,10 @@
      :p99-ms (milliseconds (percentile ordered 0.99))
      :max-ms (milliseconds (peek ordered))}))
 
-(defn- require-success! [signal ok]
+(defn- require-success! [exporter signal ok]
   (when-not ok
-    (throw (ex-info "ClickStack benchmark export failed" {:signal signal}))))
+    (throw (ex-info "ClickStack benchmark export failed"
+                    {:signal signal :cause (chdb/last-error exporter)}))))
 
 (defn- export-batch! [exporter service start items samples]
   (let [indexes (range start (+ start items))
@@ -155,9 +156,9 @@
         [metric-ok metric-ns]
         (timed-nanos #(export/export-metrics!
                        exporter (resource service) (metrics start items)))]
-    (require-success! :spans span-ok)
-    (require-success! :logs log-ok)
-    (require-success! :metrics metric-ok)
+    (require-success! exporter :spans span-ok)
+    (require-success! exporter :logs log-ok)
+    (require-success! exporter :metrics metric-ok)
     (-> samples
         (update :spans conj span-ns)
         (update :logs conj log-ns)
@@ -175,22 +176,27 @@
    :sum (count-table connection "otel_metrics_sum" service)
    :histogram (count-table connection "otel_metrics_histogram" service)})
 
-(defn- query-samples [connection service iterations expected-rows]
-  (let [query #(jdbc/fetch
-                connection
-                ["select SpanName, count() n,
-                         quantile(0.95)(Duration / 1000000.0) p95_ms
-                    from otel_traces where ServiceName=?
-                   group by SpanName order by n desc limit 8"
-                 service])]
+(defn- dashboard-query [connection service]
+  (jdbc/fetch connection
+              ["select SpanName, count() n,
+                       quantile(0.95)(Duration / 1000000.0) p95_ms
+                  from otel_traces where ServiceName=?
+                 group by SpanName order by n desc limit 8"
+               service]))
+
+(defn- query-samples [connection service iterations expected]
+  (let [query #(dashboard-query connection service)]
     (loop [remaining iterations samples []]
       (if (zero? remaining)
         samples
         (let [[rows elapsed] (timed-nanos query)]
-          (when-not (= expected-rows (count rows))
-            (throw (ex-info "ClickStack benchmark query returned wrong shape"
-                            {:expected-rows expected-rows
-                             :actual-rows (count rows)})))
+          (when-not (and (= (min 8 expected) (count rows))
+                         (= expected (reduce + 0 (map :n rows))))
+            (throw (ex-info "ClickStack benchmark query reconciliation failed"
+                            {:expected-rows (min 8 expected)
+                             :actual-rows (count rows)
+                             :expected-total expected
+                             :actual-total (reduce + 0 (map :n rows))})))
           (recur (dec remaining) (conj samples elapsed)))))))
 
 (defn run!
@@ -209,8 +215,7 @@
                             :signals #{:spans :logs :metrics}}))]
         (export-batch! exporter warmup-service 0 (min items 10)
                        {:spans [] :logs [] :metrics []})
-        (System/gc)
-        (let [before (snapshot)
+        (let [before (counter-sample)
               start (System/nanoTime)
               samples
               (loop [batch 0 samples {:spans [] :logs [] :metrics []}]
@@ -220,19 +225,24 @@
                          (export-batch! exporter service (* batch items) items
                                         samples))))
               elapsed (- (System/nanoTime) start)
-              after (snapshot)
+              after (counter-sample)
               expected (* batches items)
               expected-counts {:spans expected :logs expected :gauge expected
                                :sum expected :histogram expected}
               counts (stored-counts connection service)
-              query-before (snapshot)
+              _counts-validated
+              (when-not (= expected-counts counts)
+                (throw (ex-info
+                        "ClickStack benchmark count reconciliation failed"
+                        {:expected expected-counts :actual counts})))
+              ;; Keep compilation and first-use setup outside measured query
+              ;; timings and counters.
+              _query-warmed (dashboard-query connection service)
+              query-before (counter-sample)
               query-latencies (query-samples connection service query-iterations
-                                              (min 8 expected))
-              query-after (snapshot)
+                                              expected)
+              query-after (counter-sample)
               stored-items (* 5 expected)]
-          (when-not (= expected-counts counts)
-            (throw (ex-info "ClickStack benchmark count reconciliation failed"
-                            {:expected expected-counts :actual counts})))
           {:schema-version 1
            :runtime {:name :jolt
                      :scheme-version (host/scheme-version)
