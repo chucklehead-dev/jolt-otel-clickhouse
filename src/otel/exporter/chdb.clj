@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb
   "Direct Jolt OTel exporter for an embedded/in-process chDB database."
-  (:require [clojure.data.json :as json]
+  (:require [db.jdbc]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [jdbc.core :as jdbc]
             [otel.context :as context]

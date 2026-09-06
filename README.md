@@ -177,9 +177,36 @@ log windows retain their `DateTime64(9)` nanosecond precision.
 
 ## Development and releases
 
-Use Jolt v0.8.0 or newer. Install the pinned native dependencies, then run
+Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run
 `jolt -M:test`. A release is an immutable Git tag pointing at a commit for
 which the test workflow passed; consumers should continue to pin that commit
 SHA even when also recording the tag.
+
+### Backend benchmark
+
+The opt-in benchmark drives deterministic span, log, gauge, sum, and histogram
+batches directly through the ClickStack-compatible exporter into embedded
+chDB. It measures backend work, not HTTP client performance. Every run fails on
+stored-count disagreement and reports per-signal batch p50/p95/p99/max latency,
+total stored items per second, representative dashboard-query latency, and raw
+Jolt CPU/real/GC/memory counters for ingestion and querying.
+`live-heap-bytes + gc-bytes` is reported only as an allocation proxy; the
+independently sampled raw counters remain in the report.
+
+Run the default 5,000-item in-memory baseline through the required toolchain
+wrapper:
+
+```sh
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 jolt -M:benchmark
+```
+
+The optional arguments are `<db-spec> <batches> <items-per-batch>
+<query-iterations> [output.edn]`. Use a fresh filesystem dbspec to compare
+persistent storage. Performance numbers are evidence rather than CI
+thresholds; a small correctness gate can use the same runner with bounded
+counts.
+
+The dated baseline and runtime availability matrix are in
+[`docs/benchmarks/jolt-chdb-backend.md`](docs/benchmarks/jolt-chdb-backend.md).
 
 This project is licensed under the Eclipse Public License 2.0; see `LICENSE`.

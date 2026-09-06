@@ -5,7 +5,8 @@
   Schema changes are ordered, checksummed migrations. chDB does not support
   transactions, so every migration statement must be idempotent: a failed
   migration is left unrecorded and is retried on the next open."
-  (:require [clojure.string :as str]
+  (:require [db.jdbc]
+            [clojure.string :as str]
             [jdbc.core :as jdbc]
             [otel.context :as context]))
 

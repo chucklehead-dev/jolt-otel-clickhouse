@@ -29,14 +29,15 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
-(defn- run-clean-explorer-load-check []
+(defn- run-clean-source-load-check []
   ;; This cannot be an in-process require-order check: this test runner has
   ;; already loaded db.jdbc for its native integration tests. Disable the child
   ;; AOT cache so jdbc.core is compiled in a genuinely fresh runtime where the
   ;; explorer namespace must install the shim itself.
   (let [expression
-        (str "(require '[otel.exporter.chdb.explorer :as explorer])"
-             "(println :clean-explorer-load "
+        (str "(require '[otel.exporter.chdb :as chdb]"
+             "         '[otel.exporter.chdb.explorer :as explorer])"
+             "(println :clean-source-load "
              "(explorer/supported-fields :logs))")
         child (process/process
                ["jolt" "-e" expression]
@@ -45,14 +46,14 @@
         result (deref child 60000 ::timeout)]
     (when (= ::timeout result)
       (try (process/destroy-tree child) (catch Throwable _ nil)))
-    (check "explorer owns clean-process db.jdbc bootstrap"
+    (check "source namespaces own clean-process db.jdbc bootstrap"
            true
            (and (map? result)
                 (zero? (:exit result))
                 (str/includes? (str (:out result))
-                               ":clean-explorer-load")))
+                               ":clean-source-load")))
     (when (and (map? result) (not (zero? (:exit result))))
-      (println "  clean explorer stderr:" (str (:err result))))))
+      (println "  clean source stderr:" (str (:err result))))))
 
 (defn- delete-tree! [path]
   (let [root (java.io.File. path)]
@@ -432,7 +433,7 @@
 
 (defn -main [& _]
   (reset! failures 0)
-  (run-clean-explorer-load-check)
+  (run-clean-source-load-check)
   (run-migration-checks)
   (run-logical-database-checks)
   (run-instrumentation-suppression-checks)
