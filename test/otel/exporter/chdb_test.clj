@@ -6,6 +6,7 @@
             [jolt.process :as process]
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-benchmark :as benchmark]
             [otel.exporter.chdb-explorer-test :as explorer-test]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-property-test :as property]
@@ -29,30 +30,37 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
-(defn- run-clean-explorer-load-check []
+(defn- run-clean-source-load-check []
   ;; This cannot be an in-process require-order check: this test runner has
   ;; already loaded db.jdbc for its native integration tests. Disable the child
   ;; AOT cache so jdbc.core is compiled in a genuinely fresh runtime where the
-  ;; explorer namespace must install the shim itself.
-  (let [expression
-        (str "(require '[otel.exporter.chdb.explorer :as explorer])"
-             "(println :clean-explorer-load "
-             "(explorer/supported-fields :logs))")
-        child (process/process
-               ["jolt" "-e" expression]
-               {:out :string :err :string
-                :extra-env {"JOLT_AOT_CACHE" "0"}})
-        result (deref child 60000 ::timeout)]
-    (when (= ::timeout result)
-      (try (process/destroy-tree child) (catch Throwable _ nil)))
-    (check "explorer owns clean-process db.jdbc bootstrap"
-           true
-           (and (map? result)
-                (zero? (:exit result))
-                (str/includes? (str (:out result))
-                               ":clean-explorer-load")))
-    (when (and (map? result) (not (zero? (:exit result))))
-      (println "  clean explorer stderr:" (str (:err result))))))
+  ;; public namespace must install the shim itself.
+  (doseq [source-ns ['otel.exporter.chdb
+                     'otel.exporter.chdb.schema
+                     'otel.exporter.chdb.explorer]]
+    (let [expression (str "(require '" source-ns ")"
+                          "(println :clean-source-load '" source-ns ")")
+          child (process/process
+                 ["jolt" "-e" expression]
+                 {:out :string :err :string
+                  :extra-env {"JOLT_AOT_CACHE" "0"}})
+          result (deref child 60000 ::timeout)]
+      (when (= ::timeout result)
+        (try (process/destroy-tree child) (catch Throwable _ nil)))
+      (check (str source-ns " owns clean-process db.jdbc bootstrap")
+             true
+             (and (map? result)
+                  (zero? (:exit result))
+                  (str/includes? (str (:out result))
+                                 ":clean-source-load")))
+      (when (and (map? result) (not (zero? (:exit result))))
+        (println "  clean source stderr:" (str (:err result)))))))
+
+(defn- run-backend-benchmark-gate []
+  (let [report (benchmark/run! {:batches 1 :items 2 :query-iterations 1})]
+    (check "bounded backend benchmark reconciles every table"
+           (get-in report [:workload :expected-counts])
+           (get-in report [:workload :actual-counts]))))
 
 (defn- delete-tree! [path]
   (let [root (java.io.File. path)]
@@ -432,7 +440,8 @@
 
 (defn -main [& _]
   (reset! failures 0)
-  (run-clean-explorer-load-check)
+  (run-clean-source-load-check)
+  (run-backend-benchmark-gate)
   (run-migration-checks)
   (run-logical-database-checks)
   (run-instrumentation-suppression-checks)
