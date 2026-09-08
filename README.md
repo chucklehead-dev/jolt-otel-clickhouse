@@ -244,6 +244,11 @@ first snapshot whose start predates the requested window is not used because
 its boundary delta is unknown. This is observed-interval rate, not Prometheus
 boundary extrapolation.
 
+`:reset-count` counts reset intervals represented in a result: the first
+positive-duration interval whose `StartTimeUnix` is inside the window counts,
+as does each later positive-duration interval after the stored start advances.
+A zero-duration zero-valued reset produces no rate interval and is not counted.
+
 The operation fails closed when the stored seconds cannot prove an ordering or
 reset: duplicate timestamps, a decrease without a new start, overlapping reset
 epochs, or a positive reset value with zero duration are errors. It also rejects
@@ -253,9 +258,11 @@ intervals are rejected rather than split proportionally. Results always expose
 the stored kind/temporality/monotonic provenance plus interval and reset counts.
 
 In addition to the 24-hour, 100-result, and 256-character caps, the raw snapshot
-query is capped at 10,000 rows and 64 MiB with one query thread. The pinned
-ClickStack tables store both counter timestamps at whole-second precision, so
-ordering and rate durations have that same explicit precision.
+query is capped at 10,000 result rows and 64 MiB. chDB may scan at most 100,000
+rows or 64 MiB, use 128 MiB of query memory, run for 5 seconds, and use one
+query thread. The pinned ClickStack tables store both counter timestamps at
+whole-second precision, so ordering and rate durations have that same explicit
+precision.
 
 As with `top-values`, every caller-controlled scalar is a JDBC parameter and
 the tables, dimensions, buckets, aggregate functions, aliases, and ordering

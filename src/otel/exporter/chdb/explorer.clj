@@ -36,6 +36,11 @@
   "Largest chDB result payload accepted while loading counter snapshots (64 MiB)."
   67108864)
 
+(def max-counter-scan-rows 100000)
+(def max-counter-scan-bytes 67108864)
+(def max-counter-memory-bytes 134217728)
+(def max-counter-query-seconds 5)
+
 (def ^:private metric-series-request-keys
   #{:metric-kind :metric-name :group-by :bucket :aggregates
     :start-unix-nano :end-unix-nano :limit :max-text-length})
@@ -517,6 +522,10 @@
          "  AND IsMonotonic = true\n"
          "LIMIT ?\n"
          "SETTINGS max_result_bytes = " max-counter-source-bytes
+         ", max_rows_to_read = " max-counter-scan-rows
+         ", max_bytes_to_read = " max-counter-scan-bytes
+         ", max_memory_usage = " max-counter-memory-bytes
+         ", max_execution_time = " max-counter-query-seconds
          ", max_threads = 1")))
 
 (defn- cumulative-counter-params
@@ -527,7 +536,8 @@
 (defn- counter-row! [{:keys [group-by start end]} row]
   (when-not (map? row)
     (fail! ::invalid-counter-row
-           "cumulative counter source row must be a map" {:row row}))
+           "cumulative counter source row must be a map"
+           {:reason :non-map-source-row}))
   (let [start-time (:starttimenano row)
         time (:timenano row)
         value (:value row)]
@@ -552,7 +562,7 @@
                                 group-by)))
       (fail! ::invalid-counter-row
              "cumulative counter source row violates its stored provenance"
-             {:row row :window [start end]}))
+             {:reason :invalid-stored-provenance}))
     (assoc row :value (double value))))
 
 (defn- counter-stream-key [row]
@@ -574,8 +584,7 @@
       (fail! ::zero-duration-counter-interval
              "a cumulative counter interval has no stored duration"
              {:interval-start-unix-nano interval-start
-              :time-unix-nano interval-end :increase increase
-              :reset? reset? :projection projection}))
+              :time-unix-nano interval-end :reset? reset?}))
     {:projection projection :interval-start interval-start
      :interval-end interval-end :increase increase :duration duration
      :reset? reset?}))
@@ -590,7 +599,7 @@
           (when same-time?
             (fail! ::ambiguous-counter-order
                    "counter snapshots share a stored second and cannot be ordered exactly"
-                   {:time-unix-nano (:timenano row) :projection projection}))
+                   {:time-unix-nano (:timenano row)}))
           (if-not previous
             (let [reset-in-window? (>= (:starttimenano row) (:start request))
                   increase (:value row)
@@ -600,7 +609,7 @@
                       (fail! ::zero-duration-counter-interval
                              "a positive reset value has no stored duration"
                              {:time-unix-nano (:timenano row)
-                              :increase increase :projection projection}))
+                              :reset? true}))
                   intervals
                   (if (and reset-in-window?
                            (< (:starttimenano row) (:timenano row)))
@@ -618,22 +627,19 @@
                 (fail! ::ambiguous-counter-reset
                        "counter start time moved backwards"
                        {:previous-start-unix-nano previous-start
-                        :start-unix-nano current-start
-                        :projection projection}))
+                        :start-unix-nano current-start}))
               (when (and (> current-start previous-start)
                          (< current-start (:timenano previous)))
                 (fail! ::ambiguous-counter-reset
                        "counter reset epoch overlaps the preceding stored snapshot"
                        {:previous-time-unix-nano (:timenano previous)
-                        :start-unix-nano current-start
-                        :projection projection}))
+                        :start-unix-nano current-start}))
               (when (and (= current-start previous-start)
                          (< current-value previous-value))
                 (fail! ::unproven-counter-reset
                        "monotonic counter decreased without a new stored start time"
-                       {:previous-value previous-value :value current-value
-                        :start-unix-nano current-start
-                        :projection projection}))
+                       {:start-unix-nano current-start
+                        :time-unix-nano (:timenano row)}))
               (let [reset? (> current-start previous-start)
                     interval-start (if reset? current-start (:timenano previous))
                     increase (if reset? current-value
@@ -644,7 +650,7 @@
                         (fail! ::zero-duration-counter-interval
                                "a positive reset value has no stored duration"
                                {:time-unix-nano (:timenano row)
-                                :increase increase :projection projection}))
+                                :reset? true}))
                     intervals
                     (if (< interval-start (:timenano row))
                       (conj intervals
@@ -661,7 +667,7 @@
       (when (> (count streams) 1)
         (fail! ::ambiguous-counter-projection
                "selected dimensions collapse distinct OTEL counter streams"
-               {:projection projection :stream-count (count streams)
+               {:stream-count (count streams)
                 :group-by (:group-by request)}))))
   rows)
 

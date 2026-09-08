@@ -204,6 +204,11 @@
                     (.contains sql "AggregationTemporality = 2")
                     (.contains sql "IsMonotonic = true")
                     (.contains sql "max_result_bytes = 67108864")
+                    (.contains sql "max_rows_to_read = 100000")
+                    (.contains sql "max_bytes_to_read = 67108864")
+                    (.contains sql "max_memory_usage = 134217728")
+                    (.contains sql "max_execution_time = 5")
+                    (.contains sql "max_threads = 1")
                     (not (.contains sql "requests.total"))))
         (check "counter source query binds data and enforces the source cap"
                [128 1700000000000000000 1700000060000000000
@@ -249,11 +254,18 @@
             :otel.exporter.chdb.explorer/counter-interval-crosses-bucket]]]
     (with-redefs [jdbc/fetch (fn [& _] rows)]
       (let [request (cond-> (counter-request)
-                      (= label "bucket crossing") (assoc :bucket :1m))]
+                      (= label "bucket crossing") (assoc :bucket :1m))
+            data (thrown-data #(explorer/cumulative-counter-series
+                                :fake-connection request))]
         (check (str "counter series rejects " label)
                expected-type
-               (:type (thrown-data #(explorer/cumulative-counter-series
-                                      :fake-connection request)))))))
+               (:type data))
+        (check (str "counter failure evidence omits raw data " label)
+               true
+               (and (not-any? #(contains? data %)
+                              [:row :projection :value :previous-value
+                               :increase])
+                    (not (.contains (pr-str data) "/private")))))))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [_ sqlvec _]
