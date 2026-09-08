@@ -28,6 +28,14 @@
 
 (def default-text-length 128)
 
+(def max-counter-source-points
+  "Largest raw cumulative-counter snapshot set accepted by one request."
+  10000)
+
+(def max-counter-source-bytes
+  "Largest chDB result payload accepted while loading counter snapshots (64 MiB)."
+  67108864)
+
 (def ^:private metric-series-request-keys
   #{:metric-kind :metric-name :group-by :bucket :aggregates
     :start-unix-nano :end-unix-nano :limit :max-text-length})
@@ -36,6 +44,12 @@
   {:gauge "otel_metrics_gauge"
    :sum "otel_metrics_sum"
    :histogram "otel_metrics_histogram"})
+
+(def ^:private cumulative-counter-request-keys
+  #{:metric-kind :temporality :monotonic? :metric-name :group-by :bucket
+    :aggregates :start-unix-nano :end-unix-nano :limit :max-text-length})
+
+(def ^:private cumulative-counter-aggregates [:increase :rate])
 
 (def ^:private metric-series-group-fields
   {:service-name {:expression "ServiceName" :alias "servicename"
@@ -90,6 +104,17 @@
    :aggregates {:gauge scalar-aggregate-order
                 :sum scalar-aggregate-order
                 :histogram histogram-aggregate-order}})
+
+(defn supported-cumulative-counter-series
+  "Return the closed choices accepted by cumulative-counter-series. The
+  required provenance is deliberately data, not an inferred default."
+  []
+  {:metric-kinds [:sum]
+   :temporalities [:cumulative]
+   :monotonic-values [true]
+   :group-by metric-series-group-order
+   :buckets metric-series-bucket-order
+   :aggregates cumulative-counter-aggregates})
 
 (def ^:private metric-source
   "(SELECT TimeUnix, ServiceName, MetricName, MetricUnit, ScopeName,
@@ -239,6 +264,68 @@
 (defn- metric-aggregate-map [metric-kind]
   (if (= :histogram metric-kind)
     histogram-aggregates scalar-metric-aggregates))
+
+(defn- validate-cumulative-counter-request! [connection options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "cumulative counter series requires a connection"
+           {:connection connection}))
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "cumulative counter series request must be a map"
+           {:request options}))
+  (when-let [unknown (seq (remove cumulative-counter-request-keys
+                                  (keys options)))]
+    (fail! ::unsupported-request-key
+           "cumulative counter series request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (let [{:keys [metric-kind temporality monotonic? metric-name
+                start-unix-nano end-unix-nano limit]
+         :as options} options
+        group-by (get options :group-by [])
+        bucket (get options :bucket :none)
+        aggregates (get options :aggregates cumulative-counter-aggregates)
+        text-length (get options :max-text-length default-text-length)
+        start (validate-instant! :start-unix-nano start-unix-nano)
+        end (validate-instant! :end-unix-nano end-unix-nano)]
+    (when-not (and (= :sum metric-kind)
+                   (= :cumulative temporality)
+                   (true? monotonic?))
+      (fail! ::unsupported-counter-provenance
+             "counter increase/rate requires :sum, :cumulative, monotonic true provenance"
+             {:metric-kind metric-kind :temporality temporality
+              :monotonic? monotonic?
+              :required {:metric-kind :sum :temporality :cumulative
+                         :monotonic? true}}))
+    (validate-metric-name! metric-name)
+    (when-not (< start end)
+      (fail! ::invalid-time-window
+             "cumulative counter time window must be non-empty and increasing"
+             {:start-unix-nano start :end-unix-nano end}))
+    (when (> (- end start) max-time-range-nanos)
+      (fail! ::time-range-too-large
+             "cumulative counter time window exceeds the 24 hour hard cap"
+             {:actual (- end start) :maximum max-time-range-nanos}))
+    (validate-closed-vector! :group-by group-by metric-series-group-order
+                             max-field-count)
+    (when-not (contains? metric-series-buckets bucket)
+      (fail! ::unsupported-bucket
+             "cumulative counter bucket is not supported"
+             {:bucket bucket :supported metric-series-bucket-order}))
+    (when (empty? aggregates)
+      (fail! ::invalid-series-vector
+             "cumulative counter series must select at least one aggregate"
+             {:parameter :aggregates :value aggregates}))
+    (validate-closed-vector! :aggregates aggregates
+                             cumulative-counter-aggregates
+                             (count cumulative-counter-aggregates))
+    {:metric-kind metric-kind :temporality temporality :monotonic? monotonic?
+     :metric-name metric-name :group-by group-by :bucket bucket
+     :bucket-nanos (get metric-series-buckets bucket)
+     :aggregates aggregates :start start :end end
+     :limit (validate-positive-cap! :limit limit max-result-limit)
+     :text-length (validate-positive-cap! :max-text-length text-length
+                                          max-text-length)}))
 
 (defn- validate-metric-series-request! [connection options]
   (when (nil? connection)
@@ -396,6 +483,236 @@
     (cond-> (merge group-values aggregate-values)
       bucket-nanos (assoc :bucket-start-unix-nano bucket-value))))
 
+(def ^:private counter-stream-result-keys
+  [:streamservice :streammetricunit :streamscopename :streamscopeversion
+   :streamresourceschemaurl :streamscopeschemaurl :streamresourceattributes
+   :streamscopeattributes :streamattributes])
+
+(defn- cumulative-counter-query [{:keys [group-by]}]
+  (let [group-selects
+        (mapv (fn [field]
+                (let [{:keys [expression alias]}
+                      (get metric-series-group-fields field)]
+                  (str "leftUTF8(toString(" expression "), ?) AS " alias)))
+              group-by)]
+    (str "SELECT "
+         (when (seq group-selects)
+           (str (str/join ", " group-selects) ",\n       "))
+         "toInt64(toUnixTimestamp(StartTimeUnix)) * 1000000000 AS starttimenano,\n"
+         "       toInt64(toUnixTimestamp(TimeUnix)) * 1000000000 AS timenano,\n"
+         "       ServiceName AS streamservice, MetricUnit AS streammetricunit,\n"
+         "       ScopeName AS streamscopename, ScopeVersion AS streamscopeversion,\n"
+         "       ResourceSchemaUrl AS streamresourceschemaurl,\n"
+         "       ScopeSchemaUrl AS streamscopeschemaurl,\n"
+         "       ResourceAttributes AS streamresourceattributes,\n"
+         "       ScopeAttributes AS streamscopeattributes,\n"
+         "       Attributes AS streamattributes,\n"
+         "       Value AS value, AggregationTemporality AS aggregationtemporality,\n"
+         "       IsMonotonic AS ismonotonic\n"
+         "FROM otel_metrics_sum\n"
+         "WHERE " metric-time-nanos " >= ?\n"
+         "  AND " metric-time-nanos " < ?\n"
+         "  AND MetricName = ?\n"
+         "  AND AggregationTemporality = 2\n"
+         "  AND IsMonotonic = true\n"
+         "LIMIT ?\n"
+         "SETTINGS max_result_bytes = " max-counter-source-bytes
+         ", max_threads = 1")))
+
+(defn- cumulative-counter-params
+  [{:keys [group-by text-length start end metric-name]}]
+  (vec (concat (repeat (count group-by) text-length)
+               [start end metric-name (inc max-counter-source-points)])))
+
+(defn- counter-row! [{:keys [group-by start end]} row]
+  (when-not (map? row)
+    (fail! ::invalid-counter-row
+           "cumulative counter source row must be a map" {:row row}))
+  (let [start-time (:starttimenano row)
+        time (:timenano row)
+        value (:value row)]
+    (when-not (and (integer? start-time) (<= 0 start-time)
+                   (integer? time) (<= start-time time)
+                   (<= start time) (< time end)
+                   (finite-number? value) (<= 0 (double value))
+                   (= 2 (:aggregationtemporality row))
+                   (true? (:ismonotonic row))
+                   (every? map? (map row [:streamresourceattributes
+                                          :streamscopeattributes
+                                          :streamattributes]))
+                   (every? string? (map row [:streamservice :streammetricunit
+                                             :streamscopename
+                                             :streamscopeversion
+                                             :streamresourceschemaurl
+                                             :streamscopeschemaurl]))
+                   (every? string?
+                           (map #(get row
+                                      (:result-key
+                                       (get metric-series-group-fields %)))
+                                group-by)))
+      (fail! ::invalid-counter-row
+             "cumulative counter source row violates its stored provenance"
+             {:row row :window [start end]}))
+    (assoc row :value (double value))))
+
+(defn- counter-stream-key [row]
+  (mapv row counter-stream-result-keys))
+
+(defn- counter-projection [{:keys [group-by]} row]
+  (into {}
+        (map (fn [field]
+               (let [{:keys [result-key output-key]}
+                     (get metric-series-group-fields field)]
+                 [output-key (get row result-key)])))
+        group-by))
+
+(defn- counter-interval!
+  [projection reset? interval-start row increase]
+  (let [interval-end (:timenano row)
+        duration (- interval-end interval-start)]
+    (when-not (pos? duration)
+      (fail! ::zero-duration-counter-interval
+             "a cumulative counter interval has no stored duration"
+             {:interval-start-unix-nano interval-start
+              :time-unix-nano interval-end :increase increase
+              :reset? reset? :projection projection}))
+    {:projection projection :interval-start interval-start
+     :interval-end interval-end :increase increase :duration duration
+     :reset? reset?}))
+
+(defn- counter-stream-intervals [request rows]
+  (let [rows (sort-by :timenano rows)
+        projection (counter-projection request (first rows))]
+    (loop [previous nil, remaining rows, intervals []]
+      (if-let [row (first remaining)]
+        (let [same-time? (and previous
+                              (= (:timenano previous) (:timenano row)))]
+          (when same-time?
+            (fail! ::ambiguous-counter-order
+                   "counter snapshots share a stored second and cannot be ordered exactly"
+                   {:time-unix-nano (:timenano row) :projection projection}))
+          (if-not previous
+            (let [reset-in-window? (>= (:starttimenano row) (:start request))
+                  increase (:value row)
+                  _ (when (and reset-in-window?
+                               (= (:starttimenano row) (:timenano row))
+                               (pos? increase))
+                      (fail! ::zero-duration-counter-interval
+                             "a positive reset value has no stored duration"
+                             {:time-unix-nano (:timenano row)
+                              :increase increase :projection projection}))
+                  intervals
+                  (if (and reset-in-window?
+                           (< (:starttimenano row) (:timenano row)))
+                    (conj intervals
+                          (counter-interval!
+                           projection true (:starttimenano row)
+                           row increase))
+                    intervals)]
+              (recur row (next remaining) intervals))
+            (let [previous-start (:starttimenano previous)
+                  current-start (:starttimenano row)
+                  previous-value (:value previous)
+                  current-value (:value row)]
+              (when (< current-start previous-start)
+                (fail! ::ambiguous-counter-reset
+                       "counter start time moved backwards"
+                       {:previous-start-unix-nano previous-start
+                        :start-unix-nano current-start
+                        :projection projection}))
+              (when (and (> current-start previous-start)
+                         (< current-start (:timenano previous)))
+                (fail! ::ambiguous-counter-reset
+                       "counter reset epoch overlaps the preceding stored snapshot"
+                       {:previous-time-unix-nano (:timenano previous)
+                        :start-unix-nano current-start
+                        :projection projection}))
+              (when (and (= current-start previous-start)
+                         (< current-value previous-value))
+                (fail! ::unproven-counter-reset
+                       "monotonic counter decreased without a new stored start time"
+                       {:previous-value previous-value :value current-value
+                        :start-unix-nano current-start
+                        :projection projection}))
+              (let [reset? (> current-start previous-start)
+                    interval-start (if reset? current-start (:timenano previous))
+                    increase (if reset? current-value
+                                 (- current-value previous-value))
+                    _ (when (and reset?
+                                 (= interval-start (:timenano row))
+                                 (pos? increase))
+                        (fail! ::zero-duration-counter-interval
+                               "a positive reset value has no stored duration"
+                               {:time-unix-nano (:timenano row)
+                                :increase increase :projection projection}))
+                    intervals
+                    (if (< interval-start (:timenano row))
+                      (conj intervals
+                            (counter-interval!
+                             projection reset? interval-start row increase))
+                      intervals)]
+                (recur row (next remaining) intervals)))))
+        intervals))))
+
+(defn- ensure-unambiguous-projections! [request rows]
+  (doseq [[projection projected-rows]
+          (group-by #(counter-projection request %) rows)]
+    (let [streams (set (map counter-stream-key projected-rows))]
+      (when (> (count streams) 1)
+        (fail! ::ambiguous-counter-projection
+               "selected dimensions collapse distinct OTEL counter streams"
+               {:projection projection :stream-count (count streams)
+                :group-by (:group-by request)}))))
+  rows)
+
+(defn- interval-bucket! [{:keys [bucket-nanos]} interval]
+  (when bucket-nanos
+    (let [bucket-start (* (quot (dec (:interval-end interval)) bucket-nanos)
+                          bucket-nanos)
+          bucket-end (+ bucket-start bucket-nanos)]
+      (when (< (:interval-start interval) bucket-start)
+        (fail! ::counter-interval-crosses-bucket
+               "counter interval crosses a requested bucket boundary"
+               {:interval-start-unix-nano (:interval-start interval)
+                :time-unix-nano (:interval-end interval)
+                :bucket-start-unix-nano bucket-start
+                :bucket-end-unix-nano bucket-end}))
+      bucket-start)))
+
+(defn- summarize-counter-intervals [request intervals]
+  (let [groups
+        (group-by (fn [interval]
+                    [(interval-bucket! request interval)
+                     (:projection interval)])
+                  intervals)]
+    (->> groups
+         (map (fn [[[bucket-start projection] xs]]
+                (let [increase (reduce + 0.0 (map :increase xs))
+                      duration (reduce + 0 (map :duration xs))
+                      reset-count (count (filter :reset? xs))
+                      measures (cond-> {}
+                                 (some #{:increase} (:aggregates request))
+                                 (assoc :increase increase)
+                                 (some #{:rate} (:aggregates request))
+                                 (assoc :rate (/ increase
+                                                 (/ (double duration)
+                                                    1000000000.0))))]
+                  (cond-> (merge projection measures
+                                 {:metric-kind :sum
+                                  :temporality :cumulative
+                                  :monotonic? true
+                                  :interval-count (count xs)
+                                  :reset-count reset-count
+                                  :observed-duration-nanos duration})
+                    bucket-start
+                    (assoc :bucket-start-unix-nano bucket-start)))))
+         (sort-by (juxt #(get % :bucket-start-unix-nano 0)
+                        #(pr-str (select-keys % (map (comp :output-key
+                                                          metric-series-group-fields)
+                                                    (:group-by request))))))
+         (take (:limit request))
+         vec)))
+
 (defn- validate-request! [connection options]
   (when (nil? connection)
     (fail! ::invalid-connection
@@ -492,3 +809,48 @@
                  {:actual (when (vector? rows) (count rows))
                   :maximum limit}))
         (mapv #(normalize-metric-series-row request %) rows)))))
+
+(defn cumulative-counter-series
+  "Return bounded increase/rate rows for stored cumulative monotonic OTEL sums.
+
+  The request must explicitly state :metric-kind :sum, :temporality
+  :cumulative, and :monotonic? true. It otherwise uses metric-series' exact
+  metric name, dimensions, fixed buckets, window, text, and result limits, with
+  :aggregates restricted to :increase and :rate.
+
+  Each delta is derived only from an exactly ordered pair in one complete OTEL
+  stream identity. A new StartTimeUnix is a reset and contributes the new
+  cumulative value from that stored start. Decreases without a new start,
+  duplicate stored timestamps, overlapping reset epochs, projections that
+  collapse distinct streams, and intervals crossing a requested bucket all
+  fail instead of being approximated. The first in-window snapshot is omitted
+  when its start predates the window because its boundary increase is unknown.
+
+  :rate is increase per second over the returned observed intervals. Results
+  retain kind/temporality/monotonic provenance plus :interval-count,
+  :reset-count, and :observed-duration-nanos. Metric timestamps in the pinned
+  ClickStack schema have whole-second precision, which is also the ordering and
+  duration precision of this operation."
+  [connection options]
+  (let [{:keys [limit] :as request}
+        (validate-cumulative-counter-request! connection options)
+        sqlvec (into [(cumulative-counter-query request)]
+                     (cumulative-counter-params request))]
+    (context/with-instrumentation-suppressed
+      (let [source-rows (jdbc/fetch connection sqlvec
+                                    {:max-rows (inc max-counter-source-points)})]
+        (when-not (vector? source-rows)
+          (fail! ::invalid-series-result
+                 "cumulative counter source result must be a vector"
+                 {:actual (type source-rows)}))
+        (when (> (count source-rows) max-counter-source-points)
+          (fail! ::counter-source-too-large
+                 "cumulative counter source exceeds its hard point cap"
+                 {:actual (count source-rows)
+                  :maximum max-counter-source-points}))
+        (let [rows (mapv #(counter-row! request %) source-rows)]
+          (ensure-unambiguous-projections! request rows)
+          (summarize-counter-intervals
+           request
+           (mapcat #(counter-stream-intervals request %)
+                   (vals (group-by counter-stream-key rows)))))))))

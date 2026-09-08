@@ -567,6 +567,82 @@
                    "metric series output differs from the selected recipe"
                    {:request request :output output})))))))
 
+(defn- counter-property-row [start time value]
+  {:starttimenano start :timenano time :servicename "api"
+   :streamservice "api" :streammetricunit "{request}"
+   :streamscopename "property.metrics" :streamscopeversion "1"
+   :streamresourceschemaurl "" :streamscopeschemaurl ""
+   :streamresourceattributes {} :streamscopeattributes {}
+   :streamattributes {}
+   :value (double value) :aggregationtemporality 2 :ismonotonic true})
+
+(defn- cumulative-counter-property []
+  (h/run-test!
+   {:name "reset-aware cumulative counter series"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 160}
+   (fn [_]
+     (let [point-count (h/draw! (g/integer 1 20))
+           increments (h/draw! (g/vector {:size point-count}
+                                         (g/integer 0 1000000)))
+           durations (h/draw! (g/vector {:size point-count}
+                                        (g/integer 1 60)))
+           resets (h/draw! (g/vector {:size (dec point-count)} (g/boolean)))
+           aggregates-set (h/draw! (g/set {:min-size 1 :max-size 2}
+                                          (g/sampled-from [:increase :rate])))
+           aggregates (vec (filter aggregates-set [:increase :rate]))
+           base 1700000000000000000
+           {:keys [rows elapsed reset-count]}
+           (loop [index 0, previous-time base, epoch-start base,
+                  cumulative 0, rows [], elapsed 0, reset-count 0]
+             (if (= index point-count)
+               {:rows rows :elapsed elapsed :reset-count reset-count}
+               (let [reset? (or (zero? index) (nth resets (dec index)))
+                     epoch-start (if reset? previous-time epoch-start)
+                     cumulative (if reset? (nth increments index)
+                                    (+ cumulative (nth increments index)))
+                     duration-nanos (* (nth durations index) 1000000000)
+                     time (+ previous-time duration-nanos)]
+                 (recur (inc index) time epoch-start cumulative
+                        (conj rows (counter-property-row epoch-start time cumulative))
+                        (+ elapsed duration-nanos)
+                        (+ reset-count (if reset? 1 0))))))
+           total-increase (double (reduce + increments))
+           request {:metric-kind :sum :temporality :cumulative
+                    :monotonic? true :metric-name "counter' private"
+                    :group-by [:service-name] :bucket :none
+                    :aggregates aggregates :start-unix-nano base
+                    :end-unix-nano (+ base (* 21 60 1000000000)) :limit 10}
+           calls (atom [])]
+       (with-redefs [jdbc/fetch
+                     (fn [connection sqlvec options]
+                       (swap! calls conj [connection sqlvec options])
+                       rows)]
+         (let [result (explorer/cumulative-counter-series
+                       :fake-connection request)
+               output (first result)
+               [_ [sql & params] options] (first @calls)]
+           (check! (= 1 (count @calls))
+                   "otel-explorer/counter-query-count"
+                   "counter property did not execute one bounded source query" {})
+           (check! (and (if (some #{:increase} aggregates)
+                          (= total-increase (:increase output))
+                          (not (contains? output :increase)))
+                        (= reset-count (:reset-count output))
+                        (= point-count (:interval-count output))
+                        (= elapsed (:observed-duration-nanos output))
+                        (or (not (some #{:rate} aggregates))
+                            (= (/ total-increase (/ (double elapsed) 1000000000.0))
+                               (:rate output))))
+                   "otel-explorer/counter-model"
+                   "counter increase/rate differs from the generated reset model"
+                   {:request request :output output})
+           (check! (and (not (str/includes? sql "counter' private"))
+                        (some #(= "counter' private" %) params)
+                        (= {:max-rows 10001} options))
+                   "otel-explorer/counter-bounds-and-parameters"
+                   "counter source query lost parameterization or its hard row cap"
+                   {:sql sql :params params :options options})))))))
+
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
@@ -574,4 +650,6 @@
    {:label "JSON safety and correlation" :result (wire-json-property)}
    {:label "canonical metric wire rows" :result (metric-wire-property)}
    {:label "bounded metric series query grammar"
-    :result (metric-series-query-property)}])
+    :result (metric-series-query-property)}
+   {:label "reset-aware cumulative counter series"
+    :result (cumulative-counter-property)}])

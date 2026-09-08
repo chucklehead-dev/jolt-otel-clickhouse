@@ -32,6 +32,33 @@
            :limit 10}
           overrides)))
 
+(defn- counter-request
+  ([] (counter-request {}))
+  ([overrides]
+   (merge {:metric-kind :sum
+           :temporality :cumulative
+           :monotonic? true
+           :metric-name "requests.total"
+           :group-by [:service-name]
+           :bucket :none
+           :aggregates [:increase :rate]
+           :start-unix-nano 1700000000000000000
+           :end-unix-nano 1700000060000000000
+           :limit 10}
+          overrides)))
+
+(defn- counter-row [overrides]
+  (merge {:starttimenano 1700000000000000000
+          :timenano 1700000010000000000
+          :servicename "api"
+          :streamservice "api" :streammetricunit "{request}"
+          :streamscopename "demo.metrics" :streamscopeversion "1"
+          :streamresourceschemaurl "" :streamscopeschemaurl ""
+          :streamresourceattributes {} :streamscopeattributes {}
+          :streamattributes {}
+          :value 10.0 :aggregationtemporality 2 :ismonotonic true}
+         overrides))
+
 (defn run [check]
   (check "explorer publishes a closed span field allowlist"
          [:service-name :span-name :span-kind :status-code :scope-name
@@ -48,6 +75,15 @@
            :sum [:count :sum :min :max :avg :p50 :p95 :p99]
            :histogram [:count :sum :avg]}}
          (explorer/supported-metric-series))
+  (check "explorer publishes explicit cumulative counter provenance"
+         {:metric-kinds [:sum]
+          :temporalities [:cumulative]
+          :monotonic-values [true]
+          :group-by [:service-name :metric-unit :scope-name
+                     :deployment-environment]
+          :buckets [:none :1m :5m :15m :1h]
+          :aggregates [:increase :rate]}
+         (explorer/supported-cumulative-counter-series))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [conn sqlvec opts]
@@ -140,6 +176,84 @@
                          (thrown-data #(explorer/metric-series
                                         :fake-connection bad))))))
       (check "invalid metric series requests execute no SQL" 0 @calls)))
+  (let [calls (atom [])
+        rows [(counter-row {})
+              (counter-row {:timenano 1700000020000000000 :value 16.0})
+              (counter-row {:starttimenano 1700000025000000000
+                            :timenano 1700000030000000000 :value 4.0})
+              (counter-row {:starttimenano 1700000025000000000
+                            :timenano 1700000040000000000 :value 9.0})]]
+    (with-redefs [jdbc/fetch
+                  (fn [connection sqlvec opts]
+                    (swap! calls conj [connection sqlvec opts
+                                       (context/instrumentation-suppressed?)])
+                    rows)]
+      (let [result (explorer/cumulative-counter-series
+                    :fake-connection (counter-request))
+            [[_ [sql & params] opts suppressed?]] @calls]
+        (check "counter series derives reset-aware increase and observed rate"
+               [{:service-name "api" :increase 25.0
+                 :rate (/ 25.0 35.0)
+                 :metric-kind :sum :temporality :cumulative :monotonic? true
+                 :interval-count 4 :reset-count 2
+                 :observed-duration-nanos 35000000000}]
+               result)
+        (check "counter source query filters exact stored provenance"
+               true
+               (and (.contains sql "FROM otel_metrics_sum")
+                    (.contains sql "AggregationTemporality = 2")
+                    (.contains sql "IsMonotonic = true")
+                    (.contains sql "max_result_bytes = 67108864")
+                    (not (.contains sql "requests.total"))))
+        (check "counter source query binds data and enforces the source cap"
+               [128 1700000000000000000 1700000060000000000
+                "requests.total" 10001]
+               params)
+        (check "counter source fetch is bounded before host differencing"
+               {:max-rows 10001} opts)
+        (check "counter source query suppresses its own instrumentation"
+               true suppressed?))))
+  (let [bad-provenance [(dissoc (counter-request) :temporality)
+                        (assoc (counter-request) :metric-kind :gauge)
+                        (assoc (counter-request) :temporality :delta)
+                        (assoc (counter-request) :monotonic? false)
+                        (assoc (counter-request) :aggregates [:avg])]
+        calls (atom 0)]
+    (with-redefs [jdbc/fetch (fn [& _] (swap! calls inc) [])]
+      (doseq [bad bad-provenance]
+        (check "invalid counter provenance executes no SQL"
+               true
+               (boolean (:attribute-explorer/error
+                         (thrown-data #(explorer/cumulative-counter-series
+                                        :fake-connection bad))))))
+      (check "all invalid counter provenance failed before query execution"
+             0 @calls)))
+  (doseq [[label rows expected-type]
+          [["duplicate timestamp"
+            [(counter-row {}) (counter-row {:value 11.0})]
+            :otel.exporter.chdb.explorer/ambiguous-counter-order]
+           ["unproven decrease"
+            [(counter-row {})
+             (counter-row {:timenano 1700000020000000000 :value 9.0})]
+            :otel.exporter.chdb.explorer/unproven-counter-reset]
+           ["collapsed streams"
+            [(counter-row {})
+             (counter-row {:timenano 1700000020000000000
+                           :streamattributes {"route" "/private"}})]
+            :otel.exporter.chdb.explorer/ambiguous-counter-projection]
+           ["bucket crossing"
+            [(counter-row {:starttimenano 1699999990000000000
+                           :timenano 1700000010000000000})
+             (counter-row {:starttimenano 1699999990000000000
+                           :timenano 1700000041000000000 :value 20.0})]
+            :otel.exporter.chdb.explorer/counter-interval-crosses-bucket]]]
+    (with-redefs [jdbc/fetch (fn [& _] rows)]
+      (let [request (cond-> (counter-request)
+                      (= label "bucket crossing") (assoc :bucket :1m))]
+        (check (str "counter series rejects " label)
+               expected-type
+               (:type (thrown-data #(explorer/cumulative-counter-series
+                                      :fake-connection request)))))))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [_ sqlvec _]
@@ -318,4 +432,42 @@
               (series-request
                {:metric-kind :histogram :metric-name "cumulative.duration"
                 :group-by [] :bucket :none :aggregates [:count :sum :avg]
-                :start-unix-nano start :end-unix-nano end}))))))
+                :start-unix-nano start :end-unix-nano end})))))
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (schema/migrate! conn)
+    (let [start-second 1700000000
+          start (* start-second 1000000000)
+          end (+ start (* 60 1000000000))]
+      (doseq [[epoch-second time-second value]
+              [[start-second (+ start-second 10) 10.0]
+               [start-second (+ start-second 20) 16.0]
+               [(+ start-second 25) (+ start-second 30) 4.0]
+               [(+ start-second 25) (+ start-second 40) 9.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_sum
+             (TimeUnix, StartTimeUnix, ServiceName, MetricName, MetricUnit,
+              ScopeName, Value, AggregationTemporality, IsMonotonic)
+           VALUES (fromUnixTimestamp(?), fromUnixTimestamp(?), 'api',
+                   'requests.total', '{request}', 'demo.metrics', ?, 2, true)"
+          time-second epoch-second value]))
+      (doseq [[temporality monotonic value]
+              [[1 true 1000.0] [2 false 2000.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_sum
+             (TimeUnix, StartTimeUnix, ServiceName, MetricName, MetricUnit,
+              ScopeName, Value, AggregationTemporality, IsMonotonic)
+           VALUES (fromUnixTimestamp(?), fromUnixTimestamp(?), 'ignored',
+                   'requests.total', '{request}', 'demo.metrics', ?, ?, ?)"
+          (+ start-second 10) start-second value temporality monotonic]))
+      (let [rows (explorer/cumulative-counter-series
+                  conn (counter-request {:start-unix-nano start
+                                         :end-unix-nano end}))]
+        (check "native chDB cumulative counter differencing is reset-aware"
+               [{:service-name "api" :increase 25.0
+                 :rate (/ 25.0 35.0)
+                 :metric-kind :sum :temporality :cumulative :monotonic? true
+                 :interval-count 4 :reset-count 2
+                 :observed-duration-nanos 35000000000}]
+               rows)))))
