@@ -205,13 +205,64 @@ may group by service, metric unit, scope, or deployment environment. The same
 
 The semantics intentionally follow the stored OTLP points. Scalar percentiles
 use ClickHouse's approximate t-digest over gauge or sum point values. A `:sum`
-of a cumulative sum instrument sums its stored snapshots; it is not a counter
-increase or rate. Histogram percentiles and counter rates are not exposed yet,
-because those require temporality-aware bucket merging or reset-aware
-differencing. Cumulative histogram points likewise require that differencing
-before their interval count, sum, or average is meaningful. The metric kind is
-therefore explicit instead of silently mixing same-named rows from different
-physical tables.
+of a cumulative sum instrument still sums its stored snapshots; it is not a
+counter increase or rate. Histogram percentiles remain unavailable because
+they require temporality-aware bucket merging. Cumulative histogram points
+likewise require differencing before their interval count, sum, or average is
+meaningful. The metric kind is therefore explicit instead of silently mixing
+same-named rows from different physical tables.
+
+`explorer/cumulative-counter-series` is the separate, stricter path for
+counter increase and rate. Its request must state all three stored provenance
+facts explicitly:
+
+```clojure
+(explorer/cumulative-counter-series
+ conn {:metric-kind :sum
+       :temporality :cumulative
+       :monotonic? true
+       :metric-name "http.server.requests"
+       :bucket :5m
+       :group-by [:service-name]
+       :aggregates [:increase :rate]
+       :start-unix-nano start
+       :end-unix-nano end
+       :limit 100})
+;; => [{:bucket-start-unix-nano ...
+;;      :service-name "checkout"
+;;      :increase 42.0 :rate 0.14
+;;      :metric-kind :sum :temporality :cumulative :monotonic? true
+;;      :interval-count 3 :reset-count 1
+;;      :observed-duration-nanos 300000000000}]
+```
+
+Increase is the sum of exact differences between ordered snapshots from one
+complete OTEL stream identity. When `StartTimeUnix` advances, the new value is
+an explicit reset interval beginning at that stored start. Rate is increase
+divided by the summed duration of those observed intervals, in seconds. A
+first snapshot whose start predates the requested window is not used because
+its boundary delta is unknown. This is observed-interval rate, not Prometheus
+boundary extrapolation.
+
+`:reset-count` counts reset intervals represented in a result: the first
+positive-duration interval whose `StartTimeUnix` is inside the window counts,
+as does each later positive-duration interval after the stored start advances.
+A zero-duration zero-valued reset produces no rate interval and is not counted.
+
+The operation fails closed when the stored seconds cannot prove an ordering or
+reset: duplicate timestamps, a decrease without a new start, overlapping reset
+epochs, or a positive reset value with zero duration are errors. It also rejects
+a selected projection that collapses distinct resource/scope/attribute stream
+identities. A bucket accepts only intervals wholly contained by it; crossing
+intervals are rejected rather than split proportionally. Results always expose
+the stored kind/temporality/monotonic provenance plus interval and reset counts.
+
+In addition to the 24-hour, 100-result, and 256-character caps, the raw snapshot
+query is capped at 10,000 result rows and 64 MiB. chDB may scan at most 100,000
+rows or 64 MiB, use 128 MiB of query memory, run for 5 seconds, and use one
+query thread. The pinned ClickStack tables store both counter timestamps at
+whole-second precision, so ordering and rate durations have that same explicit
+precision.
 
 As with `top-values`, every caller-controlled scalar is a JDBC parameter and
 the tables, dimensions, buckets, aggregate functions, aliases, and ordering
