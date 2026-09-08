@@ -175,6 +175,49 @@ pinned metric tables store `TimeUnix` at whole-second precision, so metric
 window membership is necessarily evaluated at that stored precision; trace and
 log windows retain their `DateTime64(9)` nanosecond precision.
 
+### Bounded metric series
+
+`explorer/metric-series` turns an exact metric name and a closed aggregation
+recipe into rows suitable for a chart. The recipe, rather than the returned
+sample rows, can be saved in a dashboard or Plotje document:
+
+```clojure
+(explorer/metric-series
+ conn {:metric-kind :gauge
+       :metric-name "http.server.active_requests"
+       :bucket :5m
+       :group-by [:service-name]
+       :aggregates [:avg :p95 :p99]
+       :start-unix-nano start
+       :end-unix-nano end
+       :limit 100})
+;; => [{:bucket-start-unix-nano 1700000100000000000
+;;      :service-name "checkout", :avg 4.2, :p95 8.0, :p99 9.0} ...]
+```
+
+Call `supported-metric-series` to obtain the complete vocabulary. Gauge and
+sum point values support `:count`, `:sum`, `:min`, `:max`, `:avg`, `:p50`,
+`:p95`, and `:p99`. Delta explicit-histogram points support observation
+`:count`, `:sum`, and `:avg`; cumulative histogram snapshots are excluded.
+Recipes may use no bucket or fixed `:1m`, `:5m`, `:15m`, or `:1h` buckets and
+may group by service, metric unit, scope, or deployment environment. The same
+24-hour, 100-row, and 256-character hard caps apply.
+
+The semantics intentionally follow the stored OTLP points. Scalar percentiles
+use ClickHouse's approximate t-digest over gauge or sum point values. A `:sum`
+of a cumulative sum instrument sums its stored snapshots; it is not a counter
+increase or rate. Histogram percentiles and counter rates are not exposed yet,
+because those require temporality-aware bucket merging or reset-aware
+differencing. Cumulative histogram points likewise require that differencing
+before their interval count, sum, or average is meaningful. The metric kind is
+therefore explicit instead of silently mixing same-named rows from different
+physical tables.
+
+As with `top-values`, every caller-controlled scalar is a JDBC parameter and
+the tables, dimensions, buckets, aggregate functions, aliases, and ordering
+come from library-owned allowlists. Unknown recipe keys and choices fail before
+executing SQL.
+
 ## Development and releases
 
 Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run
