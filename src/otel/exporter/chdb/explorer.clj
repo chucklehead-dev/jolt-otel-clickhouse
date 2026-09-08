@@ -41,6 +41,13 @@
 (def max-counter-memory-bytes 134217728)
 (def max-counter-query-seconds 5)
 
+(def max-histogram-source-points max-counter-source-points)
+(def max-histogram-source-bytes max-counter-source-bytes)
+(def max-histogram-scan-rows max-counter-scan-rows)
+(def max-histogram-scan-bytes max-counter-scan-bytes)
+(def max-histogram-memory-bytes max-counter-memory-bytes)
+(def max-histogram-query-seconds max-counter-query-seconds)
+
 (def ^:private metric-series-request-keys
   #{:metric-kind :metric-name :group-by :bucket :aggregates
     :start-unix-nano :end-unix-nano :limit :max-text-length})
@@ -55,6 +62,22 @@
     :aggregates :start-unix-nano :end-unix-nano :limit :max-text-length})
 
 (def ^:private cumulative-counter-aggregates [:increase :rate])
+
+(def ^:private cumulative-histogram-request-keys
+  #{:metric-kind :temporality :metric-name :group-by :bucket :aggregates
+    :start-unix-nano :end-unix-nano :limit :max-text-length})
+
+(def ^:private cumulative-histogram-aggregates
+  [:count :sum :avg :p50 :p95 :p99])
+
+(def ^:private histogram-quantile-presets
+  {:p50 {:quantile 0.50 :numerator 1 :denominator 2}
+   :p95 {:quantile 0.95 :numerator 19 :denominator 20}
+   :p99 {:quantile 0.99 :numerator 99 :denominator 100}})
+
+(def ^:private histogram-quantiles
+  (into {} (map (fn [[name preset]] [name (:quantile preset)]))
+        histogram-quantile-presets))
 
 (def ^:private metric-series-group-fields
   {:service-name {:expression "ServiceName" :alias "servicename"
@@ -120,6 +143,17 @@
    :group-by metric-series-group-order
    :buckets metric-series-bucket-order
    :aggregates cumulative-counter-aggregates})
+
+(defn supported-cumulative-histogram-series
+  "Return the closed choices accepted by cumulative-histogram-series. The
+  required cumulative temporality is explicit rather than inferred."
+  []
+  {:metric-kinds [:histogram]
+   :temporalities [:cumulative]
+   :group-by metric-series-group-order
+   :buckets metric-series-bucket-order
+   :aggregates cumulative-histogram-aggregates
+   :quantiles histogram-quantiles})
 
 (def ^:private metric-source
   "(SELECT TimeUnix, ServiceName, MetricName, MetricUnit, ScopeName,
@@ -240,7 +274,7 @@
                  (not (str/blank? value)))
     (fail! ::invalid-metric-name
            "metric series requires a nonblank metric name of at most 256 characters"
-           {:metric-name value :maximum max-text-length}))
+           {:reason :invalid-metric-name :maximum max-text-length}))
   value)
 
 (defn- validate-closed-vector!
@@ -326,6 +360,65 @@
                              (count cumulative-counter-aggregates))
     {:metric-kind metric-kind :temporality temporality :monotonic? monotonic?
      :metric-name metric-name :group-by group-by :bucket bucket
+     :bucket-nanos (get metric-series-buckets bucket)
+     :aggregates aggregates :start start :end end
+     :limit (validate-positive-cap! :limit limit max-result-limit)
+     :text-length (validate-positive-cap! :max-text-length text-length
+                                          max-text-length)}))
+
+(defn- validate-cumulative-histogram-request! [connection options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "cumulative histogram series requires a connection"
+           {:connection connection}))
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "cumulative histogram series request must be a map"
+           {:request-kind :cumulative-histogram}))
+  (when-let [unknown (seq (remove cumulative-histogram-request-keys
+                                  (keys options)))]
+    (fail! ::unsupported-request-key
+           "cumulative histogram series request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (let [{:keys [metric-kind temporality metric-name start-unix-nano
+                end-unix-nano limit]
+         :as options} options
+        group-by (get options :group-by [])
+        bucket (get options :bucket :none)
+        aggregates (get options :aggregates cumulative-histogram-aggregates)
+        text-length (get options :max-text-length default-text-length)
+        start (validate-instant! :start-unix-nano start-unix-nano)
+        end (validate-instant! :end-unix-nano end-unix-nano)]
+    (when-not (and (= :histogram metric-kind)
+                   (= :cumulative temporality))
+      (fail! ::unsupported-histogram-provenance
+             "histogram reconstruction requires explicit cumulative histogram provenance"
+             {:metric-kind metric-kind :temporality temporality
+              :required {:metric-kind :histogram :temporality :cumulative}}))
+    (validate-metric-name! metric-name)
+    (when-not (< start end)
+      (fail! ::invalid-time-window
+             "cumulative histogram time window must be non-empty and increasing"
+             {:start-unix-nano start :end-unix-nano end}))
+    (when (> (- end start) max-time-range-nanos)
+      (fail! ::time-range-too-large
+             "cumulative histogram time window exceeds the 24 hour hard cap"
+             {:actual (- end start) :maximum max-time-range-nanos}))
+    (validate-closed-vector! :group-by group-by metric-series-group-order
+                             max-field-count)
+    (when-not (contains? metric-series-buckets bucket)
+      (fail! ::unsupported-bucket
+             "cumulative histogram bucket is not supported"
+             {:bucket bucket :supported metric-series-bucket-order}))
+    (when (empty? aggregates)
+      (fail! ::invalid-series-vector
+             "cumulative histogram series must select at least one aggregate"
+             {:parameter :aggregates}))
+    (validate-closed-vector! :aggregates aggregates
+                             cumulative-histogram-aggregates
+                             (count cumulative-histogram-aggregates))
+    {:metric-kind metric-kind :temporality temporality :metric-name metric-name
+     :group-by group-by :bucket bucket
      :bucket-nanos (get metric-series-buckets bucket)
      :aggregates aggregates :start start :end end
      :limit (validate-positive-cap! :limit limit max-result-limit)
@@ -719,6 +812,369 @@
          (take (:limit request))
          vec)))
 
+(def ^:private histogram-stream-result-keys
+  [:streamservice :streammetricdescription :streammetricunit
+   :streamscopename :streamscopeversion :streamscopedroppedattrcount
+   :streamresourceschemaurl
+   :streamscopeschemaurl :streamresourceattributes :streamscopeattributes
+   :streamattributes])
+
+(def ^:private histogram-source-types
+  {:starttimetype "DateTime" :timetype "DateTime" :counttype "UInt64"
+   :sumtype "Float64" :bucketcountstype "Array(UInt64)"
+   :explicitboundstype "Array(Float64)" :mintype "Float64"
+   :maxtype "Float64" :temporalitytype "Int32" :flagstype "UInt32"
+   :scopedroppedattrcounttype "UInt32"})
+
+(defn- cumulative-histogram-query [{:keys [group-by]}]
+  (let [group-selects
+        (mapv (fn [field]
+                (let [{:keys [expression alias]}
+                      (get metric-series-group-fields field)]
+                  (str "leftUTF8(toString(" expression "), ?) AS " alias)))
+              group-by)]
+    (str "SELECT "
+         (when (seq group-selects)
+           (str (str/join ", " group-selects) ",\n       "))
+         "toInt64(toUnixTimestamp(StartTimeUnix)) * 1000000000 AS starttimenano,\n"
+         "       toInt64(toUnixTimestamp(TimeUnix)) * 1000000000 AS timenano,\n"
+         "       ServiceName AS streamservice,\n"
+         "       MetricDescription AS streammetricdescription,\n"
+         "       MetricUnit AS streammetricunit, ScopeName AS streamscopename,\n"
+         "       ScopeVersion AS streamscopeversion,\n"
+         "       ScopeDroppedAttrCount AS streamscopedroppedattrcount,\n"
+         "       ResourceSchemaUrl AS streamresourceschemaurl,\n"
+         "       ScopeSchemaUrl AS streamscopeschemaurl,\n"
+         "       ResourceAttributes AS streamresourceattributes,\n"
+         "       ScopeAttributes AS streamscopeattributes,\n"
+         "       Attributes AS streamattributes,\n"
+         "       Count AS count, Sum AS sum, BucketCounts AS bucketcounts,\n"
+         "       ExplicitBounds AS explicitbounds, Min AS min, Max AS max,\n"
+         "       AggregationTemporality AS aggregationtemporality, Flags AS flags,\n"
+         "       toTypeName(StartTimeUnix) AS starttimetype,\n"
+         "       toTypeName(TimeUnix) AS timetype, toTypeName(Count) AS counttype,\n"
+         "       toTypeName(Sum) AS sumtype,\n"
+         "       toTypeName(BucketCounts) AS bucketcountstype,\n"
+         "       toTypeName(ExplicitBounds) AS explicitboundstype,\n"
+         "       toTypeName(Min) AS mintype, toTypeName(Max) AS maxtype,\n"
+         "       toTypeName(AggregationTemporality) AS temporalitytype,\n"
+         "       toTypeName(Flags) AS flagstype,\n"
+         "       toTypeName(ScopeDroppedAttrCount) AS scopedroppedattrcounttype\n"
+         "FROM otel_metrics_histogram\n"
+         "WHERE " metric-time-nanos " >= ?\n"
+         "  AND " metric-time-nanos " < ?\n"
+         "  AND MetricName = ?\n"
+         "  AND AggregationTemporality = 2\n"
+         "LIMIT ?\n"
+         "SETTINGS max_result_bytes = " max-histogram-source-bytes
+         ", max_rows_to_read = " max-histogram-scan-rows
+         ", max_bytes_to_read = " max-histogram-scan-bytes
+         ", max_memory_usage = " max-histogram-memory-bytes
+         ", max_execution_time = " max-histogram-query-seconds
+         ", max_threads = 1")))
+
+(defn- cumulative-histogram-params
+  [{:keys [group-by text-length start end metric-name]}]
+  (vec (concat (repeat (count group-by) text-length)
+               [start end metric-name (inc max-histogram-source-points)])))
+
+(defn- strictly-increasing-finite? [values]
+  (and (every? finite-number? values)
+       (every? (fn [[left right]] (< (double left) (double right)))
+               (partition 2 1 values))))
+
+(defn- histogram-row! [{:keys [group-by start end]} row]
+  (when-not (map? row)
+    (fail! ::invalid-histogram-row
+           "cumulative histogram source row must be a map"
+           {:reason :non-map-source-row}))
+  (let [start-time (:starttimenano row)
+        time (:timenano row)
+        observation-count (:count row)
+        sum (:sum row)
+        bucket-counts (:bucketcounts row)
+        explicit-bounds (:explicitbounds row)
+        minimum (:min row)
+        maximum (:max row)]
+    (when-not (= histogram-source-types
+                 (select-keys row (keys histogram-source-types)))
+      (fail! ::unsupported-histogram-schema
+             "cumulative histogram columns differ from the pinned schema"
+             {:reason :source-column-types}))
+    (when-not (and (integer? start-time) (<= 0 start-time)
+                   (integer? time) (<= start-time time)
+                   (<= start time) (< time end)
+                   (integer? observation-count) (<= 0 observation-count)
+                   (finite-number? sum)
+                   (vector? bucket-counts)
+                   (every? #(and (integer? %) (<= 0 %)) bucket-counts)
+                   (vector? explicit-bounds)
+                   (= (count bucket-counts) (inc (count explicit-bounds)))
+                   (strictly-increasing-finite? explicit-bounds)
+                   (finite-number? minimum) (finite-number? maximum)
+                   (or (zero? observation-count)
+                       (<= (double minimum) (double maximum)))
+                   (= observation-count (reduce + 0 bucket-counts))
+                   (or (pos? observation-count) (zero? (double sum)))
+                   (= 2 (:aggregationtemporality row))
+                   (= 0 (:flags row))
+                   (integer? (:streamscopedroppedattrcount row))
+                   (<= 0 (:streamscopedroppedattrcount row) 4294967295)
+                   (every? map? (map row [:streamresourceattributes
+                                          :streamscopeattributes
+                                          :streamattributes]))
+                   (every? string? (map row [:streamservice
+                                             :streammetricdescription
+                                             :streammetricunit :streamscopename
+                                             :streamscopeversion
+                                             :streamresourceschemaurl
+                                             :streamscopeschemaurl]))
+                   (every? string?
+                           (map #(get row
+                                      (:result-key
+                                       (get metric-series-group-fields %)))
+                                group-by)))
+      (fail! ::invalid-histogram-row
+             "cumulative histogram source row violates its stored contract"
+             {:reason :invalid-stored-histogram}))
+    (assoc row
+           :sum (double sum)
+           :min (double minimum)
+           :max (double maximum)
+           :explicitbounds (mapv double explicit-bounds))))
+
+(defn- histogram-stream-key [row]
+  (mapv row histogram-stream-result-keys))
+
+(defn- histogram-projection [{:keys [group-by]} row]
+  (into {}
+        (map (fn [field]
+               (let [{:keys [result-key output-key]}
+                     (get metric-series-group-fields field)]
+                 [output-key (get row result-key)])))
+        group-by))
+
+(defn- ensure-histogram-boundaries! [rows]
+  (let [boundary-count (count (set (map :explicitbounds rows)))]
+    (when (> boundary-count 1)
+      (fail! ::histogram-boundary-change
+             "explicit histogram boundaries changed within one OTEL stream"
+             {:boundary-schema-count boundary-count})))
+  rows)
+
+(defn- histogram-interval!
+  [projection bounds reset? interval-start row count sum bucket-counts]
+  (let [interval-end (:timenano row)
+        duration (- interval-end interval-start)]
+    (when-not (pos? duration)
+      (fail! ::zero-duration-histogram-interval
+             "a nonempty cumulative histogram interval has no stored duration"
+             {:interval-start-unix-nano interval-start
+              :time-unix-nano interval-end :reset? reset?}))
+    (when-not (and (integer? count) (<= 0 count)
+                   (finite-number? sum)
+                   (= count (reduce + 0 bucket-counts))
+                   (every? #(and (integer? %) (<= 0 %)) bucket-counts))
+      (fail! ::invalid-histogram-interval
+             "differenced cumulative histogram interval is invalid"
+             {:reason :invalid-difference :reset? reset?}))
+    {:projection projection :explicit-bounds bounds
+     :interval-start interval-start :interval-end interval-end
+     :count count :sum (double sum) :bucket-counts bucket-counts
+     :duration duration :reset? reset?}))
+
+(defn- histogram-stream-intervals [request rows]
+  (let [rows (->> rows (sort-by :timenano) vec ensure-histogram-boundaries!)
+        projection (histogram-projection request (first rows))
+        bounds (:explicitbounds (first rows))]
+    (loop [previous nil, remaining rows, intervals []]
+      (if-let [row (first remaining)]
+        (do
+          (when (and previous (= (:timenano previous) (:timenano row)))
+            (fail! ::ambiguous-histogram-order
+                   "histogram snapshots share a stored second and cannot be ordered exactly"
+                   {:time-unix-nano (:timenano row)}))
+          (if-not previous
+            (let [reset-in-window? (>= (:starttimenano row) (:start request))
+                  nonempty? (pos? (:count row))
+                  _ (when (and reset-in-window?
+                               (= (:starttimenano row) (:timenano row))
+                               nonempty?)
+                      (fail! ::zero-duration-histogram-interval
+                             "a nonempty reset histogram has no stored duration"
+                             {:time-unix-nano (:timenano row) :reset? true}))
+                  intervals (if (and reset-in-window?
+                                     (< (:starttimenano row) (:timenano row)))
+                              (conj intervals
+                                    (histogram-interval!
+                                     projection bounds true (:starttimenano row)
+                                     row (:count row) (:sum row)
+                                     (:bucketcounts row)))
+                              intervals)]
+              (recur row (next remaining) intervals))
+            (let [previous-start (:starttimenano previous)
+                  current-start (:starttimenano row)
+                  reset? (> current-start previous-start)]
+              (when (< current-start previous-start)
+                (fail! ::ambiguous-histogram-reset
+                       "histogram start time moved backwards"
+                       {:previous-start-unix-nano previous-start
+                        :start-unix-nano current-start}))
+              (when (and reset? (< current-start (:timenano previous)))
+                (fail! ::ambiguous-histogram-reset
+                       "histogram reset epoch overlaps the preceding stored snapshot"
+                       {:previous-time-unix-nano (:timenano previous)
+                        :start-unix-nano current-start}))
+              (when-not reset?
+                (when (or (< (:count row) (:count previous))
+                          (some true? (map < (:bucketcounts row)
+                                           (:bucketcounts previous))))
+                  (fail! ::unproven-histogram-reset
+                         "cumulative histogram count or bucket decreased without a new stored start time"
+                         {:time-unix-nano (:timenano row)
+                          :start-unix-nano current-start}))
+                (when (and (pos? (:count previous)) (pos? (:count row))
+                           (or (> (:min row) (:min previous))
+                               (< (:max row) (:max previous))))
+                  (fail! ::invalid-histogram-extrema
+                         "cumulative histogram extrema moved inward within one epoch"
+                         {:time-unix-nano (:timenano row)})))
+              (let [interval-start (if reset? current-start
+                                       (:timenano previous))
+                    count (if reset? (:count row)
+                              (- (:count row) (:count previous)))
+                    sum (if reset? (:sum row)
+                            (- (:sum row) (:sum previous)))
+                    bucket-counts
+                    (if reset? (:bucketcounts row)
+                        (mapv - (:bucketcounts row) (:bucketcounts previous)))
+                    nonempty? (pos? count)
+                    _ (when (and (= interval-start (:timenano row)) nonempty?)
+                        (fail! ::zero-duration-histogram-interval
+                               "a nonempty reset histogram has no stored duration"
+                               {:time-unix-nano (:timenano row) :reset? reset?}))
+                    intervals (if (< interval-start (:timenano row))
+                                (conj intervals
+                                      (histogram-interval!
+                                       projection bounds reset? interval-start row
+                                       count sum bucket-counts))
+                                intervals)]
+                (recur row (next remaining) intervals)))))
+        intervals))))
+
+(defn- ensure-unambiguous-histogram-projections! [request rows]
+  (doseq [[_ projected-rows] (group-by #(histogram-projection request %) rows)]
+    (let [streams (set (map histogram-stream-key projected-rows))]
+      (when (> (count streams) 1)
+        (fail! ::ambiguous-histogram-projection
+               "selected dimensions collapse distinct OTEL histogram streams"
+               {:stream-count (count streams)
+                :group-by (:group-by request)}))))
+  rows)
+
+(defn- histogram-interval-bucket! [{:keys [bucket-nanos]} interval]
+  (when bucket-nanos
+    (let [bucket-start (* (quot (dec (:interval-end interval)) bucket-nanos)
+                          bucket-nanos)
+          bucket-end (+ bucket-start bucket-nanos)]
+      (when (< (:interval-start interval) bucket-start)
+        (fail! ::histogram-interval-crosses-bucket
+               "histogram interval crosses a requested bucket boundary"
+               {:interval-start-unix-nano (:interval-start interval)
+                :time-unix-nano (:interval-end interval)
+                :bucket-start-unix-nano bucket-start
+                :bucket-end-unix-nano bucket-end}))
+      bucket-start)))
+
+(defn- bounded-histogram-quantile
+  [{:keys [quantile numerator denominator]} bounds bucket-counts]
+  (let [total (reduce + 0 bucket-counts)]
+    (when (pos? total)
+      (let [rank-numerator (* numerator total)
+            rank (* quantile (double total))
+            bucket-index
+            (loop [index 0, cumulative 0]
+              (let [next-cumulative (+ cumulative (nth bucket-counts index))]
+                ;; Bucket choice is exact even when UInt64 totals exceed the
+                ;; 53-bit integer precision of a double.
+                (if (or (>= (* denominator next-cumulative) rank-numerator)
+                        (= index (dec (count bucket-counts))))
+                  index
+                  (recur (inc index) next-cumulative))))
+            below (reduce + 0 (take bucket-index bucket-counts))
+            in-bucket (nth bucket-counts bucket-index)
+            lower (when (pos? bucket-index) (nth bounds (dec bucket-index)))
+            upper (when (< bucket-index (count bounds)) (nth bounds bucket-index))
+            finite-bucket? (and (some? lower) (some? upper))
+            width (when finite-bucket? (- upper lower))
+            _ (when (and finite-bucket? (not (finite-number? width)))
+                (fail! ::invalid-histogram-boundary-width
+                       "explicit histogram bucket width is not finite"
+                       {:bucket-index bucket-index}))
+            estimate (when finite-bucket?
+                       (+ lower (* width
+                                   (/ (double (- rank-numerator
+                                                 (* denominator below)))
+                                      (double (* denominator in-bucket))))))
+            error (when finite-bucket?
+                    (max (- estimate lower) (- upper estimate)))]
+        {:quantile quantile :rank rank
+         :rank-numerator rank-numerator :rank-denominator denominator
+         :estimate estimate :lower-bound lower :upper-bound upper
+         :lower-inclusive? false :upper-inclusive? (some? upper)
+         :lower-unbounded? (nil? lower) :upper-unbounded? (nil? upper)
+         :bucket-observation-count in-bucket
+         :absolute-error-bound error
+         :interpolation :uniform-within-explicit-bucket}))))
+
+(defn- summarize-histogram-intervals [request intervals]
+  (let [groups (group-by (fn [interval]
+                           [(histogram-interval-bucket! request interval)
+                            (:projection interval)])
+                         intervals)]
+    (->> groups
+         (map (fn [[[bucket-start projection] xs]]
+                (let [bounds (:explicit-bounds (first xs))
+                      observation-count (reduce + 0 (map :count xs))
+                      sum (reduce + 0.0 (map :sum xs))
+                      _ (when-not (finite-number? sum)
+                          (fail! ::invalid-histogram-aggregate
+                                 "reconstructed histogram sum is not finite"
+                                 {:interval-count (count xs)}))
+                      bucket-counts (reduce (fn [acc counts] (mapv + acc counts))
+                                            (vec (repeat (inc (count bounds)) 0))
+                                            (map :bucket-counts xs))
+                      reset-count (count (filter :reset? xs))
+                      duration (reduce + 0 (map :duration xs))
+                      measures
+                      (into {}
+                            (map (fn [aggregate]
+                                   [aggregate
+                                    (case aggregate
+                                      :count observation-count
+                                      :sum sum
+                                      :avg (when (pos? observation-count)
+                                             (/ sum (double observation-count)))
+                                      (bounded-histogram-quantile
+                                       (get histogram-quantile-presets aggregate)
+                                       bounds bucket-counts))]))
+                            (:aggregates request))]
+                  (cond-> (merge projection measures
+                                 {:metric-kind :histogram
+                                  :temporality :cumulative
+                                  :explicit-bounds bounds
+                                  :interval-count (count xs)
+                                  :reset-count reset-count
+                                  :observed-duration-nanos duration})
+                    bucket-start
+                    (assoc :bucket-start-unix-nano bucket-start)))))
+         (sort-by (juxt #(get % :bucket-start-unix-nano 0)
+                        #(pr-str (select-keys % (map (comp :output-key
+                                                          metric-series-group-fields)
+                                                    (:group-by request))))))
+         (take (:limit request))
+         vec)))
+
 (defn- validate-request! [connection options]
   (when (nil? connection)
     (fail! ::invalid-connection
@@ -860,3 +1316,46 @@
            request
            (mapcat #(counter-stream-intervals request %)
                    (vals (group-by counter-stream-key rows)))))))))
+
+(defn cumulative-histogram-series
+  "Return bounded interval aggregates and quantiles for cumulative OTEL explicit
+  histograms.
+
+  The request must explicitly state :metric-kind :histogram and :temporality
+  :cumulative. Snapshots are differenced only inside one exact resource, scope,
+  instrument, and attribute identity. A new StartTimeUnix begins a reset epoch.
+  Boundary changes, duplicate stored seconds, overlapping epochs, unexplained
+  count/bucket decreases, collapsed projections, and bucket-crossing intervals
+  fail closed. Sum is differenced arithmetically and may decrease when newly
+  observed values are negative. The first point is omitted when its epoch predates the
+  requested window because its boundary delta is unknown.
+
+  :p50/:p95/:p99 return a map containing the selected explicit-bucket interval,
+  a uniform-within-that-bucket interpolation, and its worst-case absolute error
+  bound. An implicit -Inf or +Inf edge is represented by a nil bound and an
+  unbounded flag; its estimate and numeric error are nil. A zero-observation
+  result has nil :avg and quantiles. No scalar samples are used or invented."
+  [connection options]
+  (let [{:keys [limit] :as request}
+        (validate-cumulative-histogram-request! connection options)
+        sqlvec (into [(cumulative-histogram-query request)]
+                     (cumulative-histogram-params request))]
+    (context/with-instrumentation-suppressed
+      (let [source-rows
+            (jdbc/fetch connection sqlvec
+                        {:max-rows (inc max-histogram-source-points)})]
+        (when-not (vector? source-rows)
+          (fail! ::invalid-series-result
+                 "cumulative histogram source result must be a vector"
+                 {:reason :non-vector-source-result}))
+        (when (> (count source-rows) max-histogram-source-points)
+          (fail! ::histogram-source-too-large
+                 "cumulative histogram source exceeds its hard point cap"
+                 {:actual (count source-rows)
+                  :maximum max-histogram-source-points}))
+        (let [rows (mapv #(histogram-row! request %) source-rows)]
+          (ensure-unambiguous-histogram-projections! request rows)
+          (summarize-histogram-intervals
+           request
+           (mapcat #(histogram-stream-intervals request %)
+                   (vals (group-by histogram-stream-key rows)))))))))

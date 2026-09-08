@@ -206,11 +206,11 @@ may group by service, metric unit, scope, or deployment environment. The same
 The semantics intentionally follow the stored OTLP points. Scalar percentiles
 use ClickHouse's approximate t-digest over gauge or sum point values. A `:sum`
 of a cumulative sum instrument still sums its stored snapshots; it is not a
-counter increase or rate. Histogram percentiles remain unavailable because
-they require temporality-aware bucket merging. Cumulative histogram points
-likewise require differencing before their interval count, sum, or average is
-meaningful. The metric kind is therefore explicit instead of silently mixing
-same-named rows from different physical tables.
+counter increase or rate. Histogram percentiles are not available from this
+scalar/delta API because they require temporality-aware bucket reconstruction.
+The separate `cumulative-histogram-series` operation provides that stricter
+contract. The metric kind is explicit instead of silently mixing same-named
+rows from different physical tables.
 
 `explorer/cumulative-counter-series` is the separate, stricter path for
 counter increase and rate. Its request must state all three stored provenance
@@ -268,6 +268,85 @@ As with `top-values`, every caller-controlled scalar is a JDBC parameter and
 the tables, dimensions, buckets, aggregate functions, aliases, and ordering
 come from library-owned allowlists. Unknown recipe keys and choices fail before
 executing SQL.
+
+### Cumulative explicit histograms
+
+`explorer/cumulative-histogram-series` reconstructs bounded interval histograms
+from cumulative OTEL explicit-histogram snapshots. The request must state the
+stored provenance explicitly:
+
+```clojure
+(explorer/cumulative-histogram-series
+ conn {:metric-kind :histogram
+       :temporality :cumulative
+       :metric-name "http.server.duration"
+       :bucket :5m
+       :group-by [:service-name]
+       :aggregates [:count :sum :avg :p50 :p95 :p99]
+       :start-unix-nano start
+       :end-unix-nano end
+       :limit 100})
+;; => [{:service-name "checkout"
+;;      :count 42 :sum 3150.0 :avg 75.0
+;;      :p50 {:quantile 0.5, :estimate 62.5
+;;            :lower-bound 50.0, :upper-bound 100.0
+;;            :absolute-error-bound 37.5
+;;            :interpolation :uniform-within-explicit-bucket ...}
+;;      :metric-kind :histogram, :temporality :cumulative
+;;      :explicit-bounds [10.0 50.0 100.0]
+;;      :interval-count 3, :reset-count 1
+;;      :observed-duration-nanos 300000000000}]
+```
+
+Count, sum, and every explicit bucket are differenced between exactly ordered
+snapshots of one complete OTEL stream. Stream identity includes the full
+resource, scope, instrument description/unit, and point attributes, not only
+the selected chart dimensions. When `StartTimeUnix` advances, the new snapshot
+starts a reset epoch and contributes from that stored start. A first snapshot
+whose start predates the requested window is omitted because its boundary
+delta is unknown. No scalar observations are synthesized from `Min`, `Max`, or
+`Sum`.
+
+Quantile rank is `q * count`. The selected bucket follows OTEL explicit bucket
+semantics: `(-Inf, b0]`, `(b0, b1]`, ..., `(bn, +Inf)`. For a finite bucket the
+reported estimate linearly interpolates the rank under an explicitly named
+uniform-within-bucket assumption. `:lower-bound` and `:upper-bound` state the
+distribution-free containing interval, and `:absolute-error-bound` is the
+larger distance from the estimate to either endpoint. This error can be as wide
+as the bucket and is not a statistical confidence interval. In an implicit
+infinite edge bucket the missing endpoint, estimate, and numeric error are
+`nil`, with `:lower-unbounded?` or `:upper-unbounded?` true; the library does not
+invent a finite tail. When reconstructed count is zero, `:avg` and every
+requested quantile are explicitly `nil`. A window with no reconstructable
+intervals returns `[]`.
+
+Bucket selection compares the fixed percentile as an exact integer fraction,
+so cumulative UInt64 counts above `2^53` do not pass through double precision.
+Each nonempty quantile exposes that exact rank as `:rank-numerator` and
+`:rank-denominator`; `:rank` and the within-bucket estimate are floating-point
+display values and do not control bucket selection.
+
+The operation fails closed on a changed or malformed boundary schema, changed
+physical column types, non-finite values, count/bucket inconsistency, point
+flags, duplicate stored seconds, backwards or overlapping epochs, same-epoch
+count/bucket decreases, inward-moving cumulative extrema, a projection
+that collapses distinct streams, or an interval crossing a requested chart
+bucket. Failures report only structural reasons and bounded timestamps/counts;
+raw attributes, bucket contents, and telemetry values are omitted from
+exception data. Invalid request evidence likewise omits the supplied metric
+name, including overlong credential-like strings.
+
+`Sum` is differenced arithmetically and may decrease within an epoch when new
+observations are negative; only a non-finite differenced sum is invalid. Count
+and bucket vectors remain cumulative structural evidence and cannot decrease
+without a new `StartTimeUnix`.
+
+The same 24-hour, 100-result, and 256-character request caps apply. The source
+query is additionally capped at 10,000 snapshots and 64 MiB of results; chDB
+may scan at most 100,000 rows or 64 MiB, use 128 MiB, run for 5 seconds, and use
+one query thread. Both histogram timestamps have the pinned table's whole-second
+precision. `supported-cumulative-histogram-series` returns the closed recipe
+vocabulary.
 
 ## Development and releases
 
