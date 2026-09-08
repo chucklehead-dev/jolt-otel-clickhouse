@@ -1,0 +1,39 @@
+name: durable-export-quint
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - .github/workflows/durable-export-quint.yml
+      - formal/quint/**
+      - scripts/check-durable-export-quint.sh
+      - scripts/generate-durable-export-itf.sh
+      - src/otel/exporter/chdb.clj
+      - test/otel/exporter/chdb_property_test.clj
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned model tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm install --global @informalsystems/quint@0.32.0
+          go install github.com/driusan/lmt@62fe18f2f6a6e11c158ff2b2209e1082a4fcd59c
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Check literate model
+        run: scripts/check-durable-export-quint.sh

@@ -3,6 +3,7 @@
   (:require [db.jdbc]
             [clojure.data.json :as json]
             [clojure.string :as str]
+            [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
             [otel.context :as context]
             [otel.exporter.chdb.schema :as schema]
@@ -226,6 +227,29 @@
     (contains? (:closed-signals @state) signal) false
     :else true))
 
+(def ^:private confirmed-durable-statuses #{:committed :reconciled})
+
+(defn- persistence-barrier! [connection state publication-required?]
+  (when-let [barrier (:persistence-barrier @state)]
+    (let [result
+          (context/with-instrumentation-suppressed
+            (barrier connection))]
+      (when-not result
+        (throw (ex-info "Persistence barrier did not confirm completion"
+                        {:type ::persistence-barrier-unconfirmed})))
+      (when (and publication-required?
+                 (:durable? @state)
+                 (not (contains? confirmed-durable-statuses (:status result))))
+        (throw (ex-info "Durable barrier did not confirm publication"
+                        {:type ::durable-barrier-unconfirmed
+                         :status (:status result)})))
+      result)))
+
+(defn- complete-batch! [connection state wrote?]
+  (when wrote?
+    (persistence-barrier! connection state true))
+  true)
+
 (defn- close-signal! [connection owned? expected-signals state signal]
   ;; Claim the terminal close in the same atomic transition that records the
   ;; last signal.  Marking the connection closed only after the external call
@@ -278,11 +302,17 @@
         (when (seq spans)
           (insert-json-rows! connection "insert into otel_traces"
                              (map span-row spans)))
-        true
+        (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
-  (flush-exporter! [_] true)
+  (flush-exporter! [_]
+    (try
+      (persistence-barrier! connection state false)
+      true
+      (catch Throwable e
+        (swap! state assoc :last-error e)
+        false)))
   (shutdown-exporter! [_]
     (close-signal! connection owned? expected-signals state :spans))
 
@@ -291,16 +321,20 @@
     (if-not (signal-open? owned? expected-signals state :metrics)
       false
       (try
-        (let [rows (for [{:keys [scope metrics]} collected
-                         metric metrics
-                         point (:data-points metric)
-                         :let [row (first (metric-rows resource
-                                                       [{:scope scope
-                                                         :metrics [(assoc metric :data-points [point])]}]))]]
-                     (assoc row :_type (:type metric)))]
+        (let [rows (vec
+                    (for [{:keys [scope metrics]} collected
+                          metric metrics
+                          point (:data-points metric)
+                          :let [row (first
+                                     (metric-rows
+                                      resource
+                                      [{:scope scope
+                                        :metrics
+                                        [(assoc metric :data-points [point])]}]))]]
+                      (assoc row :_type (:type metric))))]
           (doseq [type [:gauge :sum :histogram]]
-            (export-metric-type! connection type rows)))
-        true
+            (export-metric-type! connection type rows))
+          (complete-batch! connection state (boolean (seq rows))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
@@ -315,7 +349,7 @@
         (when (seq records)
           (insert-json-rows! connection log-insert-query
                              (map log-row records)))
-        true
+        (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
@@ -332,20 +366,48 @@
   defaults, spans+metrics. Export calls for an undeclared signal fail visibly
   through a false result and last-error. Unless :create-schema? is false,
   startup applies and validates the ordered schema migration registry in that
-  selected database."
+  selected database. With :durable? true, startup requires a Durable writer and,
+  when this exporter creates the schema, checkpoints it; every non-empty logical
+  signal batch returns true only after its WAL flush commits or reconciles.
+  :persistence-barrier supplies the same post-batch contract for another
+  persistence implementation and is mutually exclusive with :durable?."
   ([] (exporter {}))
-  ([{:keys [connection db-spec create-schema? signals]
+  ([{:keys [connection db-spec create-schema? signals durable?
+            persistence-barrier]
      :or {db-spec "chdb::memory:" create-schema? true
-          signals #{:spans :metrics}}}]
+          signals #{:spans :metrics} durable? false}}]
+   (when (and persistence-barrier (not (ifn? persistence-barrier)))
+     (throw (ex-info ":persistence-barrier must be callable"
+                     {:type ::invalid-persistence-barrier})))
+   (when (and durable? persistence-barrier)
+     (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
+                     {:type ::ambiguous-persistence-barrier})))
    (let [owned? (nil? connection)
-         conn (or connection (jdbc/connection db-spec))]
+         conn (or connection (jdbc/connection db-spec))
+         barrier (if durable? durable/flush! persistence-barrier)]
      (try
+       (when durable?
+         (when-not (= :writer (durable/connection-role conn))
+           (throw (ex-info "Durable telemetry export requires a writer connection"
+                           {:type ::durable-writer-required}))))
        (when create-schema? (schema/ensure-schema! conn))
+       ;; A full checkpoint makes the schema independently recoverable before
+       ;; the exporter can acknowledge its first telemetry batch.
+       (when (and durable? create-schema?)
+         (let [result
+               (context/with-instrumentation-suppressed
+                 (durable/checkpoint! conn))]
+           (when-not (contains? confirmed-durable-statuses (:status result))
+             (throw (ex-info "Durable schema checkpoint was not confirmed"
+                             {:type ::durable-checkpoint-unconfirmed
+                              :status (:status result)})))))
        (->ChdbExporter conn owned? (set signals)
                        (atom {:closed-signals #{}
                               :connection-close-claimed? false
                               :connection-close-status :open
                               :connection-closed? false
+                              :persistence-barrier barrier
+                              :durable? durable?
                               :last-error nil}))
        (catch Throwable t
          (when owned? (.close conn))

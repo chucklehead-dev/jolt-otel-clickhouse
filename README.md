@@ -56,6 +56,49 @@ When supplying an application-owned `:connection`, select its logical database
 in that connection's dbspec. The exporter uses its current database naturally
 and never issues `USE`; shutdown also leaves the shared connection open.
 
+### Durable acknowledgement
+
+Pass a Durable writer connection with `:durable? true` when exporter success
+must mean that the batch can be recovered from object storage:
+
+```clojure
+(require '[jdbc.chdb.durable.backend :as durable-backend]
+         '[jdbc.core :as jdbc]
+         '[otel.exporter.chdb :as chdb-export])
+
+(def store (durable-backend/memory-backend)) ; use local POSIX or S3 in production
+(def conn
+  (jdbc/connection
+   {:vendor "chdb-durable" :backend store
+    :owner "telemetry" :instance "process-1"
+    :database "otel" :lease-ttl-ms 30000}))
+
+(def exporter
+  (chdb-export/exporter
+   {:connection conn :durable? true
+    :signals #{:spans :metrics :logs}}))
+```
+
+Startup rejects an ordinary chDB connection or a read-only Durable connection
+before schema mutation, then checkpoints the migrated schema. Each non-empty
+span or log batch flushes once after insertion. A metric collection flushes
+once after all of its table inserts. An empty batch does not publish a new
+manifest. If insertion or the persistence barrier fails, export returns
+`false` and `last-error` retains the cause. Span force-flush reaches the same
+barrier.
+
+This is an at-least-once boundary: a failed or ambiguous attempt can have made
+local progress, so an SDK retry may produce duplicates. Durable's flush only
+returns successfully after its manifest transition is committed or reconciled.
+Callers with another persistence implementation can supply one callable
+`:persistence-barrier`; it must return a truthy confirmation or throw, and is
+mutually exclusive with `:durable?`.
+
+The literate model and its checked success trace live in
+[`formal/quint/durable-export-ack.md`](formal/quint/durable-export-ack.md).
+The Hegel history property replays all signal kinds and the checked-in Quint ITF
+success trace against the exporter boundaries.
+
 The exporter implements span, log, and metric exporter protocols. Metrics use
 ClickStack's `otel_metrics_gauge`, `otel_metrics_sum`, and
 `otel_metrics_histogram` table names. It sends each SDK-bounded batch through

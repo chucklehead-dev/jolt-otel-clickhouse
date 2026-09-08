@@ -267,6 +267,229 @@
          :invariants [(hs/invariant :owned-connection-closes-once
                                     lifecycle-invariant)]})))))
 
+(defn- sample-span []
+  {:name "durable-span" :kind :internal
+   :start-time-unix-nano 1 :end-time-unix-nano 2
+   :span-context {:trace-id "11111111111111111111111111111111"
+                  :span-id "2222222222222222"}
+   :resource {:attributes {}} :scope {:name "durable-test"}
+   :attributes {} :events [] :links [] :status {:code :unset}})
+
+(defn- sample-log []
+  {:timestamp-unix-nano 1 :trace-id "" :span-id ""
+   :resource {:attributes {}} :scope {:name "durable-test"}
+   :attributes {} :body "durable-log"})
+
+(defn- invoke-batch! [exporter signal non-empty?]
+  (case signal
+    :spans (export/export-spans! exporter
+                                 (if non-empty? [(sample-span)] []))
+    :logs (sdk-logs/export-logs! exporter
+                                 (if non-empty? [(sample-log)] []))
+    :metrics
+    (export/export-metrics!
+     exporter {:attributes {}}
+     (if non-empty?
+       [{:scope {:name "durable-test"}
+         :metrics [{:name "durable.metric" :type :gauge
+                    :data-points [{:value 1.0 :time-unix-nano 1
+                                   :attributes {}}]}]}]
+       []))))
+
+(defn- batch-history-rule [non-empty? expected-result]
+  (ht/event-model
+   :durable-export-batch-history
+   {:initial {:entered? false :inserted? false :insert-failed? false
+              :barrier-attempted? false
+              :barrier-completed? false :barrier-failed? false
+              :returned? false :valid? true}
+    :step
+    (fn [model event]
+      (case [(:kind event) (:phase event)]
+        [:export :enter]
+        (-> model
+            (assoc :entered? true)
+            (update :valid? #(and % (not (:entered? model))
+                                  (= non-empty? (:non-empty? event)))))
+
+        [:insert :return]
+        (-> model
+            (assoc :inserted? true)
+            (update :valid? #(and % (:entered? model) non-empty?
+                                  (not (:inserted? model))
+                                  (not (:insert-failed? model)))))
+
+        [:insert :throw]
+        (-> model
+            (assoc :insert-failed? true)
+            (update :valid? #(and % (:entered? model) non-empty?
+                                  (not (:inserted? model)))))
+
+        [:barrier :enter]
+        (-> model
+            (assoc :barrier-attempted? true)
+            (update :valid? #(and % (:inserted? model)
+                                  (not (:barrier-attempted? model)))))
+
+        [:barrier :return]
+        (-> model
+            (assoc :barrier-completed? true)
+            (update :valid? #(and % (:barrier-attempted? model)
+                                  (not (:barrier-failed? model)))))
+
+        [:barrier :throw]
+        (-> model
+            (assoc :barrier-failed? true)
+            (update :valid? #(and % (:barrier-attempted? model)
+                                  (not (:barrier-completed? model)))))
+
+        [:export :return]
+        (-> model
+            (assoc :returned? true)
+            (update :valid?
+                    #(and % (:entered? model) (not (:returned? model))
+                          (= expected-result (:result event))
+                          (if (and non-empty? (:result event))
+                            (:barrier-completed? model)
+                            true))))
+
+        (assoc model :valid? false)))
+    :invariant
+    (fn [model _]
+      (and (:valid? model)
+           (not (and (:insert-failed? model)
+                     (or (:barrier-completed? model)
+                         (:barrier-failed? model))))))
+    :final
+    (fn [model]
+      (and (:valid? model) (:returned? model)
+           (if non-empty?
+             (or (:insert-failed? model)
+                 (:barrier-completed? model)
+                 (:barrier-failed? model))
+             (and (not (:inserted? model))
+                  (not (:insert-failed? model))
+                  (not (:barrier-attempted? model))
+                  (not (:barrier-completed? model))
+                  (not (:barrier-failed? model))))))}))
+
+(defn- durable-barrier-history-property []
+  (h/run-test!
+   {:name "durable exporter acknowledgement history"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 120}
+   (fn [_]
+     (let [signal (h/draw! (g/sampled-from signals))
+           outcome (h/draw! (g/sampled-from
+                             [:empty :insert-failure
+                              :barrier-failure :committed
+                              :reconciled :unconfirmed]))
+           non-empty? (not= :empty outcome)
+           expected-result (contains? #{:empty :committed :reconciled} outcome)
+           journal (atom [])
+           failure (ex-info "synthetic persistence failure"
+                            {:type ::synthetic-persistence-failure})
+           state (atom {:closed-signals #{}
+                        :connection-close-claimed? false
+                        :connection-close-status :open
+                        :connection-closed? false
+                        :persistence-barrier
+                        (fn [_]
+                          (record-event! journal {:kind :barrier :phase :enter})
+                          (if (= :barrier-failure outcome)
+                            (do
+                              (record-event! journal
+                                             {:kind :barrier :phase :throw})
+                              (throw failure))
+                            (do
+                              (record-event! journal
+                                             {:kind :barrier :phase :return})
+                              {:status outcome})))
+                        :durable? true
+                        :last-error nil})
+           exporter (chdb-export/->ChdbExporter :fake false #{signal} state)]
+       (record-event! journal {:kind :export :phase :enter
+                               :non-empty? non-empty?})
+       (let [result
+             (with-redefs
+              [jdbc/execute!
+               (fn [& _]
+                 (if (= :insert-failure outcome)
+                   (do
+                     (record-event! journal {:kind :insert :phase :throw})
+                     (throw failure))
+                   (record-event! journal {:kind :insert :phase :return})))]
+              (invoke-batch! exporter signal non-empty?))]
+         (record-event! journal {:kind :export :phase :return :result result})
+         (check! (= expected-result result)
+                 "otel-exporter/durable-result"
+                 "export result disagreed with insert/barrier outcome"
+                 {:signal signal :outcome outcome})
+         (when-not result
+           (let [last-error (chdb-export/last-error exporter)]
+             (check! (if (= :unconfirmed outcome)
+                       (= :otel.exporter.chdb/durable-barrier-unconfirmed
+                          (:type (ex-data last-error)))
+                       (identical? failure last-error))
+                     "otel-exporter/durable-last-error"
+                     "failed persistence boundary did not retain its cause"
+                     {:signal signal :outcome outcome})))
+         (ht/check! @journal
+                    [(ht/contiguous-sequence :durable-history-contiguous)
+                     (batch-history-rule non-empty? expected-result)]
+                    {:max-events 8}))))))
+
+(defn- durable-itf-replay-property []
+  (h/run-test!
+   {:name "Quint durable export success replay"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 1}
+   (fn [_]
+     (let [trace (json/read-str
+                  (slurp "formal/quint/traces/durable-export-success.itf.json"))
+           model-states (get trace "states")
+           expected-actions (mapv #(get % "mbt::actionTaken") model-states)
+           final-model-state (last model-states)
+           state-key (first (filter #(str/ends-with? % "::state")
+                                    (keys final-model-state)))
+           expected-final (get final-model-state state-key)
+           implementation-actions (atom ["init"])
+           exporter
+           (chdb-export/->ChdbExporter
+            :fake false #{:spans}
+            (atom {:closed-signals #{}
+                   :connection-close-claimed? false
+                   :connection-close-status :open
+                   :connection-closed? false
+                   :persistence-barrier
+                   (fn [_]
+                     (swap! implementation-actions conj "barrierSuccess"))
+                   :last-error nil}))]
+       (let [result
+             (with-redefs [jdbc/execute!
+                           (fn [& _]
+                             (swap! implementation-actions conj "insertSuccess")
+                             {:count 1})]
+               (export/export-spans! exporter [(sample-span)]))]
+         (when result
+           (swap! implementation-actions conj "returnSuccess"))
+         (check! (= expected-actions @implementation-actions)
+                 "otel-exporter/quint-itf-actions"
+                 "implementation boundaries diverged from the Quint ITF trace"
+                 {:expected expected-actions
+                  :actual @implementation-actions})
+         (let [actual-final
+               {"barrierAttempted" true
+                "durable" result
+                "inserted" true
+                "phase" {"tag" (if result "Succeeded" "Failed")
+                         "value" {"#tup" []}}
+                "returnedFailure" (not result)
+                "returnedSuccess" result
+                "wrote" true}]
+           (check! (= expected-final actual-final)
+                   "otel-exporter/quint-itf-final-state"
+                   "implementation result diverged from the Quint state oracle"
+                   {:expected expected-final :actual actual-final})))))))
+
 (defn- wire-json-property []
   (h/run-test!
    {:name "otel exporter JSON safety and correlation"
@@ -795,6 +1018,10 @@
 
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
+   {:label "durable acknowledgement history"
+    :result (durable-barrier-history-property)}
+   {:label "Quint Durable success ITF replay"
+    :result (durable-itf-replay-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
    {:label "terminal close failure history" :result (close-failure-history-property)}
    {:label "JSON safety and correlation" :result (wire-json-property)}

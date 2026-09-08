@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-test
   (:require [db.jdbc]
             [clojure.string :as str]
+            [jdbc.chdb.durable :as durable]
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [jolt.process :as process]
@@ -459,6 +460,79 @@
       (check "migration record WAL contains no clock expression"
              true (not-any? #(str/includes? % "now64") records)))))
 
+(defn- run-durable-export-barrier-checks []
+  (println "durable export acknowledgement boundary")
+  (let [calls (atom [])
+        span {:name "durable-span" :kind :internal
+              :start-time-unix-nano 1 :end-time-unix-nano 2
+              :span-context
+              {:trace-id "11111111111111111111111111111111"
+               :span-id "2222222222222222"}
+              :resource {:attributes {}} :scope {:name "durable-test"}
+              :attributes {} :events [] :links [] :status {:code :unset}}]
+    (with-redefs [durable/connection-role
+                  (fn [_] (swap! calls conj :role) :writer)
+                  schema/ensure-schema!
+                  (fn [_] (swap! calls conj :schema))
+                  durable/checkpoint!
+                  (fn [_] (swap! calls conj :checkpoint) {:status :committed})
+                  durable/flush!
+                  (fn [_] (swap! calls conj :barrier) {:status :committed})
+                  jdbc/execute!
+                  (fn [& _] (swap! calls conj :insert) {:count 1})]
+      (let [exporter (chdb-export/exporter
+                      {:connection :fake :durable? true :signals #{:spans}})]
+        (check "Durable startup preflights before schema checkpoint"
+               [:role :schema :checkpoint] @calls)
+        (check "non-empty Durable span batch succeeds" true
+               (export/export-spans! exporter [span]))
+        (check "batch success follows its persistence barrier"
+               [:role :schema :checkpoint :insert :barrier] @calls)
+        (check "force flush reaches the same persistence barrier" true
+               (export/flush-exporter! exporter))
+        (check "force flush completes after the barrier"
+               [:role :schema :checkpoint :insert :barrier :barrier] @calls))))
+  (let [span {:name "unconfirmed-span" :kind :internal
+              :start-time-unix-nano 1 :end-time-unix-nano 2
+              :span-context {:trace-id "" :span-id ""}
+              :resource {:attributes {}} :scope {:name "durable-test"}
+              :attributes {} :events [] :links [] :status {:code :unset}}
+        exporter
+        (chdb-export/->ChdbExporter
+         :fake false #{:spans}
+         (atom {:closed-signals #{}
+                :connection-close-claimed? false
+                :connection-close-status :open
+                :connection-closed? false
+                :persistence-barrier (fn [_] {:status :empty})
+                :durable? true :last-error nil}))]
+    (with-redefs [jdbc/execute! (fn [& _] {:count 1})]
+      (check "non-empty batch rejects an empty Durable flush" false
+             (export/export-spans! exporter [span])))
+    (check "unconfirmed Durable publication is diagnosable"
+           :otel.exporter.chdb/durable-barrier-unconfirmed
+           (:type (ex-data (chdb-export/last-error exporter)))))
+  (let [calls (atom [])]
+    (with-redefs [durable/connection-role
+                  (fn [_] (swap! calls conj :role) :reader)
+                  schema/ensure-schema!
+                  (fn [_] (swap! calls conj :schema))]
+      (check "Durable reader is rejected with a precise type"
+             :otel.exporter.chdb/durable-writer-required
+             (:type (thrown-data
+                     #(chdb-export/exporter
+                       {:connection :reader :durable? true}))))
+      (check "reader rejection happens before schema mutation"
+             [:role] @calls)))
+  (let [opened (atom 0)]
+    (with-redefs [jdbc/connection (fn [_] (swap! opened inc) :fake)]
+      (check "invalid persistence barrier is rejected precisely"
+             :otel.exporter.chdb/invalid-persistence-barrier
+             (:type (thrown-data
+                     #(chdb-export/exporter
+                       {:persistence-barrier 42}))))
+      (check "invalid barrier is rejected before connection open" 0 @opened))))
+
 (defn -main [& _]
   (reset! failures 0)
   (run-clean-source-load-check)
@@ -466,6 +540,7 @@
   (run-migration-checks)
   (run-logical-database-checks)
   (run-instrumentation-suppression-checks)
+  (run-durable-export-barrier-checks)
   (println "embedded chDB OTel exporter")
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (let [exporter (chdb-export/exporter {:connection conn})
