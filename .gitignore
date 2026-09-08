@@ -1,3 +1,5 @@
 .jolt/
 .cpcache/
 *.chdb/
+/target/
+/_apalache-out/
