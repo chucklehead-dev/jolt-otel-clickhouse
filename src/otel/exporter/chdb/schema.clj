@@ -6,6 +6,7 @@
   transactions, so every migration statement must be idempotent: a failed
   migration is left unrecorded and is retried on the next open."
   (:require [db.jdbc]
+            [clojure.data.json :as json]
             [clojure.string :as str]
             [jdbc.core :as jdbc]
             [otel.context :as context]))
@@ -428,9 +429,12 @@
   (try
     (jdbc/execute!
      conn
-     ["insert into otel_schema_migrations
-          (Version, Name, Checksum, AppliedAt) values (?, ?, ?, now64(9, 'UTC'))"
-      version name checksum])
+     (str "insert into otel_schema_migrations
+             (Version, Name, Checksum) FORMAT JSONEachRow\n"
+          (json/write-str {"Version" version
+                           "Name" name
+                           "Checksum" checksum})
+          "\n"))
     (catch Throwable cause
       (throw
        (ex-info

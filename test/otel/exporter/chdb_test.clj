@@ -436,7 +436,28 @@
                     [])]
       (schema/migrate! :fake))
     (check "schema migration suppresses every database operation"
-           true (and (seq @seen) (every? true? @seen)))))
+           true (and (seq @seen) (every? true? @seen))))
+  (let [statements (atom [])]
+    (with-redefs [jdbc/execute!
+                  (fn [_ statement]
+                    (swap! statements conj statement)
+                    {:count 1})
+                  jdbc/fetch-one
+                  (fn [& _]
+                    {:checksum (apply str (repeat 64 "0"))})
+                  jdbc/fetch (fn [& _] [])]
+      (schema/migrate! :fake))
+    (let [records (filterv #(and (string? %)
+                                 (str/includes?
+                                  % "insert into otel_schema_migrations"))
+                           @statements)]
+      (check "each migration record is one replayable statement"
+             4 (count records))
+      (check "migration records use deterministic JSONEachRow"
+             true (every? #(str/includes? % " FORMAT JSONEachRow\n")
+                          records))
+      (check "migration record WAL contains no clock expression"
+             true (not-any? #(str/includes? % "now64") records)))))
 
 (defn -main [& _]
   (reset! failures 0)
