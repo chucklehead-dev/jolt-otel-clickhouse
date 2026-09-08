@@ -7,6 +7,7 @@
             [hegel.trace :as ht]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb.explorer :as explorer]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as sdk-logs]))
@@ -471,9 +472,106 @@
                  "otel-exporter/metric-temporality"
                  "metric temporality codes differ from pdata" {}))))))
 
+(def ^:private series-kinds [:gauge :sum :histogram])
+(def ^:private series-groups
+  [:service-name :metric-unit :scope-name :deployment-environment])
+(def ^:private series-buckets [:none :1m :5m :15m :1h])
+(def ^:private scalar-series-aggregates
+  [:count :sum :min :max :avg :p50 :p95 :p99])
+(def ^:private histogram-series-aggregates [:count :sum :avg])
+(def ^:private group-result-keys
+  {:service-name :servicename
+   :metric-unit :metricunit
+   :scope-name :scopename
+   :deployment-environment :deploymentenvironment})
+(def ^:private group-output-keys
+  {:service-name :service-name
+   :metric-unit :metric-unit
+   :scope-name :scope-name
+   :deployment-environment :deployment-environment})
+
+(defn- ordered-selection [order selected]
+  (vec (filter selected order)))
+
+(defn- metric-series-query-property []
+  (h/run-test!
+   {:name "bounded metric series query grammar"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 160}
+   (fn [_]
+     (let [kind (h/draw! (g/sampled-from series-kinds))
+           aggregate-order (if (= :histogram kind)
+                             histogram-series-aggregates
+                             scalar-series-aggregates)
+           aggregates (ordered-selection
+                       aggregate-order
+                       (h/draw! (g/set {:min-size 1
+                                        :max-size (count aggregate-order)}
+                                       (g/sampled-from aggregate-order))))
+           groups (ordered-selection
+                   series-groups
+                   (h/draw! (g/set {:min-size 0
+                                     :max-size (count series-groups)}
+                                    (g/sampled-from series-groups))))
+           bucket (h/draw! (g/sampled-from series-buckets))
+           metric-name (h/draw!
+                        (g/sampled-from
+                         ["queue.depth" "http.server.duration"
+                          "metric' OR 1 = 1 --" "line\nbreak" "unicode.λ"]))
+           limit (h/draw! (g/integer 1 explorer/max-result-limit))
+           start 1700000000000000000
+           end (+ start 60000000000)
+           row (merge
+                (into {} (map (fn [group]
+                                [(get group-result-keys group) (name group)]))
+                      groups)
+                (into {} (map (fn [aggregate]
+                                [aggregate (if (= :count aggregate) 2 2.5)]))
+                      aggregates)
+                (when (not= :none bucket)
+                  {:bucketstart start}))
+           calls (atom [])
+           request {:metric-kind kind :metric-name metric-name
+                    :group-by groups :bucket bucket :aggregates aggregates
+                    :start-unix-nano start :end-unix-nano end :limit limit}]
+       (with-redefs [jdbc/fetch
+                     (fn [connection sqlvec options]
+                       (swap! calls conj [connection sqlvec options])
+                       [row])]
+         (let [result (explorer/metric-series :fake-connection request)
+               [[connection [sql & params] options]] @calls
+               output (first result)
+               expected-keys
+               (into (set aggregates)
+                     (concat (map group-output-keys groups)
+                             (when (not= :none bucket)
+                               [:bucket-start-unix-nano])))]
+           (check! (= 1 (count @calls))
+                   "otel-explorer/series-query-count"
+                   "a valid generated series request did not execute exactly once"
+                   {:request request :calls @calls})
+           (check! (= :fake-connection connection)
+                   "otel-explorer/series-connection"
+                   "metric series did not use the supplied connection"
+                   {:request request})
+           (check! (= {:max-rows limit} options)
+                   "otel-explorer/series-row-bound"
+                   "metric series did not propagate its hard result bound"
+                   {:request request :options options})
+           (check! (and (not (str/includes? sql metric-name))
+                        (some #(= metric-name %) params))
+                   "otel-explorer/series-parameterization"
+                   "caller metric name escaped the JDBC parameter boundary"
+                   {:request request :sql sql :params params})
+           (check! (= expected-keys (set (keys output)))
+                   "otel-explorer/series-output-shape"
+                   "metric series output differs from the selected recipe"
+                   {:request request :output output})))))))
+
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
    {:label "terminal close failure history" :result (close-failure-history-property)}
    {:label "JSON safety and correlation" :result (wire-json-property)}
-   {:label "canonical metric wire rows" :result (metric-wire-property)}])
+   {:label "canonical metric wire rows" :result (metric-wire-property)}
+   {:label "bounded metric series query grammar"
+    :result (metric-series-query-property)}])

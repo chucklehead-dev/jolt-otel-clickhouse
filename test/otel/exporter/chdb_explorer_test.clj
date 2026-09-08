@@ -19,12 +19,35 @@
            :limit 10}
           overrides)))
 
+(defn- series-request
+  ([] (series-request {}))
+  ([overrides]
+   (merge {:metric-kind :gauge
+           :metric-name "queue.depth"
+           :group-by [:service-name]
+           :bucket :1m
+           :aggregates [:count :avg :p95]
+           :start-unix-nano 1700000000000000000
+           :end-unix-nano 1700000300000000000
+           :limit 10}
+          overrides)))
+
 (defn run [check]
   (check "explorer publishes a closed span field allowlist"
          [:service-name :span-name :span-kind :status-code :scope-name
           :http-request-method :http-response-status-code
           :deployment-environment]
          (explorer/supported-fields :spans))
+  (check "explorer publishes closed metric series choices"
+         {:metric-kinds [:gauge :sum :histogram]
+          :group-by [:service-name :metric-unit :scope-name
+                     :deployment-environment]
+          :buckets [:none :1m :5m :15m :1h]
+          :aggregates
+          {:gauge [:count :sum :min :max :avg :p50 :p95 :p99]
+           :sum [:count :sum :min :max :avg :p50 :p95 :p99]
+           :histogram [:count :sum :avg]}}
+         (explorer/supported-metric-series))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [conn sqlvec opts]
@@ -60,8 +83,63 @@
                true
                (.contains http-sql
                           "SpanAttributes['http.request.method']"))
-        (check "each field gets identical bounded parameters"
+      (check "each field gets identical bounded parameters"
                service-params http-params))))
+  (let [calls (atom [])]
+    (with-redefs [jdbc/fetch
+                  (fn [conn sqlvec opts]
+                    (swap! calls conj
+                           [conn sqlvec opts
+                            (context/instrumentation-suppressed?)])
+                    [{:bucketstart 1699999980000000000
+                      :servicename "api" :count 3 :avg 4.5 :p95 8.0}])]
+      (check "metric series normalizes bounded server aliases"
+             [{:bucket-start-unix-nano 1699999980000000000
+               :service-name "api" :count 3 :avg 4.5 :p95 8.0}]
+             (explorer/metric-series :fake-connection (series-request)))
+      (let [[_ [sql & params] opts suppressed?] (first @calls)
+            minute (* 60 1000000000)]
+        (check "metric series suppresses its own database instrumentation"
+               true suppressed?)
+        (check "metric series binds every caller-controlled scalar"
+               [minute minute 128 1700000000000000000
+                1700000300000000000 "queue.depth" 10]
+               params)
+        (check "metric series asks the driver for no more than its result cap"
+               {:max-rows 10} opts)
+        (check "metric series SQL uses only closed gauge expressions"
+               true
+               (and (.contains sql "FROM otel_metrics_gauge")
+                    (.contains sql "intDiv(")
+                    (.contains sql "leftUTF8(toString(ServiceName), ?)")
+                    (.contains sql "count() AS count")
+                    (.contains sql "avg(Value) AS avg")
+                    (.contains sql "quantileTDigest(0.95)(Value) AS p95")
+                    (not (.contains sql "queue.depth")))))))
+  (let [calls (atom 0)
+        invalid [(assoc (series-request) :metric-kind :summary)
+                 (assoc (series-request) :metric-name "")
+                 (assoc (series-request) :group-by '(:service-name))
+                 (assoc (series-request) :group-by [:service-name :service-name])
+                 (assoc (series-request) :group-by [:attribute-value])
+                 (assoc (series-request) :bucket :30s)
+                 (assoc (series-request) :aggregates [])
+                 (assoc (series-request) :aggregates [:avg :avg])
+                 (assoc (series-request) :aggregates [:rate])
+                 (assoc (series-request {:metric-kind :histogram})
+                        :aggregates [:p95])
+                 (assoc (series-request) :limit 101)
+                 (assoc (series-request) :end-unix-nano 1700000000000000000)
+                 (assoc (series-request) :sql "SELECT *")]]
+    (with-redefs [jdbc/fetch (fn [& _] (swap! calls inc) [])]
+      (doseq [bad invalid]
+        (check (str "invalid metric series request executes no SQL "
+                    (pr-str bad))
+               true
+               (boolean (:attribute-explorer/error
+                         (thrown-data #(explorer/metric-series
+                                        :fake-connection bad))))))
+      (check "invalid metric series requests execute no SQL" 0 @calls)))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [_ sqlvec _]
@@ -123,6 +201,16 @@
   (with-open [conn (jdbc/connection "chdb::memory:")]
     (schema/migrate! conn)
     (let [start 1700000000000000000]
+      (doseq [aggregates [[:count] [:avg] [:p95]]]
+        (check (str "native empty ungrouped metric series returns no row "
+                    (pr-str aggregates))
+               []
+               (explorer/metric-series
+                conn {:metric-kind :gauge :metric-name "missing.metric"
+                      :group-by [] :bucket :none :aggregates aggregates
+                      :start-unix-nano start
+                      :end-unix-nano (+ start 1000000000)
+                      :limit 10})))
       (doseq [[offset service method]
               [[1 "api" "GET"] [2 "api" "POST"] [3 "worker" "GET"]]]
         (jdbc/execute!
@@ -159,4 +247,75 @@
              (explorer/top-values
               conn {:signal :metrics :fields [:metric-name]
                     :start-unix-nano start :end-unix-nano (+ start 10)
-                    :limit 1})))))
+                    :limit 1}))))
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (schema/migrate! conn)
+    (let [start 1700000000000000000
+          end (+ start (* 5 60 1000000000))]
+      (doseq [[service value]
+              [["api" 2.0] ["api" 4.0] ["worker" 10.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_gauge
+             (TimeUnix, ServiceName, MetricName, MetricUnit, ScopeName, Value)
+           VALUES (fromUnixTimestamp(?), ?, 'queue.depth', '{job}',
+                   'demo.metrics', ?)"
+          1700000001 service value]))
+      (let [rows (explorer/metric-series
+                  conn
+                  (series-request
+                   {:start-unix-nano start :end-unix-nano end
+                    :aggregates [:count :sum :min :max :avg :p50 :p95 :p99]}))
+            api (first rows)
+            worker (second rows)]
+        (check "native scalar metric series groups and aggregates"
+               [{:service-name "api" :count 2 :sum 6.0 :min 2.0
+                 :max 4.0 :avg 3.0}
+                {:service-name "worker" :count 1 :sum 10.0 :min 10.0
+                 :max 10.0 :avg 10.0}]
+               (mapv #(select-keys % [:service-name :count :sum :min :max :avg])
+                     rows))
+        (check "native scalar percentiles remain inside observed bounds"
+               true
+               (and (every? #(<= 2.0 (double (get api %)) 4.0)
+                            [:p50 :p95 :p99])
+                    (every? #(= 10.0 (double (get worker %)))
+                            [:p50 :p95 :p99]))))
+      (doseq [[count sum]
+              [[2 8.0] [3 15.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_histogram
+             (TimeUnix, ServiceName, MetricName, MetricUnit, ScopeName,
+              Count, Sum, BucketCounts, ExplicitBounds, Min, Max,
+              AggregationTemporality)
+           VALUES (fromUnixTimestamp(?), 'api', 'request.duration', 'ms',
+                   'demo.metrics', ?, ?, [], [], 0, 0, 1)"
+          1700000001 count sum]))
+      (doseq [[count sum]
+              [[2 8.0] [3 15.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_histogram
+             (TimeUnix, ServiceName, MetricName, MetricUnit, ScopeName,
+              Count, Sum, BucketCounts, ExplicitBounds, Min, Max,
+              AggregationTemporality)
+           VALUES (fromUnixTimestamp(?), 'api', 'cumulative.duration', 'ms',
+                   'demo.metrics', ?, ?, [], [], 0, 0, 2)"
+          1700000001 count sum]))
+      (check "native histogram series aggregates delta count and sum"
+             [{:count 5 :sum 23.0 :avg 4.6}]
+             (explorer/metric-series
+              conn
+              (series-request
+               {:metric-kind :histogram :metric-name "request.duration"
+                :group-by [] :bucket :none :aggregates [:count :sum :avg]
+                :start-unix-nano start :end-unix-nano end})))
+      (check "native histogram series excludes cumulative snapshots"
+             []
+             (explorer/metric-series
+              conn
+              (series-request
+               {:metric-kind :histogram :metric-name "cumulative.duration"
+                :group-by [] :bucket :none :aggregates [:count :sum :avg]
+                :start-unix-nano start :end-unix-nano end}))))))
