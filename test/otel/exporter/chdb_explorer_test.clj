@@ -59,6 +59,41 @@
           :value 10.0 :aggregationtemporality 2 :ismonotonic true}
          overrides))
 
+(defn- histogram-request
+  ([] (histogram-request {}))
+  ([overrides]
+   (merge {:metric-kind :histogram
+           :temporality :cumulative
+           :metric-name "request.duration"
+           :group-by [:service-name]
+           :bucket :none
+           :aggregates [:count :sum :avg :p50 :p95]
+           :start-unix-nano 1700000000000000000
+           :end-unix-nano 1700000060000000000
+           :limit 10}
+          overrides)))
+
+(defn- histogram-row [overrides]
+  (merge {:starttimenano 1700000000000000000
+          :timenano 1700000010000000000
+          :servicename "api"
+          :streamservice "api" :streammetricdescription "request latency"
+          :streammetricunit "ms" :streamscopename "demo.metrics"
+          :streamscopeversion "1" :streamscopedroppedattrcount 0
+          :streamresourceschemaurl ""
+          :streamscopeschemaurl "" :streamresourceattributes {}
+          :streamscopeattributes {} :streamattributes {}
+          :count 4 :sum 20.0 :bucketcounts [1 2 1]
+          :explicitbounds [0.0 10.0] :min 0.0 :max 20.0
+          :aggregationtemporality 2 :flags 0
+          :starttimetype "DateTime" :timetype "DateTime"
+          :counttype "UInt64" :sumtype "Float64"
+          :bucketcountstype "Array(UInt64)"
+          :explicitboundstype "Array(Float64)" :mintype "Float64"
+          :maxtype "Float64" :temporalitytype "Int32" :flagstype "UInt32"
+          :scopedroppedattrcounttype "UInt32"}
+         overrides))
+
 (defn run [check]
   (check "explorer publishes a closed span field allowlist"
          [:service-name :span-name :span-kind :status-code :scope-name
@@ -84,6 +119,15 @@
           :buckets [:none :1m :5m :15m :1h]
           :aggregates [:increase :rate]}
          (explorer/supported-cumulative-counter-series))
+  (check "explorer publishes explicit cumulative histogram provenance"
+         {:metric-kinds [:histogram]
+          :temporalities [:cumulative]
+          :group-by [:service-name :metric-unit :scope-name
+                     :deployment-environment]
+          :buckets [:none :1m :5m :15m :1h]
+          :aggregates [:count :sum :avg :p50 :p95 :p99]
+          :quantiles {:p50 0.5 :p95 0.95 :p99 0.99}}
+         (explorer/supported-cumulative-histogram-series))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [conn sqlvec opts]
@@ -119,7 +163,7 @@
                true
                (.contains http-sql
                           "SpanAttributes['http.request.method']"))
-      (check "each field gets identical bounded parameters"
+        (check "each field gets identical bounded parameters"
                service-params http-params))))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
@@ -266,6 +310,143 @@
                               [:row :projection :value :previous-value
                                :increase])
                     (not (.contains (pr-str data) "/private")))))))
+  (let [calls (atom [])
+        rows [(histogram-row {})
+              (histogram-row {:timenano 1700000020000000000
+                              :count 8 :sum 44.0
+                              :bucketcounts [2 4 2]})
+              (histogram-row {:starttimenano 1700000025000000000
+                              :timenano 1700000030000000000
+                              :count 3 :sum 21.0
+                              :bucketcounts [0 2 1]
+                              :min 2.0 :max 15.0})
+              (histogram-row {:starttimenano 1700000025000000000
+                              :timenano 1700000040000000000
+                              :count 5 :sum 39.0
+                              :bucketcounts [0 3 2]
+                              :min 2.0 :max 18.0})]]
+    (with-redefs [jdbc/fetch
+                  (fn [connection sqlvec opts]
+                    (swap! calls conj [connection sqlvec opts
+                                       (context/instrumentation-suppressed?)])
+                    rows)]
+      (let [[result] (explorer/cumulative-histogram-series
+                      :fake-connection (histogram-request))
+            [[_ [sql & params] opts suppressed?]] @calls]
+        (check "histogram series reconstructs reset-aware interval totals"
+               {:service-name "api" :count 13 :sum 83.0
+                :avg (/ 83.0 13.0) :metric-kind :histogram
+                :temporality :cumulative :explicit-bounds [0.0 10.0]
+                :interval-count 4 :reset-count 2
+                :observed-duration-nanos 35000000000}
+               (dissoc result :p50 :p95))
+        (check "finite quantile exposes interpolation and bucket error"
+               {:quantile 0.5 :rank 6.5 :estimate (/ 45.0 7.0)
+                :lower-bound 0.0 :upper-bound 10.0
+                :lower-inclusive? false :upper-inclusive? true
+                :lower-unbounded? false :upper-unbounded? false
+                :bucket-observation-count 7
+                :absolute-error-bound (/ 45.0 7.0)
+                :interpolation :uniform-within-explicit-bucket}
+               (:p50 result))
+        (check "implicit positive-infinity bucket has no invented estimate"
+               {:quantile 0.95 :rank 12.35 :estimate nil
+                :lower-bound 10.0 :upper-bound nil
+                :lower-inclusive? false :upper-inclusive? false
+                :lower-unbounded? false :upper-unbounded? true
+                :bucket-observation-count 4 :absolute-error-bound nil
+                :interpolation :uniform-within-explicit-bucket}
+               (:p95 result))
+        (check "histogram source query pins provenance, schema, and hard limits"
+               true
+               (and (.contains sql "FROM otel_metrics_histogram")
+                    (.contains sql "AggregationTemporality = 2")
+                    (.contains sql "toTypeName(BucketCounts)")
+                    (.contains sql "max_result_bytes = 67108864")
+                    (.contains sql "max_rows_to_read = 100000")
+                    (.contains sql "max_bytes_to_read = 67108864")
+                    (.contains sql "max_memory_usage = 134217728")
+                    (.contains sql "max_execution_time = 5")
+                    (.contains sql "max_threads = 1")
+                    (not (.contains sql "request.duration"))))
+        (check "histogram query binds data and caps source rows"
+               [128 1700000000000000000 1700000060000000000
+                "request.duration" 10001]
+               params)
+        (check "histogram fetch and instrumentation are bounded"
+               [{:max-rows 10001} true] [opts suppressed?]))))
+  (let [bad-provenance [(dissoc (histogram-request) :temporality)
+                        (assoc (histogram-request) :metric-kind :sum)
+                        (assoc (histogram-request) :temporality :delta)
+                        (assoc (histogram-request) :aggregates [:rate])
+                        (assoc (histogram-request) :sql "SELECT *")]
+        calls (atom 0)]
+    (with-redefs [jdbc/fetch (fn [& _] (swap! calls inc) [])]
+      (doseq [bad bad-provenance]
+        (check "invalid histogram provenance/recipe executes no SQL"
+               true
+               (boolean (:attribute-explorer/error
+                         (thrown-data #(explorer/cumulative-histogram-series
+                                        :fake-connection bad))))))
+      (check "all invalid histogram requests fail before query execution"
+             0 @calls)))
+  (let [zero-row (histogram-row {:count 0 :sum 0.0
+                                 :bucketcounts [0 0 0]})]
+    (with-redefs [jdbc/fetch (fn [& _] [zero-row])]
+      (check "empty histogram has explicit null average and quantiles"
+             [{:count 0 :avg nil :p50 nil :metric-kind :histogram
+               :temporality :cumulative :explicit-bounds [0.0 10.0]
+               :interval-count 1 :reset-count 1
+               :observed-duration-nanos 10000000000}]
+             (explorer/cumulative-histogram-series
+              :fake-connection
+              (histogram-request {:group-by []
+                                  :aggregates [:count :avg :p50]})))))
+  (doseq [[label rows expected-type]
+          [["boundary change"
+            [(histogram-row {})
+             (histogram-row {:timenano 1700000020000000000
+                             :count 6 :sum 30.0 :bucketcounts [2 2 2]
+                             :explicitbounds [0.0 20.0]})]
+            :otel.exporter.chdb.explorer/histogram-boundary-change]
+           ["unproven bucket decrease"
+            [(histogram-row {})
+             (histogram-row {:timenano 1700000020000000000
+                             :count 5 :sum 21.0 :bucketcounts [0 3 2]})]
+            :otel.exporter.chdb.explorer/unproven-histogram-reset]
+           ["duplicate timestamp"
+            [(histogram-row {}) (histogram-row {:sum 21.0})]
+            :otel.exporter.chdb.explorer/ambiguous-histogram-order]
+           ["collapsed streams"
+            [(histogram-row {})
+             (histogram-row {:timenano 1700000020000000000
+                             :streamattributes {"route" "/secret"}})]
+            :otel.exporter.chdb.explorer/ambiguous-histogram-projection]
+           ["bucket crossing"
+            [(histogram-row {:starttimenano 1699999990000000000})
+             (histogram-row {:starttimenano 1699999990000000000
+                             :timenano 1700000041000000000
+                             :count 8 :sum 44.0 :bucketcounts [2 4 2]})]
+            :otel.exporter.chdb.explorer/histogram-interval-crosses-bucket]
+           ["schema drift"
+            [(histogram-row {:bucketcountstype "Array(Int64)"})]
+            :otel.exporter.chdb.explorer/unsupported-histogram-schema]
+           ["non-finite data"
+            [(histogram-row {:sum ##NaN})]
+            :otel.exporter.chdb.explorer/invalid-histogram-row]]]
+    (with-redefs [jdbc/fetch (fn [& _] rows)]
+      (let [request (cond-> (histogram-request)
+                      (= label "bucket crossing") (assoc :bucket :1m))
+            data (thrown-data #(explorer/cumulative-histogram-series
+                                :fake-connection request))]
+        (check (str "histogram series rejects " label)
+               expected-type (:type data))
+        (check (str "histogram failure evidence omits raw telemetry " label)
+               true
+               (and (not-any? #(contains? data %)
+                              [:row :projection :value :sum :bucket-counts
+                               :explicit-bounds :previous-value])
+                    (not (.contains (pr-str data) "/secret")))))))
   (let [calls (atom [])]
     (with-redefs [jdbc/fetch
                   (fn [_ sqlvec _]
@@ -482,4 +663,47 @@
                  :metric-kind :sum :temporality :cumulative :monotonic? true
                  :interval-count 4 :reset-count 2
                  :observed-duration-nanos 35000000000}]
-               rows)))))
+               rows))))
+  (with-open [conn (jdbc/connection "chdb::memory:")]
+    (schema/migrate! conn)
+    (let [start-second 1700000000
+          start (* start-second 1000000000)
+          end (+ start (* 60 1000000000))]
+      (doseq [[epoch-second time-second count sum bucket-counts minimum maximum]
+              [[start-second (+ start-second 10) 4 -20.0 [1 2 1] -100.0 100.0]
+               [start-second (+ start-second 20) 8 -44.0 [2 4 2] -100.0 100.0]
+               [(+ start-second 25) (+ start-second 30)
+                3 -21.0 [0 2 1] -100.0 100.0]
+               [(+ start-second 25) (+ start-second 40)
+                5 -39.0 [0 3 2] -100.0 100.0]]]
+        (jdbc/execute!
+         conn
+         ["INSERT INTO otel_metrics_histogram
+             (TimeUnix, StartTimeUnix, ServiceName, MetricName,
+              MetricDescription, MetricUnit, ScopeName, Count, Sum,
+              BucketCounts, ExplicitBounds, Min, Max,
+              AggregationTemporality, Flags)
+           VALUES (fromUnixTimestamp(?), fromUnixTimestamp(?), 'api',
+                   'request.duration', 'request latency', 'ms',
+                   'demo.metrics', ?, ?, [?, ?, ?], [0.0, 10.0], ?, ?, 2, 0)"
+          time-second epoch-second count sum
+          (nth bucket-counts 0) (nth bucket-counts 1) (nth bucket-counts 2)
+          minimum maximum]))
+      (let [[row] (explorer/cumulative-histogram-series
+                   conn (histogram-request {:start-unix-nano start
+                                            :end-unix-nano end}))]
+        (check "native chDB cumulative histogram reconstruction is reset-aware"
+               {:service-name "api" :count 13 :sum -83.0
+                :avg (/ -83.0 13.0) :metric-kind :histogram
+                :temporality :cumulative :explicit-bounds [0.0 10.0]
+                :interval-count 4 :reset-count 2
+                :observed-duration-nanos 35000000000}
+               (dissoc row :p50 :p95))
+        (check "native chDB finite histogram quantile remains explicitly bounded"
+               [0.0 10.0 (/ 45.0 7.0) (/ 45.0 7.0)]
+               ((juxt :lower-bound :upper-bound :estimate :absolute-error-bound)
+                (:p50 row)))
+        (check "native chDB infinite-tail quantile has no fabricated estimate"
+               [10.0 nil nil true]
+               ((juxt :lower-bound :upper-bound :estimate :upper-unbounded?)
+                (:p95 row)))))))

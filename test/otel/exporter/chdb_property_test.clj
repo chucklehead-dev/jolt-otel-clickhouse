@@ -643,6 +643,126 @@
                    "counter source query lost parameterization or its hard row cap"
                    {:sql sql :params params :options options})))))))
 
+(def ^:private histogram-property-types
+  {:starttimetype "DateTime" :timetype "DateTime" :counttype "UInt64"
+   :sumtype "Float64" :bucketcountstype "Array(UInt64)"
+   :explicitboundstype "Array(Float64)" :mintype "Float64"
+   :maxtype "Float64" :temporalitytype "Int32" :flagstype "UInt32"
+   :scopedroppedattrcounttype "UInt32"})
+
+(defn- histogram-property-row [epoch-start time bounds bucket-counts]
+  (let [count (reduce + 0 bucket-counts)]
+    (merge histogram-property-types
+           {:starttimenano epoch-start :timenano time :servicename "api"
+            :streamservice "api" :streammetricdescription "property histogram"
+            :streammetricunit "ms" :streamscopename "property.metrics"
+            :streamscopeversion "1" :streamscopedroppedattrcount 0
+            :streamresourceschemaurl ""
+            :streamscopeschemaurl "" :streamresourceattributes {}
+            :streamscopeattributes {} :streamattributes {}
+            ;; Negative observations make cumulative Sum decrease while the
+            ;; structural cumulative Count/BucketCounts remain monotonic.
+            :count count :sum (* -5.0 count) :bucketcounts bucket-counts
+            :explicitbounds bounds :min -100.0 :max 0.0
+            :aggregationtemporality 2 :flags 0})))
+
+(defn- model-quantile-bucket [quantile bucket-counts]
+  (let [rank (* quantile (double (reduce + 0 bucket-counts)))]
+    (loop [index 0, cumulative 0]
+      (let [next (+ cumulative (nth bucket-counts index))]
+        (if (or (>= next rank) (= index (dec (count bucket-counts))))
+          index
+          (recur (inc index) next))))))
+
+(defn- cumulative-histogram-property []
+  (h/run-test!
+   {:name "reset-aware cumulative explicit histogram model"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 160}
+   (fn [_]
+     (let [point-count (h/draw! (g/integer 1 16))
+           finite-bound-count (h/draw! (g/integer 1 5))
+           bucket-count (inc finite-bound-count)
+           bounds (mapv #(double (* 10 (inc %))) (range finite-bound-count))
+           increments (h/draw!
+                       (g/vector {:size point-count}
+                                 (g/vector {:size bucket-count}
+                                           (g/integer 0 1000))))
+           durations (h/draw! (g/vector {:size point-count}
+                                        (g/integer 1 60)))
+           resets (h/draw! (g/vector {:size (dec point-count)} (g/boolean)))
+           base 1700000000000000000
+           {:keys [rows elapsed reset-count]}
+           (loop [index 0, previous-time base, epoch-start base,
+                  cumulative (vec (repeat bucket-count 0)), rows [], elapsed 0,
+                  reset-count 0]
+             (if (= index point-count)
+               {:rows rows :elapsed elapsed :reset-count reset-count}
+               (let [reset? (or (zero? index) (nth resets (dec index)))
+                     epoch-start (if reset? previous-time epoch-start)
+                     cumulative (if reset? (nth increments index)
+                                    (mapv + cumulative (nth increments index)))
+                     duration (* (nth durations index) 1000000000)
+                     time (+ previous-time duration)]
+                 (recur (inc index) time epoch-start cumulative
+                        (conj rows (histogram-property-row
+                                    epoch-start time bounds cumulative))
+                        (+ elapsed duration)
+                        (+ reset-count (if reset? 1 0))))))
+           expected-buckets (reduce (fn [acc xs] (mapv + acc xs))
+                                    (vec (repeat bucket-count 0)) increments)
+           expected-count (reduce + 0 expected-buckets)
+           request {:metric-kind :histogram :temporality :cumulative
+                    :metric-name "histogram' private"
+                    :group-by [:service-name] :bucket :none
+                    :aggregates [:count :sum :avg :p50 :p95 :p99]
+                    :start-unix-nano base
+                    :end-unix-nano (+ base (* 17 60 1000000000)) :limit 10}
+           calls (atom [])]
+       (with-redefs [jdbc/fetch
+                     (fn [connection sqlvec options]
+                       (swap! calls conj [connection sqlvec options]) rows)]
+         (let [[output] (explorer/cumulative-histogram-series
+                         :fake-connection request)
+               [_ [sql & params] options] (first @calls)]
+           (check! (= {:count expected-count
+                       :sum (* -5.0 expected-count)
+                       :avg (when (pos? expected-count) -5.0)
+                       :interval-count point-count :reset-count reset-count
+                       :observed-duration-nanos elapsed
+                       :explicit-bounds bounds}
+                      (select-keys output [:count :sum :avg :interval-count
+                                           :reset-count :observed-duration-nanos
+                                           :explicit-bounds]))
+                   "otel-explorer/histogram-model"
+                   "histogram reconstruction differs from generated interval model"
+                   {:expected-count expected-count})
+           (doseq [[aggregate quantile] [[:p50 0.5] [:p95 0.95] [:p99 0.99]]]
+             (let [actual (get output aggregate)]
+               (if (zero? expected-count)
+                 (check! (nil? actual)
+                         "otel-explorer/histogram-empty-quantile"
+                         "empty histogram produced a quantile" {})
+                 (let [index (model-quantile-bucket quantile expected-buckets)]
+                   (check! (and (= quantile (:quantile actual))
+                                (= (nth expected-buckets index)
+                                   (:bucket-observation-count actual))
+                                (= (when (pos? index) (nth bounds (dec index)))
+                                   (:lower-bound actual))
+                                (= (when (< index (count bounds)) (nth bounds index))
+                                   (:upper-bound actual))
+                                (= (or (zero? index) (= index (count bounds)))
+                                   (nil? (:estimate actual))))
+                           "otel-explorer/histogram-quantile-model"
+                           "bounded quantile selected the wrong reconstructed bucket"
+                           {:aggregate aggregate :bucket-index index})))))
+           (check! (and (= 1 (count @calls))
+                        (not (str/includes? sql "histogram' private"))
+                        (some #(= "histogram' private" %) params)
+                        (= {:max-rows 10001} options))
+                   "otel-explorer/histogram-bounds-and-parameters"
+                   "histogram source query lost parameterization or hard bounds"
+                   {})))))))
+
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
@@ -652,4 +772,6 @@
    {:label "bounded metric series query grammar"
     :result (metric-series-query-property)}
    {:label "reset-aware cumulative counter series"
-    :result (cumulative-counter-property)}])
+    :result (cumulative-counter-property)}
+   {:label "reset-aware cumulative explicit histogram model"
+    :result (cumulative-histogram-property)}])
