@@ -70,8 +70,14 @@
 (def ^:private cumulative-histogram-aggregates
   [:count :sum :avg :p50 :p95 :p99])
 
+(def ^:private histogram-quantile-presets
+  {:p50 {:quantile 0.50 :numerator 1 :denominator 2}
+   :p95 {:quantile 0.95 :numerator 19 :denominator 20}
+   :p99 {:quantile 0.99 :numerator 99 :denominator 100}})
+
 (def ^:private histogram-quantiles
-  {:p50 0.50 :p95 0.95 :p99 0.99})
+  (into {} (map (fn [[name preset]] [name (:quantile preset)]))
+        histogram-quantile-presets))
 
 (def ^:private metric-series-group-fields
   {:service-name {:expression "ServiceName" :alias "servicename"
@@ -268,7 +274,7 @@
                  (not (str/blank? value)))
     (fail! ::invalid-metric-name
            "metric series requires a nonblank metric name of at most 256 characters"
-           {:metric-name value :maximum max-text-length}))
+           {:reason :invalid-metric-name :maximum max-text-length}))
   value)
 
 (defn- validate-closed-vector!
@@ -1080,14 +1086,18 @@
                 :bucket-end-unix-nano bucket-end}))
       bucket-start)))
 
-(defn- bounded-histogram-quantile [quantile bounds bucket-counts]
+(defn- bounded-histogram-quantile
+  [{:keys [quantile numerator denominator]} bounds bucket-counts]
   (let [total (reduce + 0 bucket-counts)]
     (when (pos? total)
-      (let [rank (* quantile (double total))
+      (let [rank-numerator (* numerator total)
+            rank (* quantile (double total))
             bucket-index
             (loop [index 0, cumulative 0]
               (let [next-cumulative (+ cumulative (nth bucket-counts index))]
-                (if (or (>= next-cumulative rank)
+                ;; Bucket choice is exact even when UInt64 totals exceed the
+                ;; 53-bit integer precision of a double.
+                (if (or (>= (* denominator next-cumulative) rank-numerator)
                         (= index (dec (count bucket-counts))))
                   index
                   (recur (inc index) next-cumulative))))
@@ -1103,11 +1113,13 @@
                        {:bucket-index bucket-index}))
             estimate (when finite-bucket?
                        (+ lower (* width
-                                   (/ (- rank (double below))
-                                      (double in-bucket)))))
+                                   (/ (double (- rank-numerator
+                                                 (* denominator below)))
+                                      (double (* denominator in-bucket))))))
             error (when finite-bucket?
                     (max (- estimate lower) (- upper estimate)))]
         {:quantile quantile :rank rank
+         :rank-numerator rank-numerator :rank-denominator denominator
          :estimate estimate :lower-bound lower :upper-bound upper
          :lower-inclusive? false :upper-inclusive? (some? upper)
          :lower-unbounded? (nil? lower) :upper-unbounded? (nil? upper)
@@ -1144,7 +1156,7 @@
                                       :avg (when (pos? observation-count)
                                              (/ sum (double observation-count)))
                                       (bounded-histogram-quantile
-                                       (get histogram-quantiles aggregate)
+                                       (get histogram-quantile-presets aggregate)
                                        bounds bucket-counts))]))
                             (:aggregates request))]
                   (cond-> (merge projection measures

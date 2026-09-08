@@ -341,7 +341,9 @@
                 :observed-duration-nanos 35000000000}
                (dissoc result :p50 :p95))
         (check "finite quantile exposes interpolation and bucket error"
-               {:quantile 0.5 :rank 6.5 :estimate (/ 45.0 7.0)
+               {:quantile 0.5 :rank 6.5
+                :rank-numerator 13 :rank-denominator 2
+                :estimate (/ 45.0 7.0)
                 :lower-bound 0.0 :upper-bound 10.0
                 :lower-inclusive? false :upper-inclusive? true
                 :lower-unbounded? false :upper-unbounded? false
@@ -350,7 +352,8 @@
                 :interpolation :uniform-within-explicit-bucket}
                (:p50 result))
         (check "implicit positive-infinity bucket has no invented estimate"
-               {:quantile 0.95 :rank 12.35 :estimate nil
+               {:quantile 0.95 :rank 12.35
+                :rank-numerator 247 :rank-denominator 20 :estimate nil
                 :lower-bound 10.0 :upper-bound nil
                 :lower-inclusive? false :upper-inclusive? false
                 :lower-unbounded? false :upper-unbounded? true
@@ -390,6 +393,19 @@
                                         :fake-connection bad))))))
       (check "all invalid histogram requests fail before query execution"
              0 @calls)))
+  (let [sentinel (apply str (repeat 30 "credential-secret-"))
+        calls (atom 0)]
+    (with-redefs [jdbc/fetch (fn [& _] (swap! calls inc) [])]
+      (let [data (thrown-data
+                  #(explorer/cumulative-histogram-series
+                    :fake-connection (histogram-request {:metric-name sentinel})))]
+        (check "invalid histogram metric name reports structural evidence"
+               {:type :otel.exporter.chdb.explorer/invalid-metric-name
+                :reason :invalid-metric-name :maximum 256}
+               (select-keys data [:type :reason :maximum]))
+        (check "invalid histogram request evidence scrubs credential-like name"
+               false (.contains (pr-str data) "credential-secret-"))
+        (check "private invalid histogram request executes no SQL" 0 @calls))))
   (let [zero-row (histogram-row {:count 0 :sum 0.0
                                  :bucketcounts [0 0 0]})]
     (with-redefs [jdbc/fetch (fn [& _] [zero-row])]
@@ -402,6 +418,25 @@
               :fake-connection
               (histogram-request {:group-by []
                                   :aggregates [:count :avg :p50]})))))
+  (let [first-bucket 9007199254740992
+        second-bucket 9007199254740993
+        total (+ first-bucket second-bucket)
+        row (histogram-row {:count total :sum 0.0
+                            :bucketcounts [first-bucket second-bucket]
+                            :explicitbounds [0.0] :min -1.0 :max 1.0})]
+    (with-redefs [jdbc/fetch (fn [& _] [row])]
+      (let [quantile (:p50
+                      (first
+                       (explorer/cumulative-histogram-series
+                        :fake-connection
+                        (histogram-request {:group-by []
+                                            :aggregates [:p50]}))))]
+        (check "p50 bucket selection remains exact above double integer precision"
+               [0.0 nil true second-bucket total 2]
+               [(:lower-bound quantile) (:upper-bound quantile)
+                (:upper-unbounded? quantile)
+                (:bucket-observation-count quantile)
+                (:rank-numerator quantile) (:rank-denominator quantile)]))))
   (doseq [[label rows expected-type]
           [["boundary change"
             [(histogram-row {})

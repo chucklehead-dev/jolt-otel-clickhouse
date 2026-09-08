@@ -763,6 +763,36 @@
                    "histogram source query lost parameterization or hard bounds"
                    {})))))))
 
+(defn- large-histogram-rank-property []
+  (h/run-test!
+   {:name "cumulative histogram exact rank above 2^53"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 80}
+   (fn [_]
+     (let [first-bucket (h/draw! (g/integer 9007199254740992
+                                            9007199254840992))
+           second-bucket (inc first-bucket)
+           total (+ first-bucket second-bucket)
+           base 1700000000000000000
+           row (histogram-property-row base (+ base 1000000000)
+                                       [0.0] [first-bucket second-bucket])
+           request {:metric-kind :histogram :temporality :cumulative
+                    :metric-name "large.histogram" :group-by [] :bucket :none
+                    :aggregates [:p50] :start-unix-nano base
+                    :end-unix-nano (+ base 2000000000) :limit 1}]
+       (with-redefs [jdbc/fetch (fn [& _] [row])]
+         (let [quantile (:p50
+                         (first (explorer/cumulative-histogram-series
+                                 :fake-connection request)))]
+           (check! (and (= 0.0 (:lower-bound quantile))
+                        (nil? (:upper-bound quantile))
+                        (:upper-unbounded? quantile)
+                        (= second-bucket (:bucket-observation-count quantile))
+                        (= total (:rank-numerator quantile))
+                        (= 2 (:rank-denominator quantile)))
+                   "otel-explorer/histogram-exact-large-rank"
+                   "p50 bucket selection lost integer precision above 2^53"
+                   {:first-bucket first-bucket})))))))
+
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
@@ -774,4 +804,6 @@
    {:label "reset-aware cumulative counter series"
     :result (cumulative-counter-property)}
    {:label "reset-aware cumulative explicit histogram model"
-    :result (cumulative-histogram-property)}])
+    :result (cumulative-histogram-property)}
+   {:label "cumulative histogram exact rank above 2^53"
+    :result (large-histogram-rank-property)}])

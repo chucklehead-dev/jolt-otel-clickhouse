@@ -320,6 +320,12 @@ invent a finite tail. When reconstructed count is zero, `:avg` and every
 requested quantile are explicitly `nil`. A window with no reconstructable
 intervals returns `[]`.
 
+Bucket selection compares the fixed percentile as an exact integer fraction,
+so cumulative UInt64 counts above `2^53` do not pass through double precision.
+Each nonempty quantile exposes that exact rank as `:rank-numerator` and
+`:rank-denominator`; `:rank` and the within-bucket estimate are floating-point
+display values and do not control bucket selection.
+
 The operation fails closed on a changed or malformed boundary schema, changed
 physical column types, non-finite values, count/bucket inconsistency, point
 flags, duplicate stored seconds, backwards or overlapping epochs, same-epoch
@@ -327,7 +333,8 @@ count/bucket decreases, inward-moving cumulative extrema, a projection
 that collapses distinct streams, or an interval crossing a requested chart
 bucket. Failures report only structural reasons and bounded timestamps/counts;
 raw attributes, bucket contents, and telemetry values are omitted from
-exception data.
+exception data. Invalid request evidence likewise omits the supplied metric
+name, including overlong credential-like strings.
 
 `Sum` is differenced arithmetically and may decrease within an epoch when new
 observations are negative; only a non-finite differenced sum is invalid. Count
