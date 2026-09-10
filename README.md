@@ -7,6 +7,7 @@ maps), so the demo and later ClickStack integration share the same query model.
 
 The library can also compile reviewed attribute declarations and build-time
 `otel.attribute-schema/v1` hints into a deterministic typed storage manifest,
+using an explicit closed signal/table/location identity for every field,
 then prepare a checksummed-manifest registry record, persist the complete
 catalog through an object-backend compare-and-set, and reconcile it against an
 observed span-table schema. An explicit deployment installer can execute only
@@ -17,7 +18,7 @@ The returned process-local descriptor capability can enable typed span columns
 on the existing exporter and bounded explorer queries while retaining its
 generic `SpanAttributes` map. See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
-example.
+example, including the fail-closed v1-to-v2 manifest migration boundary.
 
 ## Install
 

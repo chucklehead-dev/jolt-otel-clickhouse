@@ -4,6 +4,7 @@
   This namespace is storage-independent and emits data operations, never SQL.
   A registry store must persist each returned record with a generation CAS."
   (:require [malli.core :as m]
+            [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]))
 
 (def registry-schema "jolt-otel-clickhouse.attribute-registry/v1")
@@ -22,7 +23,7 @@
               :valid 3
               :invalid 4))
 
-(def ^:private span-table "otel_traces")
+(def ^:private span-table (:table identity/span-attribute-target))
 (def ^:private status-column-type "UInt8")
 (def ^:private max-generation 9223372036854775807)
 (def ^:private max-catalog-records 4096)
@@ -101,35 +102,35 @@
            ::generation-exhausted {:generation generation}))
   (inc generation))
 
-(defn- ensure-span-manifest! [value]
+(defn- ensure-supported-manifest! [value]
   (let [value (manifest/validate-manifest value)
         unsupported (->> (:fields value)
-                         (remove #(= :span-attributes (:location %)))
-                         (map :location)
+                         (remove identity/physically-supported?)
+                         (map #(select-keys % [:signal :table :location]))
                          distinct
-                         (sort-by str)
+                         (sort-by pr-str)
                          vec)]
     (when (seq unsupported)
-      (fail! "this registry slice supports span attributes only"
-             ::unsupported-location {:locations unsupported}))
+      (fail! "this registry slice cannot install the requested target"
+             ::unsupported-target {:targets unsupported}))
     value))
 
 (defn- column-descriptors [manifest]
   (let [columns
         (->> (:fields manifest)
              (mapcat
-              (fn [{:keys [id identity clickhouse-type physical]}]
+              (fn [{:keys [id identity table clickhouse-type physical]}]
                 [(sorted-map :field-id id
                              :field-identity identity
                              :name (:value-column physical)
                              :role :value
-                             :table span-table
+                             :table table
                              :type clickhouse-type)
                  (sorted-map :field-id id
                              :field-identity identity
                              :name (:status-column physical)
                              :role :status
-                             :table span-table
+                             :table table
                              :type status-column-type)]))
              (sort-by (juxt :name (comp str :role)))
              vec)
@@ -167,7 +168,7 @@
            ::invalid-record
            {:explain (m/explain registry-record-schema record)}))
   (let [columns (column-descriptors
-                 (ensure-span-manifest! (:manifest record)))]
+                 (ensure-supported-manifest! (:manifest record)))]
     (if (= :failed (:state record))
       (when-not (valid-failure? (:failure record) columns)
         (fail! "failed registry record requires a canonical bounded failure"
@@ -256,7 +257,7 @@
   caller must CAS-persist a new record before applying any planned operation."
   ([manifest] (prepare manifest []))
   ([candidate records]
-   (let [candidate (ensure-span-manifest! candidate)
+   (let [candidate (ensure-supported-manifest! candidate)
          records (validate-catalog! records)
          key (registry-key candidate)
          same-key (filter #(= key (registry-key (:manifest %))) records)]

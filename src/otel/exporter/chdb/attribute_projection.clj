@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb.attribute-projection
   "Pure span-row projection from installer-confirmed typed descriptors."
   (:require [otel.exporter.chdb.attribute-registry :as registry]
+            [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.attribute-registry-store :as store]))
 
@@ -59,7 +60,14 @@
 (defn confirmed-span-fields
   "Return manifest fields only after issuer and target identity confirmation."
   [descriptor-set target]
-  (get-in (confirmed-record descriptor-set target) [:manifest :fields]))
+  (let [fields (get-in (confirmed-record descriptor-set target)
+                       [:manifest :fields])]
+    (when-not (every? #(= identity/span-attribute-target
+                          (identity/target-of %))
+                      fields)
+      (fail! "typed span capability contains a non-span target"
+             ::invalid-descriptor-set {}))
+    fields))
 
 (defn span-projector
   "Compile an installer-confirmed descriptor capability into a row projector.

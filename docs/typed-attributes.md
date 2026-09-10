@@ -6,9 +6,10 @@ compatibility; they are awkward for numeric filters and aggregates. Frequently
 queried attributes can eventually be copied into dedicated typed columns while
 the existing text entry remains available.
 
-This release provides two safe building blocks: a pure manifest compiler and a
-persistence-ready registry lifecycle/planner for span attributes. Neither
-connects to chDB, runs DDL, inspects stored telemetry, or changes exporter rows.
+The manifest format is storage-independent and the current installer/exporter
+path supports span attributes on `otel_traces`. Every reviewed declaration now
+names a closed signal, physical table, and attribute location before it can
+influence a checksum, field identifier, registry plan, or capability consumer.
 
 ```mermaid
 flowchart LR
@@ -19,8 +20,9 @@ flowchart LR
     D --> F[Checksummed typed manifest]
     F --> G[Persistence-ready registry record]
     G --> H[Deterministic column plan]
-    H -. future, separately authorized .-> I[Database installer]
-    I -. future .-> J[Typed exporter and queries]
+    H --> I[Authorized span installer]
+    I --> J[Capability-bound span export and query]
+    H -. unsupported targets stay data only .-> K[Later signal-specific slices]
 ```
 
 ## Compile a manifest
@@ -43,17 +45,21 @@ observation cannot choose them.
       :authority :advice
       :source "instrumentation/checkout.edn"
       :entries
-      [{:location :span-attributes
+      [{:signal :spans
+        :table "otel_traces"
+        :location :span-attributes
         :key "checkout.remaining_items"
         :type :int64}
-       {:location :span-attributes
+       {:signal :spans
+        :table "otel_traces"
+        :location :span-attributes
         :key "checkout.complete"
         :type :boolean}]}]}))
 
 (spit "target/checkout-attributes.edn" (manifest/render compiled))
 ```
 
-The first format accepts three promoted types: `:string`, `:boolean`, and
+The v2 format accepts three promoted types: `:string`, `:boolean`, and
 `:int64`. They map only to the library-owned ClickHouse types `String`, `Bool`,
 and `Int64`. Callers cannot supply SQL, codecs, column names, or type
 expressions.
@@ -65,23 +71,50 @@ Reviewed fragments use one of three authorities:
 - `:runtime-reviewed` for an observation that an operator has explicitly
   reviewed and converted into configuration.
 
-The supported locations are span, resource, scope, log, and metric-point
-attributes. Source-inferred fragments currently cover the locations emitted by
-`otel.attribute-schema/v1`; reviewed fragments can describe scope attributes as
-well.
+The closed signals are `:spans`, `:logs`, and `:metrics`. Each declaration also
+names one compatible library-known table: `otel_traces`, `otel_logs`, or one of
+the gauge, sum, and histogram metric tables. The valid location depends on the
+signal. Span/log/metric-specific attributes are accepted only on their signal;
+resource and scope attributes are valid on each signal but remain distinct
+because signal and table are part of their identity.
+
+Source inference promotes only targets it can identify without guessing. Span
+and log attribute calls have one table. Standalone resource inference does not
+say which consuming signal owns the resource, and metric inference does not say
+which metric-kind table owns the point, so those hints remain
+`:ambiguous-target` diagnostics until reviewed configuration supplies the exact
+target.
 
 ## Determinism and conflicts
 
 Fragment, map, and entry traversal order cannot change the result. Identical
 declarations merge their provenance. Different reviewed types for the same
-location and key fail compilation; `:int64` is never widened to `:double`.
+signal, table, location, and key fail compilation; the same key may deliberately
+have different types on disjoint signals. `:int64` is never widened to
+`:double`.
 
-Every field identity includes the dataset, application, lineage, version,
-location, key, and type. Its value and status column names contain a bounded
-readable prefix plus a digest suffix, so two keys that sanitize to the same text
-still receive different identifiers. The manifest checksum is SHA-256 over its
-canonical EDN payload without the checksum field. Rendering adds one final
-newline and no timestamp or checkout path.
+Every field identity includes the dataset, application, lineage, deployment
+version, signal, table, location, key, and type. Its value and status column
+names contain a bounded readable target prefix plus a digest suffix, so two keys
+that sanitize to the same text still receive different identifiers. The
+manifest checksum is SHA-256 over its canonical EDN payload without the
+checksum field. Rendering adds one final newline and no timestamp or checkout
+path.
+
+### Migrating v1 manifests
+
+Manifest and reviewed-fragment canonicalization is now explicitly v2. A v1
+field did not record a signal or table, so this library will not guess a target
+or preserve its old digest. `validate-manifest` reports `:legacy-manifest`, and
+v1 reviewed fragments report `:legacy-reviewed-fragment`. This also makes a
+catalog containing a persisted v1 manifest fail closed when loaded.
+
+Migration is an operator review step: retain or archive the v1 catalog for
+audit, add `:signal` and `:table` to every reviewed entry, choose a new manifest
+deployment `:version`, compile it as v2, and install it against a fresh
+registry-object prefix. The resulting field IDs and physical columns are new by
+design. There is no automatic location-to-signal conversion because resource,
+scope, and metric targets can be ambiguous.
 
 Inference is evidence, not permission. Unknown expressions, invalid literals,
 conflicting types, unsupported values, and dynamic keys become explicit
@@ -219,15 +252,18 @@ wins forever. Running that model is intentionally deferred while the existing
 exhaustive Durable check owns machine resources.
 
 Each value column reserves a `UInt8` status column with stable meanings for
-historical-untyped, absent, present-empty, valid, and invalid. Exporting those
-statuses is a later ingestion slice; reserving them now prevents nullable data
-from becoming an ambiguous contract.
+historical-untyped, absent, present-empty, valid, and invalid. The current span
+exporter writes those statuses; reserving them in the shared plan prevents later
+signal-specific ingestion from inventing an ambiguous nullable contract.
 
-This first registry seam intentionally accepts only `:span-attributes`, which
-map unambiguously to `otel_traces`. Resource and scope attributes occur on more
-than one signal table. Their manifest identity needs a signal/table dimension
-before this planner can support them without installing a projection on the
-wrong table.
+The manifest now carries the prerequisite signal/table identity, but this first
+physical registry seam still accepts only the exact target
+`{:signal :spans, :table "otel_traces", :location :span-attributes}`. Other
+valid targets compile into storage-independent plans and distinct field IDs,
+then fail with
+`:unsupported-target` if passed to `registry/prepare`. Later ingestion/query
+slices must implement their signal-specific row and table semantics before that
+allowlist expands.
 
 ## Export confirmed typed span values
 

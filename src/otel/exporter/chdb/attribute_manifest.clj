@@ -4,23 +4,26 @@
   This namespace never connects to a database or observes telemetry. A compiled
   manifest is descriptive input for a later, separately authorized installer."
   (:require [clojure.string :as str]
-            [otel.attribute-schema :as attribute-schema])
+            [otel.attribute-schema :as attribute-schema]
+            [otel.exporter.chdb.attribute-identity :as identity])
   (:import [java.security MessageDigest]))
 
-(def manifest-schema "jolt-otel-clickhouse.attribute-manifest/v1")
-(def reviewed-fragment-schema "jolt-otel-clickhouse.reviewed-attributes/v1")
+(def manifest-schema "jolt-otel-clickhouse.attribute-manifest/v2")
+(def reviewed-fragment-schema "jolt-otel-clickhouse.reviewed-attributes/v2")
+(def legacy-manifest-schema "jolt-otel-clickhouse.attribute-manifest/v1")
+(def legacy-reviewed-fragment-schema
+  "jolt-otel-clickhouse.reviewed-attributes/v1")
 
 (def authorities
   "Closed provenance authorities accepted for explicitly reviewed fragments."
   #{:semantic-convention :advice :runtime-reviewed})
 
-(def locations
-  "Closed attribute locations supported by the first manifest format."
-  #{:span-attributes :resource-attributes :scope-attributes
-    :log-attributes :metric-attributes})
+(def locations identity/locations)
+(def signals identity/signals)
+(def table-signals identity/table-signals)
 
 (def clickhouse-types
-  "The only application attribute types promotable by the first format."
+  "The only application attribute types promotable by the v2 format."
   {:string "String" :boolean "Bool" :int64 "Int64"})
 
 (def ^:private max-int64 9223372036854775807)
@@ -34,25 +37,20 @@
 (def ^:private authority-rank
   {:semantic-convention 0 :advice 1 :source-inference 2 :runtime-reviewed 3})
 
-(def ^:private signal-location
-  {:span :span-attributes
-   :resource :resource-attributes
-   :log :log-attributes
-   :metric :metric-attributes})
+(def ^:private inference-target
+  {:span identity/span-attribute-target
+   :log (identity/target :logs "otel_logs" :log-attributes)})
+
+(def ^:private inference-location
+  {:span :span-attributes :resource :resource-attributes
+   :log :log-attributes :metric :metric-attributes})
 
 (def ^:private diagnostic-codes
-  #{:conflicting-inference :dynamic-key :invalid-inference
+  #{:ambiguous-target :conflicting-inference :dynamic-key :invalid-inference
     :unknown-inference :unsupported-type})
 
 (def ^:private inference-kinds
   #{:literal :constructor :cast :dynamic})
-
-(def ^:private location-code
-  {:span-attributes "sp"
-   :resource-attributes "rs"
-   :scope-attributes "sc"
-   :log-attributes "lg"
-   :metric-attributes "mt"})
 
 (defn- fail! [message type data]
   (throw (ex-info message (assoc data :type type :attribute-manifest/error true))))
@@ -121,7 +119,7 @@
 
 (defn- explicit-fragment [fragment]
   (when-not (exact-keys? fragment #{:schema :authority :source :entries})
-    (fail! "reviewed attribute fragment must use the closed v1 envelope"
+    (fail! "reviewed attribute fragment must use the closed v2 envelope"
            ::invalid-reviewed-fragment {:fragment fragment}))
   (let [{:keys [schema authority source entries]} fragment]
     (when-not (= reviewed-fragment-schema schema)
@@ -137,21 +135,25 @@
     {:declarations
      (mapv
       (fn [entry]
-        (when-not (exact-keys? entry #{:location :key :type})
-          (fail! "reviewed attribute entry must use the closed v1 shape"
+        (when-not (exact-keys? entry #{:signal :table :location :key :type})
+          (fail! "reviewed attribute entry must use the closed v2 shape"
                  ::invalid-reviewed-entry {:source source :entry entry}))
-        (let [{:keys [location key type]} entry]
-          (when-not (contains? locations location)
-            (fail! "reviewed attribute entry has an unsupported location"
-                   ::invalid-location {:source source :location location}))
+        (let [{:keys [signal table location key type]} entry
+              target (identity/target signal table location)]
+          (when-not target
+            (fail! "reviewed attribute entry has an invalid signal/table/location target"
+                   ::invalid-target {:source source :signal signal
+                                     :table table :location location}))
           (when-not (valid-key? key)
             (fail! "reviewed attribute entry has an invalid key"
                    ::invalid-key {:source source :key key}))
           (when-not (contains? clickhouse-types type)
             (fail! "reviewed attribute entry has an unsupported type"
                    ::invalid-type {:source source :key key :type type}))
-          {:location location :key key :type type
-           :provenance [(sorted-map :authority authority :source source)]}))
+          (merge target
+                 {:key key :type type
+                  :provenance
+                  [(sorted-map :authority authority :source source)]})))
       entries)
      :diagnostics []}))
 
@@ -172,19 +174,21 @@
 
 (defn- inferred-entry [{:keys [signal key types unknown? invalid? conflict?
                                evidence]}]
-  (let [location (get signal-location signal)
+  (let [target (get inference-target signal)
+        location (get inference-location signal)
         provenance (inference-provenance evidence)
         code (cond
                conflict? :conflicting-inference
                invalid? :invalid-inference
                unknown? :unknown-inference
                (not= 1 (count types)) :conflicting-inference
-               (not (contains? clickhouse-types (first types))) :unsupported-type)]
+               (not (contains? clickhouse-types (first types))) :unsupported-type
+               (nil? target) :ambiguous-target)]
     (if code
       {:declarations []
        :diagnostics [(diagnostic code location key types provenance)]}
-      {:declarations [{:location location :key key :type (first types)
-                       :provenance provenance}]
+      {:declarations [(merge target {:key key :type (first types)
+                                     :provenance provenance})]
        :diagnostics []})))
 
 (defn- inferred-fragment [fragment]
@@ -193,7 +197,7 @@
         converted (map inferred-entry entries)
         dynamic-diagnostics
         (mapv (fn [{:keys [signal evidence]}]
-                (diagnostic :dynamic-key (get signal-location signal) nil nil
+                (diagnostic :dynamic-key (get inference-location signal) nil nil
                             (inference-provenance evidence)))
               dynamic-keys)]
     {:declarations (vec (mapcat :declarations converted))
@@ -207,6 +211,10 @@
 
     (= reviewed-fragment-schema (:schema fragment))
     (explicit-fragment fragment)
+
+    (= legacy-reviewed-fragment-schema (:schema fragment))
+    (fail! "legacy reviewed fragments require explicit v2 signal/table targets"
+           ::legacy-reviewed-fragment {:schema (:schema fragment)})
 
     :else
     (fail! "attribute manifest fragment has an unsupported schema"
@@ -225,23 +233,27 @@
         value (if (empty? value) "field" value)]
     (subs value 0 (min 28 (count value)))))
 
-(defn- field-identity [binding location key type]
+(defn- field-identity [binding signal table location key type]
   (sorted-map :application-id (:application-id binding)
               :dataset-id (:dataset-id binding)
               :key key
               :lineage (:lineage binding)
               :location location
+              :signal signal
+              :table table
               :type type
               :version (:version binding)))
 
-(defn- physical-identifiers [location key digest]
-  (let [stem (str (get location-code location) "_" (sanitize-key key) "_"
+(defn- physical-identifiers [signal table location key digest]
+  (let [stem (str (identity/target-code
+                   {:signal signal :table table :location location})
+                  "_" (sanitize-key key) "_"
                   (subs digest 0 16))]
     (sorted-map :status-column (str "as_" stem)
                 :value-column (str "av_" stem))))
 
-(defn- compiled-field [binding {:keys [location key type provenance]}]
-  (let [identity (field-identity binding location key type)
+(defn- compiled-field [binding {:keys [signal table location key type provenance]}]
+  (let [identity (field-identity binding signal table location key type)
         digest (sha256 (canonical-edn identity))]
     (sorted-map
      :clickhouse-type (get clickhouse-types type)
@@ -249,27 +261,32 @@
      :identity identity
      :key key
      :location location
-     :physical (physical-identifiers location key digest)
+     :physical (physical-identifiers signal table location key digest)
      :provenance (canonical-provenance provenance)
+     :signal signal
+     :table table
      :type type)))
 
 (defn- merge-declarations [binding declarations]
   (->> declarations
-       (group-by (juxt :location :key))
+       (group-by (juxt :signal :table :location :key))
        (map
-        (fn [[[location key] group]]
+        (fn [[[signal table location key] group]]
           (let [types (->> group (map :type) distinct (sort-by str) vec)]
             (when (> (count types) 1)
               (fail! "reviewed attribute declarations disagree on type"
                      ::type-conflict
-                     {:location location :key key :types types
+                     {:signal signal :table table :location location
+                      :key key :types types
                       :declarations (->> group (map canonical-value)
                                          (sort-by pr-str) vec)}))
             (compiled-field
              binding
-             {:location location :key key :type (first types)
+             {:signal signal :table table :location location
+              :key key :type (first types)
               :provenance (mapcat :provenance group)}))))
-       (sort-by (juxt (comp str :location) :key (comp str :type)))
+       (sort-by (juxt (comp str :signal) :table (comp str :location)
+                      :key (comp str :type)))
        vec))
 
 (defn- diagnostic-sort-key [item]
@@ -295,7 +312,7 @@
   [{:keys [fragments] :as input}]
   (when-not (exact-keys? input #{:dataset-id :application-id :lineage
                                 :version :fragments})
-    (fail! "attribute manifest input must use the closed v1 envelope"
+    (fail! "attribute manifest input must use the closed v2 envelope"
            ::invalid-input {:input input}))
   (validate-binding! input)
   (when-not (and (vector? fragments) (<= (count fragments) max-fragments))
@@ -346,10 +363,13 @@
 (defn validate-manifest
   "Validate a compiled manifest's closed envelope, stable identifiers and digest."
   [manifest]
+  (when (= legacy-manifest-schema (:schema manifest))
+    (fail! "legacy manifests require explicit v2 signal/table migration"
+           ::legacy-manifest {:schema (:schema manifest)}))
   (when-not (exact-keys? manifest #{:schema :dataset-id :application-id
                                    :lineage :version :fields :diagnostics
                                    :checksum})
-    (fail! "compiled attribute manifest must use the closed v1 envelope"
+    (fail! "compiled attribute manifest must use the closed v2 envelope"
            ::invalid-manifest {:manifest manifest}))
   (validate-binding! manifest)
   (when-not (= manifest-schema (:schema manifest))
@@ -363,19 +383,22 @@
                  (re-matches sha256-pattern (:checksum manifest)))
     (fail! "compiled attribute manifest has invalid collections or checksum"
            ::invalid-manifest {}))
-  (doseq [{:keys [id identity location key type clickhouse-type physical
-                  provenance] :as field}
+  (doseq [{:keys [id identity signal table location key type clickhouse-type
+                  physical provenance] :as field}
           (:fields manifest)]
     (let [digest (sha256 (canonical-edn identity))]
       (when-not (and (exact-keys? field #{:clickhouse-type :id :identity :key
-                                         :location :physical :provenance :type})
-                     (contains? locations location)
+                                         :location :physical :provenance
+                                         :signal :table :type})
+                     (some? (identity/target signal table location))
                      (valid-key? key)
                      (contains? clickhouse-types type)
                      (= clickhouse-type (get clickhouse-types type))
-                     (= identity (field-identity manifest location key type))
+                     (= identity (field-identity manifest signal table location
+                                                 key type))
                      (= id (str "attribute_" (subs digest 0 20)))
-                     (= physical (physical-identifiers location key digest))
+                     (= physical (physical-identifiers signal table location
+                                                       key digest))
                      (every? #(<= (count %) max-identifier-length)
                              (vals physical))
                      (vector? provenance) (not (empty? provenance))
@@ -386,7 +409,9 @@
   (when-not (= (:fields manifest)
                (->> (:fields manifest)
                     distinct
-                    (sort-by (juxt (comp str :location) :key (comp str :type)))
+                    (sort-by (juxt (comp str :signal) :table
+                                   (comp str :location) :key
+                                   (comp str :type)))
                     vec))
     (fail! "compiled attribute fields are not canonical"
            ::invalid-manifest {:section :fields}))

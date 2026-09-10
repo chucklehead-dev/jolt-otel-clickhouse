@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Version typed attribute manifests and reviewed fragments to v2 with an
+  explicit closed signal, physical table, and location identity. Checksums,
+  field IDs, registry planning, projection, and queries share that identity;
+  legacy ambiguous v1 manifests fail closed and require operator-reviewed
+  migration. Only span attributes on `otel_traces` are physically enabled.
 - Add a capability- and connection-bound explorer query for approved typed span
   keys. Physical value/status columns are library-owned, caller values remain
   parameters, historical or invalid rows use the generic attribute map, and

@@ -20,9 +20,11 @@
           [{:schema manifest/reviewed-fragment-schema
             :authority :advice :source "advice/checkout.edn"
             :entries
-            [{:location :span-attributes
+            [{:signal :spans :table "otel_traces"
+              :location :span-attributes
               :key malicious-key :type :int64}
-             {:location :span-attributes
+             {:signal :spans :table "otel_traces"
+              :location :span-attributes
               :key "checkout.complete" :type :boolean}]}]})
         columns (registry/expected-columns (registry/prepare compiled))
         observed (atom {})
@@ -90,8 +92,8 @@
                   (str/includes? sql "IN (2, 3)")
                   (str/includes? sql "IN (0, 4)")
                   (str/includes? sql "notEmpty(value) OR typedstatus = 2")
-                  (str/includes? sql "`av_sp_")
-                  (str/includes? sql "`as_sp_")
+                  (str/includes? sql "`av_tr_sp_")
+                  (str/includes? sql "`as_tr_sp_")
                   (not (str/includes? sql key))
                   (not (str/includes? sql "system.tables")))))
 

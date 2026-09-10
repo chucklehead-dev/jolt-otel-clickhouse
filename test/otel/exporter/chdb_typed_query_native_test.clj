@@ -22,8 +22,10 @@
     [{:schema manifest/reviewed-fragment-schema
       :authority :advice :source "advice/checkout.edn"
       :entries
-      [{:location :span-attributes :key malicious-key :type :int64}
-       {:location :span-attributes :key empty-key :type :string}]}]}))
+      [{:signal :spans :table "otel_traces"
+        :location :span-attributes :key malicious-key :type :int64}
+       {:signal :spans :table "otel_traces"
+        :location :span-attributes :key empty-key :type :string}]}]}))
 
 (defn- observe-columns [connection]
   (into {}
