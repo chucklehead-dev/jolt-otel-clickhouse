@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add a bounded capability- and connection-confirmed Int64 span aggregate
+  query. Exact half-open range predicates and closed count/min/max/average
+  recipes read only status-valid physical values; numeric-looking historical or
+  invalid fallback text never participates. Query scans and results are bounded,
+  and no sorting or skip index is generated.
 - Pin OTel artifact discovery and add a bundle-backed v3 typed-manifest compiler.
   An explicit operator deployment binding consumes a validated canonical bundle;
   its digest and complete artifact identities are checksum-bound compact

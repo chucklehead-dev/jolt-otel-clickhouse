@@ -417,14 +417,55 @@ keys such as `:table` or `:sql`, and cross-connection capabilities fail before
 JDBC execution. The original closed `top-values` API remains the generic-map
 path for its established semantic fields and needs no descriptor capability.
 
+### Aggregate confirmed Int64 span values
+
+One approved Int64 span attribute can be filtered and aggregated without
+converting its fallback map text:
+
+```clojure
+(explorer/typed-span-int64-aggregates
+ connection
+ (:descriptor-set installation)
+ {:signal :spans
+  :attribute-key "checkout.remaining_items"
+  :predicate {:gte 1 :lt 100}
+  :group-by [:service-name]
+  :aggregates [:count :min :max :avg]
+  :start-unix-nano window-start
+  :end-unix-nano window-end
+  :limit 20})
+```
+
+The predicate is a non-empty closed map containing `:gte`, `:lt`, or both; each
+bound must fit signed Int64 and a two-bound range is half-open. Grouping is
+currently either absent or exactly `:service-name`. `:count`, `:min`, `:max`,
+and `:avg` are the complete aggregate vocabulary. A sum contract is deferred
+until its overflow and result representation are explicit rather than silently
+inheriting ClickHouse overflow behavior.
+
+Only status `3` (`:valid`) participates. Historical-untyped, absent,
+present-empty, and invalid rows are excluded, even when their generic map text
+looks numeric. This is intentionally different from `typed-span-values`, whose
+purpose is to retain useful fallback distributions. Aggregate rows identify the
+manifest field and version and report `:source :typed` and `:typed-status 3`.
+
+The capability chooses the fixed table and physical columns; the logical key is
+used only to select an approved descriptor and never enters SQL. Range bounds,
+time bounds, group text length, and result limit are JDBC parameters. The query
+also caps result bytes, scanned rows and bytes, memory, execution time, threads,
+and returned groups. These are full-scan safety limits, not an indexing claim.
+No per-attribute sorting or skip index is generated.
+
 ## What remains
 
 Only an installer-issued active descriptor capability is queryable.
 Direct-export versus OTLP-receiver typed-row equivalence is qualified for one
 canonical span fixture on the same process-local capability and connection.
-Typed numeric filtering/aggregation beyond bounded value distributions is not
-yet exposed. The installer, direct span export, generic compatibility map,
-and explorer path have an in-memory native chDB round-trip gate covering
+The first typed numeric query is intentionally limited to Int64 range
+aggregation; comparative map-conversion benchmarks, broader grouping and
+aggregate vocabularies, and other promoted types remain separate work. The
+installer, direct span export, generic compatibility map, and explorer path
+have an in-memory native chDB round-trip gate covering
 historical, absent, present-empty, valid, and invalid statuses, including an
 `Int64` maximum and a hostile parameter-bound logical key. The state-machine
 model above remains. The current process-local
