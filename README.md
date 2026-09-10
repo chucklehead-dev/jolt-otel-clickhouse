@@ -24,8 +24,12 @@ Pin the exact commit you have reviewed:
 
 The placeholder must be replaced with a full 40-character commit SHA. The
 library also pins exact commits of `jolt-chdb`, `jolt-otel`, and `data.json`;
-aliases from those Git dependencies do not propagate to applications. Install
-the chDB native library explicitly with:
+aliases from those Git dependencies do not propagate to applications. It
+selects canonical upstream `jolt-crypto` `5effcc89` directly and excludes the
+older compatibility-fork revision inherited through its OTel pin. That
+revision contains the Jolt 0.8 value-first FFI migration, JDK crypto provider
+declarations, and large-input digest/signature fixes. Install the chDB native
+library explicitly with:
 
 ```sh
 jolt -m jdbc.chdb.install

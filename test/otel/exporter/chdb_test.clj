@@ -9,6 +9,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-attribute-manifest-test :as manifest-test]
             [otel.exporter.chdb-benchmark :as benchmark]
+            [otel.exporter.chdb-dependency-test :as dependency-test]
             [otel.exporter.chdb-explorer-test :as explorer-test]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-property-test :as property]
@@ -537,6 +538,7 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (dependency-test/run check)
   (manifest-test/run check)
   (run-clean-source-load-check)
   (run-backend-benchmark-gate)
