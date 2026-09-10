@@ -1,14 +1,16 @@
 (ns otel.exporter.chdb.attribute-manifest
-  "Pure compilation of reviewed OTel attribute hints into stable storage plans.
+  "Pure compilation of reviewed OTel attribute evidence into stable storage plans.
 
   This namespace never connects to a database or observes telemetry. A compiled
   manifest is descriptive input for a later, separately authorized installer."
   (:require [clojure.string :as str]
             [otel.attribute-schema :as attribute-schema]
+            [otel.attribute-schema.discovery :as discovery]
             [otel.exporter.chdb.attribute-identity :as identity])
   (:import [java.security MessageDigest]))
 
 (def manifest-schema "jolt-otel-clickhouse.attribute-manifest/v2")
+(def bundle-manifest-schema "jolt-otel-clickhouse.attribute-manifest/v3")
 (def reviewed-fragment-schema "jolt-otel-clickhouse.reviewed-attributes/v2")
 (def legacy-manifest-schema "jolt-otel-clickhouse.attribute-manifest/v1")
 (def legacy-reviewed-fragment-schema
@@ -23,7 +25,7 @@
 (def table-signals identity/table-signals)
 
 (def clickhouse-types
-  "The only application attribute types promotable by the v2 format."
+  "The only application attribute types promotable by supported manifests."
   {:string "String" :boolean "Bool" :int64 "Int64"})
 
 (def ^:private max-int64 9223372036854775807)
@@ -33,6 +35,13 @@
 (def ^:private max-identifier-length 63)
 (def ^:private binding-pattern #"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
 (def ^:private sha256-pattern #"[0-9a-f]{64}")
+
+(def ^:private empty-attribute-schema
+  {:schema attribute-schema/schema-id
+   :sources []
+   :entries []
+   :dynamic-keys? false
+   :dynamic-keys []})
 
 (def ^:private authority-rank
   {:semantic-convention 0 :advice 1 :source-inference 2 :runtime-reviewed 3})
@@ -303,6 +312,35 @@
    :schema manifest-schema
    :version (:version binding)))
 
+(defn- bundle-provenance [bundle]
+  (let [bundle (discovery/validate-bundle bundle)
+        rendered (discovery/render bundle)]
+    (sorted-map :fragments (:fragments bundle)
+                :schema discovery/bundle-schema-id
+                :sha256 (discovery/content-sha256 rendered))))
+
+(defn- bundle-manifest-payload [binding provenance fields diagnostics]
+  (sorted-map
+   :application-id (:application-id binding)
+   :bundle provenance
+   :dataset-id (:dataset-id binding)
+   :diagnostics (->> diagnostics (map canonical-value) distinct
+                     (sort-by diagnostic-sort-key) vec)
+   :fields fields
+   :lineage (:lineage binding)
+   :schema bundle-manifest-schema
+   :version (:version binding)))
+
+(defn- compile-parts [binding parts payload-fn]
+  (let [declarations (vec (mapcat :declarations parts))]
+    (when (> (count declarations) max-entries)
+      (fail! "attribute manifest contains too many promoted declarations"
+             ::too-many-entries {:count (count declarations)}))
+    (let [payload (payload-fn
+                   (merge-declarations binding declarations)
+                   (mapcat :diagnostics parts))]
+      (assoc payload :checksum (sha256 (canonical-edn payload))))))
+
 (defn compile-manifest
   "Compile reviewed and source-inferred fragments into a canonical storage plan.
 
@@ -323,14 +361,68 @@
       (fail! "attribute manifest contains too many source declarations"
              ::too-many-entries {:count item-count})))
   (let [parts (mapv consume-fragment fragments)
-        declarations (vec (mapcat :declarations parts))]
-    (when (> (count declarations) max-entries)
-      (fail! "attribute manifest contains too many promoted declarations"
-             ::too-many-entries {:count (count declarations)}))
-    (let [payload (manifest-payload input
-                                    (merge-declarations input declarations)
-                                    (mapcat :diagnostics parts))]
-      (assoc payload :checksum (sha256 (canonical-edn payload))))))
+        payload-fn #(manifest-payload input %1 %2)]
+    (compile-parts input parts payload-fn)))
+
+(defn compile-bundle-manifest
+  "Compile one operator-approved attribute-schema bundle into a v3 storage plan.
+
+  The closed deployment binding and invocation are the approval boundary. The
+  bundle is validated through OTel's public artifact-discovery contract. Its
+  merged attribute schema supplies inference evidence; optional
+  `:reviewed-fragments` must use this library's explicit reviewed-fragment
+  format. The compact persisted provenance binds the manifest checksum to the
+  canonical bundle bytes and every selected artifact identity without storing
+  the merged attribute schema twice. This function performs no database work."
+  [{:keys [bundle reviewed-fragments] :or {reviewed-fragments []} :as input}]
+  (let [required #{:dataset-id :application-id :lineage :version :bundle}
+        allowed (conj required :reviewed-fragments)]
+    (when-not (and (map? input)
+                   (every? allowed (keys input))
+                   (every? #(contains? input %) required))
+      (fail! "bundle manifest input must use the closed v3 envelope"
+             ::invalid-input {})))
+  (validate-binding! input)
+  (when-not (and (vector? reviewed-fragments)
+                 (<= (count reviewed-fragments) max-fragments))
+    (fail! "reviewed bundle declarations must be a bounded vector"
+           ::invalid-input {}))
+  (let [bundle (discovery/validate-bundle bundle)
+        inferred (:attribute-schema bundle)
+        item-count (+ (fragment-item-count inferred)
+                      (reduce + 0 (map fragment-item-count
+                                       reviewed-fragments)))]
+    (when (> item-count max-entries)
+      (fail! "bundle manifest contains too many source declarations"
+             ::too-many-entries {:count item-count}))
+    (let [reviewed-parts (mapv explicit-fragment reviewed-fragments)
+          parts (into [(inferred-fragment inferred)] reviewed-parts)
+          provenance (bundle-provenance bundle)
+          payload-fn #(bundle-manifest-payload input provenance %1 %2)]
+      (compile-parts input parts payload-fn))))
+
+(defn- validate-bundle-provenance [provenance]
+  (when-not (and (exact-keys? provenance #{:schema :sha256 :fragments})
+                 (= discovery/bundle-schema-id (:schema provenance))
+                 (string? (:sha256 provenance))
+                 (re-matches sha256-pattern (:sha256 provenance)))
+    (fail! "bundle manifest has invalid compact provenance"
+           ::invalid-bundle-provenance {}))
+  (try
+    (let [validated
+          (discovery/validate-bundle
+           {:schema discovery/bundle-schema-id
+            :fragments (:fragments provenance)
+            :attribute-schema empty-attribute-schema})]
+      (when-not (= (:fragments provenance) (:fragments validated))
+        (fail! "bundle manifest provenance is not canonical"
+               ::invalid-bundle-provenance {})))
+    (catch Throwable error
+      (if (= ::invalid-bundle-provenance (:type (ex-data error)))
+        (throw error)
+        (fail! "bundle manifest has invalid artifact identities"
+               ::invalid-bundle-provenance {}))))
+  provenance)
 
 (defn- valid-provenance? [item]
   (and (map? item)
@@ -366,67 +458,71 @@
   (when (= legacy-manifest-schema (:schema manifest))
     (fail! "legacy manifests require explicit v2 signal/table migration"
            ::legacy-manifest {:schema (:schema manifest)}))
-  (when-not (exact-keys? manifest #{:schema :dataset-id :application-id
-                                   :lineage :version :fields :diagnostics
-                                   :checksum})
-    (fail! "compiled attribute manifest must use the closed v2 envelope"
-           ::invalid-manifest {:manifest manifest}))
-  (validate-binding! manifest)
-  (when-not (= manifest-schema (:schema manifest))
-    (fail! "compiled attribute manifest has an unsupported schema"
-           ::invalid-manifest {:schema (:schema manifest)}))
-  (when-not (and (vector? (:fields manifest))
-                 (vector? (:diagnostics manifest))
-                 (<= (count (:fields manifest)) max-entries)
-                 (<= (count (:diagnostics manifest)) max-entries)
-                 (string? (:checksum manifest))
-                 (re-matches sha256-pattern (:checksum manifest)))
-    (fail! "compiled attribute manifest has invalid collections or checksum"
-           ::invalid-manifest {}))
-  (doseq [{:keys [id identity signal table location key type clickhouse-type
-                  physical provenance] :as field}
-          (:fields manifest)]
-    (let [digest (sha256 (canonical-edn identity))]
-      (when-not (and (exact-keys? field #{:clickhouse-type :id :identity :key
-                                         :location :physical :provenance
-                                         :signal :table :type})
-                     (some? (identity/target signal table location))
-                     (valid-key? key)
-                     (contains? clickhouse-types type)
-                     (= clickhouse-type (get clickhouse-types type))
-                     (= identity (field-identity manifest signal table location
-                                                 key type))
-                     (= id (str "attribute_" (subs digest 0 20)))
-                     (= physical (physical-identifiers signal table location
-                                                       key digest))
-                     (every? #(<= (count %) max-identifier-length)
-                             (vals physical))
-                     (vector? provenance) (not (empty? provenance))
-                     (= provenance (canonical-provenance provenance))
-                     (every? valid-provenance? provenance))
-        (fail! "compiled attribute field is invalid"
-               ::invalid-manifest-field {:field field}))))
-  (when-not (= (:fields manifest)
-               (->> (:fields manifest)
-                    distinct
-                    (sort-by (juxt (comp str :signal) :table
-                                   (comp str :location) :key
-                                   (comp str :type)))
-                    vec))
-    (fail! "compiled attribute fields are not canonical"
-           ::invalid-manifest {:section :fields}))
-  (when-not (and (every? valid-diagnostic? (:diagnostics manifest))
-                 (= (:diagnostics manifest)
-                    (->> (:diagnostics manifest) distinct
-                         (sort-by diagnostic-sort-key) vec)))
-    (fail! "compiled attribute diagnostics are not canonical"
-           ::invalid-manifest {:section :diagnostics}))
-  (let [payload (dissoc manifest :checksum)
-        expected (sha256 (canonical-edn payload))]
-    (when-not (= expected (:checksum manifest))
-      (fail! "compiled attribute manifest checksum does not match its payload"
-             ::checksum-mismatch
-             {:expected expected :actual (:checksum manifest)})))
+  (let [schema (:schema manifest)
+        bundle? (= bundle-manifest-schema schema)
+        expected-keys (cond-> #{:schema :dataset-id :application-id
+                                :lineage :version :fields :diagnostics
+                                :checksum}
+                        bundle? (conj :bundle))]
+    (when-not (and (contains? #{manifest-schema bundle-manifest-schema} schema)
+                   (exact-keys? manifest expected-keys))
+      (fail! "compiled attribute manifest must use a supported closed envelope"
+             ::invalid-manifest {:manifest manifest}))
+    (validate-binding! manifest)
+    (when bundle?
+      (validate-bundle-provenance (:bundle manifest)))
+    (when-not (and (vector? (:fields manifest))
+                   (vector? (:diagnostics manifest))
+                   (<= (count (:fields manifest)) max-entries)
+                   (<= (count (:diagnostics manifest)) max-entries)
+                   (string? (:checksum manifest))
+                   (re-matches sha256-pattern (:checksum manifest)))
+      (fail! "compiled attribute manifest has invalid collections or checksum"
+             ::invalid-manifest {}))
+    (doseq [{:keys [id identity signal table location key type clickhouse-type
+                    physical provenance] :as field}
+            (:fields manifest)]
+      (let [digest (sha256 (canonical-edn identity))]
+        (when-not (and (exact-keys? field #{:clickhouse-type :id :identity :key
+                                           :location :physical :provenance
+                                           :signal :table :type})
+                       (some? (identity/target signal table location))
+                       (valid-key? key)
+                       (contains? clickhouse-types type)
+                       (= clickhouse-type (get clickhouse-types type))
+                       (= identity (field-identity manifest signal table location
+                                                   key type))
+                       (= id (str "attribute_" (subs digest 0 20)))
+                       (= physical (physical-identifiers signal table location
+                                                         key digest))
+                       (every? #(<= (count %) max-identifier-length)
+                               (vals physical))
+                       (vector? provenance) (not (empty? provenance))
+                       (= provenance (canonical-provenance provenance))
+                       (every? valid-provenance? provenance))
+          (fail! "compiled attribute field is invalid"
+                 ::invalid-manifest-field {:field field}))))
+    (when-not (= (:fields manifest)
+                 (->> (:fields manifest)
+                      distinct
+                      (sort-by (juxt (comp str :signal) :table
+                                     (comp str :location) :key
+                                     (comp str :type)))
+                      vec))
+      (fail! "compiled attribute fields are not canonical"
+             ::invalid-manifest {:section :fields}))
+    (when-not (and (every? valid-diagnostic? (:diagnostics manifest))
+                   (= (:diagnostics manifest)
+                      (->> (:diagnostics manifest) distinct
+                           (sort-by diagnostic-sort-key) vec)))
+      (fail! "compiled attribute diagnostics are not canonical"
+             ::invalid-manifest {:section :diagnostics}))
+    (let [payload (dissoc manifest :checksum)
+          expected (sha256 (canonical-edn payload))]
+      (when-not (= expected (:checksum manifest))
+        (fail! "compiled attribute manifest checksum does not match its payload"
+               ::checksum-mismatch
+               {:expected expected :actual (:checksum manifest)}))))
   manifest)
 
 (defn render

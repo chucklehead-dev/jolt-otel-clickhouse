@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-attribute-registry-installer-test
   (:require [jdbc.chdb.durable.backend :as backend]
+            [otel.exporter.chdb-attribute-bundle-fixture :as bundle-fixture]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
@@ -17,6 +18,30 @@
        :entries [{:signal :spans :table "otel_traces"
                   :location :span-attributes
                   :key "checkout.complete" :type :boolean}]}]})))
+
+(defn- approved-bundle []
+  (let [fragment
+        (bundle-fixture/inferred
+         "src/checkout-bundle.clj"
+         "(ns checkout-bundle (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"checkout.bundle-complete\" false)")
+        item
+        {:artifact
+         (bundle-fixture/revision-artifact
+          "io.github.example/checkout-bundle"
+          "https://github.com/example/checkout-bundle"
+          "5555555555555555555555555555555555555555")
+         :path "META-INF/otel/attribute-schema/checkout-bundle.edn"
+         :fragment fragment}]
+    (bundle-fixture/discovered-bundle [item])))
+
+(defn- compiled-bundle []
+  (manifest/compile-bundle-manifest
+   {:dataset-id "telemetry-prod"
+    :application-id "checkout-bundle"
+    :lineage "checkout-bundle-v1"
+    :version 1
+    :bundle (approved-bundle)}))
 
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
@@ -267,6 +292,30 @@
              :otel.exporter.chdb.attribute-registry-installer/invalid-operation
              (:type (thrown-data
                      #(installer/render-add-column record injected)))))
+
+    (let [object-backend (backend/memory-backend)
+          ddl-calls (atom 0)
+          compiled (compiled-bundle)
+          runtime
+          {:target (atom :bundle-target)
+           :observe-columns
+           (fn [] [{:columns {} :signal :spans :table "otel_traces"}])
+           :execute-ddl! (fn [_] (swap! ddl-calls inc))}
+          raw-bundle-failure
+          (thrown-data
+           #(installer/install-approved! object-backend (approved-bundle)
+                                         runtime))
+          telemetry-failure
+          (thrown-data
+           #(installer/install-approved! object-backend
+                                         (assoc compiled :state :active)
+                                         runtime))]
+      (check "bundle or telemetry metadata cannot authorize installer DDL"
+             [:otel.exporter.chdb.attribute-manifest/invalid-manifest
+              :otel.exporter.chdb.attribute-manifest/invalid-manifest
+              0 store/empty-catalog]
+             [(:type raw-bundle-failure) (:type telemetry-failure)
+              @ddl-calls (:catalog (store/load! object-backend))]))
 
     (let [{:keys [backend manifest runtime]} (fixture)]
       (check "installer runtime requires an explicit non-nil target identity"

@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-attribute-registry-store-test
   (:require [clojure.string :as str]
             [jdbc.chdb.durable.backend :as backend]
+            [otel.exporter.chdb-attribute-bundle-fixture :as bundle-fixture]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-store :as store]))
@@ -15,6 +16,28 @@
       :entries [{:signal :spans :table "otel_traces"
                  :location :span-attributes
                  :key "checkout.complete" :type :boolean}]}]}))
+
+(defn- compiled-bundle []
+  (let [fragment
+        (bundle-fixture/inferred
+         "src/billing.clj"
+         "(ns billing (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"billing.items\" (long value))")
+        bundle
+        (bundle-fixture/discovered-bundle
+         [{:artifact
+           (bundle-fixture/revision-artifact
+            "io.github.example/billing"
+            "https://github.com/example/billing"
+            "4444444444444444444444444444444444444444")
+           :path "META-INF/otel/attribute-schema/billing.edn"
+           :fragment fragment}])]
+    (manifest/compile-bundle-manifest
+     {:dataset-id "telemetry-prod"
+      :application-id "billing"
+      :lineage "billing-v1"
+      :version 1
+      :bundle bundle})))
 
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
@@ -160,6 +183,23 @@
     (check "canonical wire rendering is stable across input map order"
            (store/render store/empty-catalog)
            (store/render (into {} (reverse (seq store/empty-catalog)))))
+
+    (let [fresh (backend/memory-backend)
+          bundle-record (registry/prepare (compiled-bundle))
+          expected-records (registry/validate-catalog [prepared bundle-record])
+          committed (store/commit! fresh (store/load! fresh)
+                                   [bundle-record prepared])
+          restarted (store/load! fresh)]
+      (check "mixed v2 and bundle-v3 records round-trip canonically in registry v1"
+             [registry/registry-schema
+              #{manifest/manifest-schema manifest/bundle-manifest-schema}
+              expected-records
+              (store/render (:catalog (:snapshot committed)))]
+             [(get-in restarted [:catalog :records 0 :schema])
+              (set (map #(get-in % [:manifest :schema])
+                        (get-in restarted [:catalog :records])))
+              (get-in restarted [:catalog :records])
+              (store/render (:catalog restarted))]))
 
     (check "persisted legacy manifest records fail closed at catalog validation"
            :otel.exporter.chdb.attribute-manifest/legacy-manifest

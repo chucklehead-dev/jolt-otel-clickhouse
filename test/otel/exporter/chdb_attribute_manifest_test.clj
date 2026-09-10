@@ -1,6 +1,8 @@
 (ns otel.exporter.chdb-attribute-manifest-test
   (:require [clojure.string :as str]
             [otel.attribute-schema :as attribute-schema]
+            [otel.attribute-schema.discovery :as discovery]
+            [otel.exporter.chdb-attribute-bundle-fixture :as bundle-fixture]
             [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]))
 
@@ -31,6 +33,22 @@
 
 (defn- compile* [fragments]
   (manifest/compile-manifest (assoc binding :fragments (vec fragments))))
+
+(defn- compile-bundle*
+  ([bundle]
+   (manifest/compile-bundle-manifest (assoc binding :bundle bundle)))
+  ([bundle reviewed-fragments]
+   (manifest/compile-bundle-manifest
+    (assoc binding :bundle bundle :reviewed-fragments reviewed-fragments))))
+
+(defn- artifact [revision]
+  (bundle-fixture/revision-artifact
+   "io.github.example/checkout-lib"
+   "https://github.com/example/checkout-lib"
+   revision))
+
+(defn- bundle-item [artifact path fragment]
+  {:artifact artifact :path path :fragment fragment})
 
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
@@ -211,6 +229,130 @@
             (thrown-data
              #(manifest/validate-manifest
                (assoc compiled :schema manifest/legacy-manifest-schema))))))
+
+  (let [problem-fragment
+        (inferred
+         "src/shared.clj"
+         "(ns bundled (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"bundle.count\" (long value))
+          (trace/set-attribute! span \"bundle.unknown\" value)
+          (trace/set-attribute! span \"bundle.invalid\" 9223372036854775808)
+          (trace/set-attribute! span \"bundle.ratio\" 1.5)
+          (trace/set-attribute! span \"bundle.mixed\" (long value))
+          (trace/set-attribute! span \"bundle.mixed\" (double value))
+          (trace/set-attribute! span dynamic-key 1)")
+        flag-fragment
+        (inferred
+         "src/shared.clj"
+         "(ns bundled.flag (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"bundle.flag\" false)")
+        first-item
+        (bundle-item
+         (artifact "1111111111111111111111111111111111111111")
+         "META-INF/otel/attribute-schema/checkout-lib.edn"
+         problem-fragment)
+        second-item
+        (bundle-item
+         (bundle-fixture/revision-artifact
+          "local/checkout-advice"
+          "https://github.com/example/checkout-advice"
+          "2222222222222222222222222222222222222222")
+         "META-INF/otel/attribute-schema/checkout-advice.edn"
+         flag-fragment)
+        forward-bundle (bundle-fixture/discovered-bundle
+                        [first-item second-item])
+        reverse-bundle (bundle-fixture/discovered-bundle
+                        [second-item first-item])
+        compiled (compile-bundle* forward-bundle)
+        permuted (compile-bundle* reverse-bundle)
+        diagnostics (set (map :code (:diagnostics compiled)))]
+    (check "bundle compiler emits the distinct closed v3 manifest"
+           manifest/bundle-manifest-schema (:schema compiled))
+    (check "shuffled discovery input yields byte-identical bundle manifests"
+           (manifest/render compiled) (manifest/render permuted))
+    (check "compact provenance retains all identities without the merged schema"
+           [(:fragments forward-bundle)
+            (discovery/content-sha256 (discovery/render forward-bundle))
+            false]
+           [(get-in compiled [:bundle :fragments])
+            (get-in compiled [:bundle :sha256])
+            (contains? (:bundle compiled) :attribute-schema)])
+    (check "safe bundle evidence promotes only the supported scalar fields"
+           #{["bundle.count" :int64] ["bundle.flag" :boolean]}
+           (set (map (juxt :key :type) (:fields compiled))))
+    (check "unknown dynamic invalid conflicting and unsupported evidence stays diagnostic"
+           #{:unknown-inference :dynamic-key :invalid-inference
+             :conflicting-inference :unsupported-type}
+           diagnostics)
+    (let [reviewed-fragment
+          (reviewed :advice "operator/checkout.edn"
+                    [{:location :span-attributes
+                      :key "bundle.reviewed" :type :string}])
+          with-reviewed (compile-bundle* forward-bundle [reviewed-fragment])]
+      (check "optional reviewed declarations remain an explicit operator input"
+             [:string :advice]
+             [(get-in (by-key with-reviewed "bundle.reviewed") [:type])
+              (get-in (by-key with-reviewed "bundle.reviewed")
+                      [:provenance 0 :authority])]))
+    (check "tampered bundle fails through the upstream validator before a manifest exists"
+           :invalid-bundle
+           (:reason
+            (thrown-data
+             #(compile-bundle* (assoc forward-bundle :unchecked true)))))
+    (let [mismatch
+          (inferred
+           "src/private.clj"
+           "(ns private (:require [otel.resource :as resource]))
+            (resource/resource {:service.name 42})")]
+      (check "render-time semantic-convention tampering cannot enter a manifest"
+             :mismatch
+             (:otel.semantic-conventions/error
+              (thrown-data
+               #(compile-bundle*
+                 (assoc forward-bundle :attribute-schema mismatch))))))
+    (check "bundle input cannot inject a registry lifecycle state"
+           :otel.exporter.chdb.attribute-manifest/invalid-input
+           (:type
+            (thrown-data
+             #(manifest/compile-bundle-manifest
+               (assoc binding :bundle forward-bundle :state :active))))))
+
+  (let [fragment
+        (inferred
+         "src/shared.clj"
+         "(ns bundled.identity (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"bundle.identity\" (long value))")
+        make-bundle
+        (fn [revision]
+          (bundle-fixture/discovered-bundle
+           [(bundle-item
+             (artifact revision)
+             "META-INF/otel/attribute-schema/checkout-lib.edn"
+             fragment)]))
+        first-bundle (make-bundle "1111111111111111111111111111111111111111")
+        second-bundle (make-bundle "3333333333333333333333333333333333333333")
+        first-manifest (compile-bundle* first-bundle)
+        second-manifest (compile-bundle* second-bundle)]
+    (check "artifact-identity-only bundle drift changes the manifest checksum"
+           [true true true]
+           [(= (:fields first-manifest) (:fields second-manifest))
+            (not= (get-in first-manifest [:bundle :sha256])
+                  (get-in second-manifest [:bundle :sha256]))
+            (not= (:checksum first-manifest) (:checksum second-manifest))])
+    (let [provenance-var
+          (ns-resolve 'otel.exporter.chdb.attribute-manifest
+                      'bundle-provenance)
+          mutant-distinct?
+          (with-redefs-fn
+            {provenance-var
+             (fn [_]
+               (sorted-map :fragments []
+                           :schema discovery/bundle-schema-id
+                           :sha256 (apply str (repeat 64 "0"))))}
+            #(not= (:checksum (compile-bundle* first-bundle))
+                   (:checksum (compile-bundle* second-bundle))))]
+      (check "identity-stripping mutant defeats the checksum distinction"
+             false mutant-distinct?)))
 
   (let [problem-source
         (inferred

@@ -2,6 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [malli.core :as m]
+            [otel.exporter.chdb-attribute-bundle-fixture :as bundle-fixture]
             [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]))
@@ -26,6 +27,28 @@
      :lineage "checkout-v1"
      :version version
      :fragments [(reviewed entries)]})))
+
+(defn- compile-bundle-app [revision version]
+  (let [fragment
+        (bundle-fixture/inferred
+         "src/checkout.clj"
+         "(ns checkout (:require [otel.trace :as trace]))
+          (trace/set-attribute! span \"checkout.bundle-count\" (long value))")
+        bundle
+        (bundle-fixture/discovered-bundle
+         [{:artifact
+           (bundle-fixture/revision-artifact
+            "io.github.example/checkout"
+            "https://github.com/example/checkout"
+            revision)
+           :path "META-INF/otel/attribute-schema/checkout.edn"
+           :fragment fragment}])]
+    (manifest/compile-bundle-manifest
+     {:dataset-id "telemetry-prod"
+      :application-id "checkout-bundle"
+      :lineage "checkout-bundle-v1"
+      :version version
+      :bundle bundle})))
 
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
@@ -237,6 +260,30 @@
              [(get-in next-record [:manifest :version])
               (not= (set (map :name columns))
                     (set (map :name (registry/expected-columns next-record))))]))
+    (let [first-manifest
+          (compile-bundle-app "1111111111111111111111111111111111111111" 1)
+          prepared-bundle (registry/prepare first-manifest)
+          active-bundle
+          (:record
+           (registry/reconcile prepared-bundle 1
+                               (observed-schema prepared-bundle)))
+          drifted
+          (compile-bundle-app "2222222222222222222222222222222222222222" 1)
+          next-version
+          (compile-bundle-app "2222222222222222222222222222222222222222" 2)
+          next-record (registry/prepare next-version [active-bundle])]
+      (check "bundle identity drift cannot rewrite one registry revision"
+             :otel.exporter.chdb.attribute-registry/revision-conflict
+             (:type
+              (thrown-data #(registry/prepare drifted [active-bundle]))))
+      (check "bundle promotion at a new version remains prospective"
+             [manifest/bundle-manifest-schema 2 true]
+             [(get-in next-record [:manifest :schema])
+              (get-in next-record [:manifest :version])
+              (not= (set (map :name
+                              (registry/expected-columns active-bundle)))
+                    (set (map :name
+                              (registry/expected-columns next-record))))]))
     (let [other (registry/prepare (compile-app "billing" 1) [active])]
       (check "applications sharing a dataset receive disjoint projections"
              #{}

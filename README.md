@@ -6,14 +6,17 @@ uses ClickStack's correlation and search column names (`TraceId`, `SpanId`,
 maps), so the demo and later ClickStack integration share the same query model.
 
 The library can also compile reviewed attribute declarations and build-time
-`otel.attribute-schema/v1` hints into a deterministic typed storage manifest,
-using an explicit closed signal/table/location identity for every field,
-then prepare a checksummed-manifest registry record, persist the complete
-catalog through an object-backend compare-and-set, and reconcile it against
-bounded table-qualified schema evidence. An explicit deployment installer can
-execute only those registry-owned additive columns, re-observe the table, and publish
-descriptors only after the active generation is persisted. Ambiguous writes are
-proved by canonical reread and interrupted preparing records remain recoverable.
+`otel.attribute-schema/v1` hints into a deterministic typed storage manifest.
+Its bundle-backed path consumes an operator-selected set of artifact indexes
+through OTel's validated `otel.attribute-schema.bundle/v1` contract, then binds
+the complete artifact identities to an explicit deployment and to every closed
+signal/table/location field identity. The resulting checksummed manifest can be
+prepared as a registry record, persisted in the complete catalog through an
+object-backend compare-and-set, and reconciled against bounded table-qualified
+schema evidence. An explicit deployment installer can execute only those
+registry-owned additive columns, re-observe the table, and publish descriptors
+only after the active generation is persisted. Ambiguous writes are proved by
+canonical reread and interrupted preparing records remain recoverable.
 The returned process-local descriptor capability can enable typed span columns
 on the existing exporter and bounded explorer queries while retaining its
 generic `SpanAttributes` map. See
