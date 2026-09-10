@@ -28,9 +28,11 @@
         :location :span-attributes :key empty-key :type :string}]}]}))
 
 (defn- observe-columns [connection]
-  (into {}
-        (map (juxt :name :type))
-        (jdbc/fetch connection "DESCRIBE TABLE otel_traces")))
+  [{:columns (into {}
+                   (map (juxt :name :type))
+                   (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))
+    :signal :spans
+    :table "otel_traces"}])
 
 (defn- span [n attributes]
   {:name (str "typed-native-" n) :kind :internal

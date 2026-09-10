@@ -34,7 +34,8 @@
         (installer/install-approved!
          (backend/memory-backend) compiled
          {:target target
-          :observe-columns #(into {} @observed)
+          :observe-columns #(vector {:columns (into {} @observed)
+                                     :signal :spans :table "otel_traces"})
           :execute-ddl!
           (fn [_]
             (let [{:keys [name type]} (nth columns @next-column)]

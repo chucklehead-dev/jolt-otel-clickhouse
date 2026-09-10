@@ -53,8 +53,9 @@
   (println "typed attribute registry CAS store")
   (let [delegate (backend/memory-backend)
         prepared (registry/prepare (compiled))
-        exact (into {} (map (juxt :name :type)
-                            (registry/expected-columns prepared)))
+        exact [{:columns (into {} (map (juxt :name :type)
+                                       (registry/expected-columns prepared)))
+                :signal :spans :table "otel_traces"}]
         after-ddl (:record (registry/reconcile prepared 1 exact))]
     (let [{faulty :backend calls :calls} (fault-backend delegate :after)
           initial (store/load! faulty)
@@ -89,8 +90,10 @@
           changed (registry/retire after-ddl 2)
           column (first (registry/expected-columns after-ddl))
           loser-record
-          (:record (registry/reconcile after-ddl 2
-                                       {(:name column) "WrongType"}))
+          (:record (registry/reconcile
+                    after-ddl 2
+                    [{:columns {(:name column) "WrongType"}
+                      :signal :spans :table "otel_traces"}]))
           stale (store/load! delegate)
           winner (store/commit! delegate base [changed])
           stale-error
