@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Add a span-only typed-column installer with injectable DDL execution and
+  physical-schema observation. It persists preparing before additive DDL and
+  returns descriptors only after fresh observation and active-state CAS.
+  Repairing an active or failed record first persists its new preparing
+  generation, so a crash cannot leave DDL authorized only by stale state.
+- Add a bounded, canonical EDN CAS store for typed-attribute registry catalogs
+  over the jolt-chDB Durable object-backend contract. Opaque ETags prevent lost
+  updates, record generations cannot skip, and ambiguous creates/replaces are
+  accepted only when a reread proves the intended catalog was persisted.
 - Add persistence-ready typed-attribute registry records and a deterministic
   span-column reconciliation planner. Records move through preparing, active,
   failed, and retired states using caller-enforced generation CAS values; this

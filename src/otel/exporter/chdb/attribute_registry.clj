@@ -186,6 +186,11 @@
   [(:dataset-id manifest) (:application-id manifest)
    (:lineage manifest) (:version manifest)])
 
+(defn record-key
+  "Return the stable deployment revision identity of a validated record."
+  [record]
+  (registry-key (:manifest (validate-record record))))
+
 (defn- validate-catalog! [records]
   (when-not (and (vector? records) (<= (count records) max-catalog-records))
     (fail! "attribute registry catalog must be a bounded vector"
@@ -215,6 +220,13 @@
                ::physical-collision
                {:table (first collision) :column (second collision)})))
     records))
+
+(defn validate-catalog
+  "Validate and canonically order a complete persisted registry catalog."
+  [records]
+  (->> (validate-catalog! records)
+       (sort-by record-key)
+       vec))
 
 (defn- assert-no-collision! [candidate records]
   (let [candidate-key (registry-key candidate)

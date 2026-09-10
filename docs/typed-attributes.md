@@ -90,9 +90,11 @@ declaration separately; inference cannot silently override it.
 
 ## Prepare and reconcile a registry record
 
-The registry API turns an approved manifest into a record that a deployment
-store can persist. The store, not this library, must compare-and-set the record
-at its `:generation` before applying an operation plan.
+The registry API turns an approved manifest into a record that the included
+catalog store can persist. The store uses the jolt-chDB Durable object-backend
+contract, so the same code can target a suitably scoped local or S3 backend.
+It treats the provider ETag as opaque and compare-and-sets the complete catalog;
+the record `:generation` is an additional checked lifecycle fence.
 
 The namespace exports Malli schemas for the registry record, generation,
 failure, observed-schema, and add-column operation envelopes. Malli owns the
@@ -102,16 +104,36 @@ explicit functions because they relate more than one value or state.
 
 ```clojure
 (require '[otel.exporter.chdb.attribute-registry :as registry])
+(require '[otel.exporter.chdb.attribute-registry-store :as registry-store])
 
+(def snapshot (registry-store/load! object-backend))
+(def persisted-records (get-in snapshot [:catalog :records]))
 (def preparing (registry/prepare compiled persisted-records))
+(def prepared-write
+  (registry-store/commit-record! object-backend snapshot preparing))
 (def first-pass (registry/reconcile preparing
                                     (:generation preparing)
                                     observed-column-types))
 
-;; Persist (:record first-pass) with a generation CAS before executing these.
+;; Persist :preparing before executing these through a separately authorized
+;; installer. Reload after each commit; do not reuse an old snapshot.
 (:operations first-pass)
 ;; => [{:op :add-column, :table "otel_traces", ...}]
 ```
+
+The store owns one canonical EDN object at
+`otel/typed-attribute-registry-v1.edn`. Pass an object-scoped backend when
+multiple deployments share a provider namespace. Each successful catalog
+change increments a bounded catalog revision. Existing records can advance by
+exactly one generation, new records start at generation one, and records are
+retired rather than deleted. Repeating an identical commit is a no-op.
+
+A provider timeout does not imply success or failure. On an ambiguous create or
+replace, the store rereads and validates the canonical wire document. It
+reports success only when that document equals the intended catalog. Otherwise
+it reports an ambiguous commit; the caller must reload and reconcile instead of
+blindly replaying an old snapshot. A definite competing write reports a stale
+snapshot.
 
 The lifecycle is `:preparing`, `:active`, `:failed`, or `:retired`. Missing
 columns keep the record preparing and produce sorted, idempotent operation data.
@@ -132,6 +154,69 @@ every startup before exposing active descriptors to a query or export consumer.
 Loading a previously active record alone is not proof that an operator has not
 changed the table since the prior process exited.
 
+The crash-recovery sequence is deliberately small: persist `:preparing`, apply
+the returned idempotent data operations through a separately authorized DDL
+adapter, observe the real schema, reconcile, and CAS-persist the resulting
+record. A crash at any cut restarts from the persisted catalog and the observed
+schema. The store never renders SQL and telemetry never supplies an authority
+or lifecycle state.
+
+The span-only installer owns that sequence. Calling `install-approved!` is an
+operator/deployment action: do not expose it to telemetry input. Its runtime is
+a closed map of explicit effects, which keeps authorization and database access
+at the application boundary:
+
+```clojure
+(require '[jdbc.core :as jdbc])
+(require '[otel.exporter.chdb.attribute-registry-installer :as installer])
+
+(installer/install-approved!
+ object-backend
+ compiled
+ {:execute-ddl! #(jdbc/execute! connection %)
+  :observe-columns
+  #(into {}
+         (map (juxt :name :type))
+         (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})
+```
+
+The installer renders only `ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS`
+for an operation that exactly matches the approved record. Table, identifier,
+and closed ClickHouse type come from the library-owned descriptor; callers
+cannot append SQL. It persists preparing before the first statement, observes
+again after applying missing columns, and CAS-persists active or failed before
+returning. A failed or still-preparing result has an empty `:descriptors`
+vector. Even a loaded active record is freshly observed and its current catalog
+snapshot confirmed before descriptors are returned.
+
+Fresh observation can discover that a formerly active or failed record needs
+repair. In that case reconciliation creates a new preparing generation and the
+installer CAS-persists that exact generation before the first repair statement.
+The persisted preparing record and its returned snapshot then authorize both
+DDL and the final reconciliation. If that intermediate CAS is stale, no DDL is
+executed; after a crash, retry recovers from preparing rather than trusting the
+older active or failed state.
+
+### Installer trace and model boundary
+
+An optional `:emit!` effect receives the closed event sequence
+`:snapshot-loaded`, `:record-persisted`, `:schema-observed`, `:ddl-started`,
+`:ddl-applied`, and `:descriptors-published`. These events contain no clock or
+telemetry payload and make deterministic crash-cut traces available to Hegel or
+a model adapter. `:record-persisted` is emitted only after the catalog CAS is
+confirmed; `:descriptors-published` is emitted afterward.
+
+A future state-machine model should use catalog value/ETag, physical column
+map, installer phase, intended record generation, and published descriptor
+generation as state. Its actions are load, prepare-CAS, observe, plan,
+execute-one, observe-after-DDL, final-CAS, publish, competing-CAS, and crash. The
+central safety invariant is: every publication is justified by a confirmed
+persisted active generation and all of its columns matched a fresh observation
+in that attempt. A fair-retry liveness property should show convergence after
+any crash when additive execution eventually succeeds and no competing writer
+wins forever. Running that model is intentionally deferred while the existing
+exhaustive Durable check owns machine resources.
+
 Each value column reserves a `UInt8` status column with stable meanings for
 historical-untyped, absent, present-empty, valid, and invalid. Exporting those
 statuses is a later ingestion slice; reserving them now prevents nullable data
@@ -145,9 +230,14 @@ wrong table.
 
 ## What remains
 
-A later slice will supply the compare-and-set registry store and execute these
-plans through crash-safe, idempotent DDL. Only a persisted active descriptor
-should become queryable. Export still needs to populate the reserved per-row
-statuses and typed values, reconcile interrupted DDL at every cut, and prove
-direct-export and OTLP-receiver equivalence. None of those database or ingestion
-claims are made by this storage-independent planner.
+Only an installer-returned active descriptor should become queryable. Export
+still needs to populate the reserved per-row statuses and typed values, consume
+those descriptors without bypassing installation, and prove direct-export and
+OTLP-receiver equivalence. The injectable installer is covered at deterministic
+crash cuts, but the state-machine model above and a native chDB integration gate
+remain. The current process-local fresh observation can also be invalidated by
+an out-of-band DDL change immediately after it returns; deployments requiring a
+stronger invariant need database-side ownership or a shared schema lease. A
+later catalog writer can likewise supersede a returned generation, so consumers
+must retain the result's record/snapshot identity rather than treating the bare
+descriptor vector as an eternal capability.
