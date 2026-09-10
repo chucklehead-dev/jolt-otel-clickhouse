@@ -161,6 +161,62 @@ record. A crash at any cut restarts from the persisted catalog and the observed
 schema. The store never renders SQL and telemetry never supplies an authority
 or lifecycle state.
 
+The span-only installer owns that sequence. Calling `install-approved!` is an
+operator/deployment action: do not expose it to telemetry input. Its runtime is
+a closed map of explicit effects, which keeps authorization and database access
+at the application boundary:
+
+```clojure
+(require '[jdbc.core :as jdbc])
+(require '[otel.exporter.chdb.attribute-registry-installer :as installer])
+
+(installer/install-approved!
+ object-backend
+ compiled
+ {:execute-ddl! #(jdbc/execute! connection %)
+  :observe-columns
+  #(into {}
+         (map (juxt :name :type))
+         (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})
+```
+
+The installer renders only `ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS`
+for an operation that exactly matches the approved record. Table, identifier,
+and closed ClickHouse type come from the library-owned descriptor; callers
+cannot append SQL. It persists preparing before the first statement, observes
+again after applying missing columns, and CAS-persists active or failed before
+returning. A failed or still-preparing result has an empty `:descriptors`
+vector. Even a loaded active record is freshly observed and its current catalog
+snapshot confirmed before descriptors are returned.
+
+Fresh observation can discover that a formerly active or failed record needs
+repair. In that case reconciliation creates a new preparing generation and the
+installer CAS-persists that exact generation before the first repair statement.
+The persisted preparing record and its returned snapshot then authorize both
+DDL and the final reconciliation. If that intermediate CAS is stale, no DDL is
+executed; after a crash, retry recovers from preparing rather than trusting the
+older active or failed state.
+
+### Installer trace and model boundary
+
+An optional `:emit!` effect receives the closed event sequence
+`:snapshot-loaded`, `:record-persisted`, `:schema-observed`, `:ddl-started`,
+`:ddl-applied`, and `:descriptors-published`. These events contain no clock or
+telemetry payload and make deterministic crash-cut traces available to Hegel or
+a model adapter. `:record-persisted` is emitted only after the catalog CAS is
+confirmed; `:descriptors-published` is emitted afterward.
+
+A future state-machine model should use catalog value/ETag, physical column
+map, installer phase, intended record generation, and published descriptor
+generation as state. Its actions are load, prepare-CAS, observe, plan,
+execute-one, observe-after-DDL, final-CAS, publish, competing-CAS, and crash. The
+central safety invariant is: every publication is justified by a confirmed
+persisted active generation and all of its columns matched a fresh observation
+in that attempt. A fair-retry liveness property should show convergence after
+any crash when additive execution eventually succeeds and no competing writer
+wins forever. Running that model is intentionally deferred while the existing
+exhaustive Durable check owns machine resources.
+
 Each value column reserves a `UInt8` status column with stable meanings for
 historical-untyped, absent, present-empty, valid, and invalid. Exporting those
 statuses is a later ingestion slice; reserving them now prevents nullable data
@@ -174,13 +230,14 @@ wrong table.
 
 ## What remains
 
-A later slice will execute plans through a narrowly authorized, crash-safe,
-idempotent DDL adapter. Only a persisted active descriptor should become
-queryable. Export still needs to populate the reserved per-row statuses and
-typed values, reconcile interrupted DDL at every cut, and prove direct-export
-and OTLP-receiver equivalence. The current tests cover deterministic persistence
-cuts, but there is not yet a state-machine model joining catalog CAS, DDL
-observation, and descriptor publication. In particular, the store can validate
-envelopes and generations but cannot prove that a trusted caller derived a
-valid state transition from a real schema observation; that obligation belongs
-in the combined installer model and API.
+Only an installer-returned active descriptor should become queryable. Export
+still needs to populate the reserved per-row statuses and typed values, consume
+those descriptors without bypassing installation, and prove direct-export and
+OTLP-receiver equivalence. The injectable installer is covered at deterministic
+crash cuts, but the state-machine model above and a native chDB integration gate
+remain. The current process-local fresh observation can also be invalidated by
+an out-of-band DDL change immediately after it returns; deployments requiring a
+stronger invariant need database-side ownership or a shared schema lease. A
+later catalog writer can likewise supersede a returned generation, so consumers
+must retain the result's record/snapshot identity rather than treating the bare
+descriptor vector as an eternal capability.

@@ -9,9 +9,11 @@ The library can also compile reviewed attribute declarations and build-time
 `otel.attribute-schema/v1` hints into a deterministic typed storage manifest,
 then prepare a checksummed-manifest registry record, persist the complete
 catalog through an object-backend compare-and-set, and reconcile it against an
-observed span-table schema. Ambiguous writes are proved by canonical reread and
-interrupted preparing records remain recoverable. This preview emits closed
-column-operation data but does not execute DDL or change export behavior yet. See
+observed span-table schema. An explicit deployment installer can execute only
+those registry-owned additive columns, re-observe the table, and publish
+descriptors only after the active generation is persisted. Ambiguous writes are
+proved by canonical reread and interrupted preparing records remain recoverable.
+This preview does not change export or query behavior yet. See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
 example.
 
