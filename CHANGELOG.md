@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add persistence-ready typed-attribute registry records and a deterministic
+  span-column reconciliation planner. Records move through preparing, active,
+  failed, and retired states using caller-enforced generation CAS values; this
+  slice uses public Malli schemas for its closed data envelopes, emits data
+  operations, but does not execute DDL.
 - Resolve `jolt-crypto` once from canonical upstream revision `5effcc89` and
   exclude OTel's older compatibility-fork declaration. Dependency selection no
   longer depends on graph traversal order.
