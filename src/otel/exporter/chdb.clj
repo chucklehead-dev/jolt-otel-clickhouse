@@ -6,6 +6,7 @@
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
             [otel.context :as context]
+            [otel.exporter.chdb.json :as fast-json]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
@@ -130,28 +131,57 @@
      "LogAttributes" (attrs (:attributes record))
      "EventName" (or (:event-name record) "")}))
 
-(def ^:private log-insert-query
-  (str "insert into otel_logs ("
-       (str/join ", " schema/clickstack-log-insert-columns)
-       ")"))
+;; The compiled writers below encode the INSERT payload -- the transport. chDB
+;; decodes it and stores the decoded values, so the payload's own escaping
+;; choices are invisible downstream and it can take the fast path.
+;;
+;; `value-string`, `EventsJSON` and `LinksJSON` above are different: their output
+;; is the string ClickHouse stores. Its exact bytes are data at rest that queries
+;; and existing rows depend on, so those stay on clojure.data.json.
+(def ^:private log-insert
+  (fast-json/compile-insert
+   (str "insert into otel_logs ("
+        (str/join ", " schema/clickstack-log-insert-columns)
+        ")")
+   schema/clickstack-log-insert-columns))
 
-(defn- chunks [rows]
-  (map #(str (json/write-str %) "\n") rows))
+(def ^:private trace-insert
+  ;; span-row carries the migration-v1 EventsJSON/LinksJSON columns alongside
+  ;; the v2 nested Events.*/Links.* ones. Both are real columns on otel_traces
+  ;; and both have always been written, so the compiled spec is the schema's
+  ;; insert list plus those two. write-payload fails closed if span-row and this
+  ;; list ever disagree.
+  (fast-json/compile-insert
+   "insert into otel_traces"
+   (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"])))
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
 
+(defn- oversize?
+  "UTF-8 is at most three bytes per Java char, so a statement short enough by
+  that bound cannot exceed the limit and needs no encoding pass. Only a
+  borderline batch pays for the byte-array copy."
+  [^String statement]
+  (and (> (* 3 (.length statement)) max-insert-bytes)
+       (> (alength (.getBytes statement "UTF-8")) max-insert-bytes)))
+
 (defn- insert-json-rows!
-  "Insert one SDK-bounded batch through chDB's ordinary query API. libchdb
-  26.7's streaming-insert API corrupts ClickHouse ThreadStatus nesting under
-  long-lived multi-signal exporters; the query API does not share that path."
-  [connection query rows]
-  (let [payload (apply str (chunks rows))
-        size (alength (.getBytes payload "UTF-8"))]
-    (when (> size max-insert-bytes)
+  "Insert one SDK-bounded batch through chDB's ordinary query API.
+
+  Not the streaming-insert API: on libchdb 26.7 a `chdb_stream_insert` leaves
+  ClickHouse's `current_thread` thread-local pointing at a destroyed
+  ThreadStatus, which the engine reports as a Fatal exactly once per stream.
+  It reproduces single-threaded with no data appended, on 26.7.0 and on
+  26.7.2-rc.2 alike, and is suppressed unless stderr is a terminal. The query
+  API does not share that path."
+  [connection compiled rows]
+  (let [statement (fast-json/write-payload compiled rows)]
+    (when (oversize? statement)
       (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                      {:bytes size :limit max-insert-bytes})))
+                      {:bytes (alength (.getBytes statement "UTF-8"))
+                       :limit max-insert-bytes})))
     (context/with-instrumentation-suppressed
-      (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload)))))
+      (jdbc/execute! connection statement))))
 
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
@@ -163,11 +193,13 @@
    "Exemplars.SpanId" []
    "Exemplars.TraceId" []})
 
-(def ^:private metric-insert-queries
+(def ^:private metric-inserts
   (into {}
         (map (fn [[kind columns]]
-               [kind (str "insert into " (get schema/metric-table-names kind)
-                          " (" (str/join ", " columns) ")")]))
+               [kind (fast-json/compile-insert
+                      (str "insert into " (get schema/metric-table-names kind)
+                           " (" (str/join ", " columns) ")")
+                      columns)]))
         schema/clickstack-metric-insert-columns))
 
 (defn- metric-rows [resource collected]
@@ -213,7 +245,7 @@
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
       (insert-json-rows! connection
-                         (get metric-insert-queries type)
+                         (get metric-inserts type)
                          (map #(dissoc % :_type) selected)))))
 
 (defn- signal-open? [owned? expected-signals state signal]
@@ -300,8 +332,7 @@
       false
       (try
         (when (seq spans)
-          (insert-json-rows! connection "insert into otel_traces"
-                             (map span-row spans)))
+          (insert-json-rows! connection trace-insert (map span-row spans)))
         (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -347,8 +378,7 @@
       false
       (try
         (when (seq records)
-          (insert-json-rows! connection log-insert-query
-                             (map log-row records)))
+          (insert-json-rows! connection log-insert (map log-row records)))
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
