@@ -122,20 +122,66 @@
 
 ;; --- compiled row writers ---------------------------------------------------
 
+(defn- write-attrs!
+  "An OTel attribute map, coerced as it is written. The exporter used to build a
+  fully coerced copy of every attribute map per row and then walk it again; the
+  copy existed only to be serialized, so it is skipped and the coercion happens
+  at the point of writing."
+  [^StringBuilder sb m key-fn value-fn]
+  (.append sb \{)
+  (loop [es (seq m) first? true]
+    (when-let [e (first es)]
+      (when-not first? (.append sb \,))
+      (write-string! sb (key-fn (key e)))
+      (.append sb \:)
+      (write-string! sb (value-fn (val e)))
+      (recur (next es) false)))
+  (.append sb \}))
+
+(defn- write-attrs-array! [^StringBuilder sb xs key-fn value-fn]
+  (.append sb \[)
+  (loop [ys (seq xs) first? true]
+    (when-let [y (first ys)]
+      (when-not first? (.append sb \,))
+      (write-attrs! sb y key-fn value-fn)
+      (recur (next ys) false)))
+  (.append sb \]))
+
 (defn compile-insert
   "Precompute everything about a signal's insert that does not vary per row: the
-  statement prefix, and one constant fragment per column carrying its separator,
-  quoted name and colon. `columns` must be exactly the key set the row producer
-  emits; `write-payload` checks that on the first row of every batch."
-  [statement columns]
-  (let [cols (vec columns)]
-    {:statement (str statement " FORMAT JSONEachRow\n")
-     :columns cols
-     :column-set (set cols)
-     ;; {"Timestamp": for the first column, ,"TraceId": for the rest.
-     :fragments (vec (map-indexed
-                      (fn [i c] (str (if (zero? i) "{\"" ",\"") c "\":"))
-                      cols))}))
+  statement prefix, one constant fragment per column carrying its separator,
+  quoted name and colon, and each column's kind. `columns` must be exactly the
+  key set the row producer emits; `write-payload` checks that on the first row
+  of every batch.
+
+  `opts` may name the columns holding OTel attribute maps, and the key/value
+  coercions to apply to them while writing:
+
+    :attribute-columns        columns whose value is one attribute map
+    :attribute-array-columns  columns whose value is a vector of attribute maps
+    :key-fn :value-fn         coercions, required when either set is non-empty"
+  ([statement columns] (compile-insert statement columns nil))
+  ([statement columns {:keys [attribute-columns attribute-array-columns
+                              key-fn value-fn]}]
+   (let [cols (vec columns)
+         attrs? (or attribute-columns #{})
+         arrays? (or attribute-array-columns #{})]
+     (when (and (or (seq attrs?) (seq arrays?)) (not (and key-fn value-fn)))
+       (throw (ex-info "attribute columns need :key-fn and :value-fn"
+                       {:type ::missing-coercion})))
+     {:statement (str statement " FORMAT JSONEachRow\n")
+      :columns cols
+      :column-set (set cols)
+      :key-fn key-fn
+      :value-fn value-fn
+      :kinds (mapv (fn [c] (cond (contains? attrs? c) :attrs
+                                 (contains? arrays? c) :attrs-array
+                                 :else :value))
+                   cols)
+      ;; {"Timestamp": for the first column, ,"TraceId": for the rest.
+      :fragments (vec (map-indexed
+                       (fn [i c] (str (if (zero? i) "{\"" ",\"") c "\":"))
+                       cols))})))
 
 (defn- check-row!
   "One check per batch, not per row. A row producer that gains or loses a column
@@ -156,6 +202,9 @@
     (check-row! compiled row))
   (let [fragments (:fragments compiled)
         columns (:columns compiled)
+        kinds (:kinds compiled)
+        key-fn (:key-fn compiled)
+        value-fn (:value-fn compiled)
         n (count columns)
         sb (StringBuilder. (max 256 (* (count rows) 1024)))]
     (.append sb ^String (:statement compiled))
@@ -163,7 +212,11 @@
       (loop [i 0]
         (when (< i n)
           (.append sb ^String (nth fragments i))
-          (write-value! sb (get row (nth columns i)))
+          (let [v (get row (nth columns i))]
+            (case (nth kinds i)
+              :attrs (write-attrs! sb v key-fn value-fn)
+              :attrs-array (write-attrs-array! sb v key-fn value-fn)
+              (write-value! sb v)))
           (recur (unchecked-inc i))))
       (.append sb "}\n"))
     (.toString sb)))

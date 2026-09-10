@@ -20,8 +20,23 @@
     (or (sequential? v) (map? v)) (json/write-str v)
     :else (str v)))
 
-(defn- attrs [m]
-  (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))
+(def ^:private attribute-columns
+  "Columns whose value is one OTel attribute map. The writer coerces these while
+  it serializes them, so the row producers pass the raw map through."
+  #{"ResourceAttributes" "ScopeAttributes" "SpanAttributes" "LogAttributes"
+    "Attributes"})
+
+(def ^:private attribute-array-columns
+  "Columns whose value is a vector of attribute maps."
+  #{"Events.Attributes" "Links.Attributes" "Exemplars.FilteredAttributes"})
+
+(def ^:private attribute-opts
+  {:attribute-columns attribute-columns
+   :attribute-array-columns attribute-array-columns
+   :key-fn key-string
+   :value-fn value-string})
+
+(defn- attrs [m] (or m {}))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
@@ -143,7 +158,8 @@
    (str "insert into otel_logs ("
         (str/join ", " schema/clickstack-log-insert-columns)
         ")")
-   schema/clickstack-log-insert-columns))
+   schema/clickstack-log-insert-columns
+   attribute-opts))
 
 (def ^:private trace-insert
   ;; span-row carries the migration-v1 EventsJSON/LinksJSON columns alongside
@@ -153,7 +169,8 @@
   ;; list ever disagree.
   (fast-json/compile-insert
    "insert into otel_traces"
-   (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"])))
+   (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"])
+   attribute-opts))
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
 
@@ -199,7 +216,8 @@
                [kind (fast-json/compile-insert
                       (str "insert into " (get schema/metric-table-names kind)
                            " (" (str/join ", " columns) ")")
-                      columns)]))
+                      columns
+                      attribute-opts)]))
         schema/clickstack-metric-insert-columns))
 
 (defn- metric-rows [resource collected]
