@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Pin OTel artifact discovery and add a bundle-backed v3 typed-manifest compiler.
+  An explicit operator deployment binding consumes a validated canonical bundle;
+  its digest and complete artifact identities are checksum-bound compact
+  provenance. Existing v2 catalogs remain readable, bundle drift at one version
+  conflicts, and only the separately invoked installer can authorize additive
+  DDL.
 - Pin the merged canonical OTel receiver record contract and qualify that direct
   export and real OTLP JSON receiver ingestion produce identical typed physical
   rows with the same descriptor capability and chDB connection.

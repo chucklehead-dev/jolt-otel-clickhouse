@@ -13,11 +13,11 @@ influence a checksum, field identifier, registry plan, or capability consumer.
 
 ```mermaid
 flowchart LR
-    A[OTel source files] --> B[otel.attribute-schema/v1 hints]
-    C[Reviewed conventions and advice] --> D[Manifest compiler]
-    E[Deployment dataset and application binding] --> D
+    A[Explicit artifact indexes] --> B[Validated attribute-schema bundle]
+    C[Optional reviewed declarations] --> D[Bundle manifest compiler]
+    E[Closed operator deployment binding] --> D
     B --> D
-    D --> F[Checksummed typed manifest]
+    D --> F[Checksummed v3 typed manifest]
     F --> G[Persistence-ready registry record]
     G --> H[Deterministic column plan]
     H --> I[Authorized span installer]
@@ -59,10 +59,55 @@ observation cannot choose them.
 (spit "target/checkout-attributes.edn" (manifest/render compiled))
 ```
 
-The v2 format accepts three promoted types: `:string`, `:boolean`, and
-`:int64`. They map only to the library-owned ClickHouse types `String`, `Bool`,
-and `Int64`. Callers cannot supply SQL, codecs, column names, or type
-expressions.
+The v2 and bundle-backed v3 formats accept three promoted types: `:string`,
+`:boolean`, and `:int64`. They map only to the library-owned ClickHouse types
+`String`, `Bool`, and `Int64`. Callers cannot supply SQL, codecs, column names,
+or type expressions.
+
+### Compile an approved artifact bundle
+
+OTel artifact discovery is an earlier, explicit build or deployment step. The
+operator selects the index resources and reviews their canonical identities;
+discovery output alone does not authorize a manifest, registry transition, or
+DDL. Pass the resulting bundle together with the closed deployment binding:
+
+```clojure
+(require '[otel.attribute-schema.discovery :as discovery]
+         '[otel.exporter.chdb.attribute-manifest :as manifest])
+
+(def bundle
+  (discovery/discover-resources
+   ["META-INF/otel/attribute-schema-index.edn"]
+   {:include #{"io.example/checkout"}}))
+
+(def compiled
+  (manifest/compile-bundle-manifest
+   {:dataset-id "telemetry-prod"
+    :application-id "checkout"
+    :lineage "checkout-v2"
+    :version 2
+    :bundle bundle
+    ;; Optional declarations use reviewed-fragment-schema and remain an
+    ;; explicit operator decision, for example to close an ambiguous target.
+    :reviewed-fragments []}))
+```
+
+`compile-bundle-manifest` validates the bundle through OTel's public discovery
+API. The v3 checksum binds the canonical rendered bundle SHA-256 and the
+complete selected artifact identities and source claims. The manifest retains
+that compact provenance plus its derived fields and diagnostics; it does not
+store a second copy of the merged `otel.attribute-schema/v1` document. Artifact
+order cannot affect the bytes. Changing only a package, repository, revision or
+version, path, digest, or source claim changes the manifest checksum even when
+the derived fields happen to be identical.
+
+Adopting a different bundle for an application is prospective. Reusing the
+same dataset/application/lineage/version record with another bundle produces a
+registry revision conflict; choose a new deployment version, whose field
+identities and columns are disjoint. Existing v2 manifests remain readable in
+the v1 registry/catalog format. Historical rows and unsupported or unknown
+attributes continue to use the generic maps; no backfill or promotion is
+inferred from telemetry.
 
 Reviewed fragments use one of three authorities:
 

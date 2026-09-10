@@ -3,6 +3,7 @@
             [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
+            [otel.exporter.chdb-attribute-bundle-fixture :as bundle-fixture]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
@@ -19,21 +20,32 @@
 
 (def malicious-key "checkout.count') OR 1=1 --")
 (def empty-key "checkout.note")
+(def unknown-key "checkout.dynamic")
 (def int64-max 9223372036854775807)
 (def timestamp-base 1700000000000000000)
 
 (defn- compiled-manifest []
-  (manifest/compile-manifest
-   {:dataset-id "telemetry-prod" :application-id "checkout"
-    :lineage "checkout-v1" :version 1
-    :fragments
-    [{:schema manifest/reviewed-fragment-schema
-      :authority :advice :source "advice/checkout.edn"
-      :entries
-      [{:signal :spans :table "otel_traces"
-        :location :span-attributes :key malicious-key :type :int64}
-       {:signal :spans :table "otel_traces"
-        :location :span-attributes :key empty-key :type :string}]}]}))
+  (let [fragment
+        (bundle-fixture/inferred
+         "src/checkout.clj"
+         (str "(ns checkout (:require [otel.trace :as trace]))\n"
+              "(trace/set-attribute! span " (pr-str malicious-key)
+              " (long value))\n"
+              "(trace/set-attribute! span " (pr-str empty-key) " \"\")\n"
+              "(trace/set-attribute! span " (pr-str unknown-key)
+              " dynamic-value)"))
+        bundle
+        (bundle-fixture/discovered-bundle
+         [{:artifact
+           (bundle-fixture/revision-artifact
+            "io.github.example/checkout"
+            "https://github.com/example/checkout"
+            "6666666666666666666666666666666666666666")
+           :path "META-INF/otel/attribute-schema/checkout.edn"
+           :fragment fragment}])]
+    (manifest/compile-bundle-manifest
+     {:dataset-id "telemetry-prod" :application-id "checkout"
+      :lineage "checkout-v1" :version 1 :bundle bundle})))
 
 (defn- observe-columns [connection]
   [{:columns (into {}
@@ -70,7 +82,8 @@
         current
         (trace/start-span
          tracer "typed-direct-receiver-equivalence"
-         {:attributes {malicious-key int64-max empty-key ""}
+         {:attributes {malicious-key int64-max empty-key ""
+                       unknown-key "fallback-only"}
           :start-timestamp (+ timestamp-base 2000)})
         linked
         (trace/span-context
@@ -185,7 +198,8 @@
                 (get direct-row (physical-key empty-field :value-column))
                 (get direct-row (physical-key empty-field :status-column))])
         (check "generic attribute compatibility survives both ingestion paths"
-               {malicious-key (str int64-max) empty-key ""}
+               {malicious-key (str int64-max) empty-key ""
+                unknown-key "fallback-only"}
                (:spanattributes direct-row))
         (check "causal nested values begin and remain free of synthetic zero counts"
                [false false false false]
