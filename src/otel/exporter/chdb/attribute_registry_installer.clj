@@ -68,7 +68,7 @@
                    value-type?)
       (fail! "add-column operation is not owned by the persisted record"
              ::invalid-operation {:operation operation}))
-    (str "ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS `"
+    (str "ALTER TABLE " (:table operation) " ADD COLUMN IF NOT EXISTS `"
          (:name operation) "` " (:type operation))))
 
 (defn- snapshot-record [snapshot key]

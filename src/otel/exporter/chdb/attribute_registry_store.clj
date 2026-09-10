@@ -6,6 +6,7 @@
   (:require [clojure.edn :as edn]
             [malli.core :as m]
             [jdbc.chdb.durable.backend :as backend]
+            [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]))
 
 (def store-schema "jolt-otel-clickhouse.attribute-registry-store/v1")
@@ -76,10 +77,16 @@
                ::noncanonical-wire {}))
       catalog)
     (catch Throwable error
-      (if (:attribute-registry-store/error (ex-data error))
-        (throw error)
-        (fail! "attribute registry store catalog cannot be decoded"
-               ::invalid-wire {:cause-class (str (class error))})))))
+      (let [data (ex-data error)]
+        (cond
+          (:attribute-registry-store/error data) (throw error)
+          (= ::manifest/legacy-manifest (:type data))
+          (fail! "persisted v1 manifests require explicit v2 migration"
+                 ::legacy-catalog
+                 {:manifest-schema manifest/legacy-manifest-schema})
+          :else
+          (fail! "attribute registry store catalog cannot be decoded"
+                 ::invalid-wire {:cause-class (str (class error))}))))))
 
 (defn load!
   "Load one immutable snapshot. Its opaque ETag is the only CAS authority."

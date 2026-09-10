@@ -9,7 +9,7 @@
   {:schema manifest/reviewed-fragment-schema
    :authority :advice
    :source "advice/checkout.edn"
-   :entries entries})
+   :entries (mapv #(merge {:signal :spans :table "otel_traces"} %) entries)})
 
 (defn- compile-app
   ([application-id version]
@@ -214,7 +214,7 @@
                          :key "deployment.environment" :type :string}])]
       (check (str "signal-ambiguous " (name location)
                   " fail this span-only seam")
-             :otel.exporter.chdb.attribute-registry/unsupported-location
+             :otel.exporter.chdb.attribute-registry/unsupported-target
              (:type (thrown-data #(registry/prepare ambiguous-manifest))))))
   (check "telemetry cannot inject a registry lifecycle state"
          :otel.exporter.chdb.attribute-manifest/invalid-input

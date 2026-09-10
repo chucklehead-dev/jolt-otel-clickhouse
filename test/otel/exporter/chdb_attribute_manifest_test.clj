@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-attribute-manifest-test
   (:require [clojure.string :as str]
             [otel.attribute-schema :as attribute-schema]
+            [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]))
 
 (def ^:private binding
@@ -13,7 +14,16 @@
   {:schema manifest/reviewed-fragment-schema
    :authority authority
    :source source
-   :entries entries})
+   :entries
+   (mapv
+    (fn [{:keys [location] :as entry}]
+      (merge
+       (case location
+         :log-attributes {:signal :logs :table "otel_logs"}
+         :metric-attributes {:signal :metrics :table "otel_metrics_gauge"}
+         {:signal :spans :table "otel_traces"})
+       entry))
+    entries)})
 
 (defn- inferred [source text]
   (attribute-schema/analyze-source
@@ -63,7 +73,7 @@
     (check "checksum is lowercase SHA-256"
            true (boolean (re-matches #"[0-9a-f]{64}" (:checksum compiled))))
     (check "known manifest checksum is stable"
-           "129f39bf15b38ed4f51fc7ac52556cb648d52a8a15d0922fec842637d4dc1bb4"
+           "3ec476fd8d3c0e275d952e26045c7c2648491b6b4b184333dfbb541e0aa264e1"
            (:checksum compiled))
     (check "all initial promoted types use the closed ClickHouse map"
            #{"String" "Bool" "Int64"}
@@ -72,8 +82,15 @@
            [#{:semantic-convention :advice :runtime-reviewed}
             #{:span-attributes :resource-attributes :scope-attributes
               :log-attributes :metric-attributes}
+            #{:spans :logs :metrics}
+            {"otel_logs" :logs
+             "otel_metrics_gauge" :metrics
+             "otel_metrics_histogram" :metrics
+             "otel_metrics_sum" :metrics
+             "otel_traces" :spans}
             {:string "String" :boolean "Bool" :int64 "Int64"}]
-           [manifest/authorities manifest/locations manifest/clickhouse-types])
+           [manifest/authorities manifest/locations manifest/signals
+            manifest/table-signals manifest/clickhouse-types])
     (check "integer and Boolean literals remain typed"
            [[:boolean "Bool"] [:int64 "Int64"]]
            (->> ["disabled" "zero"]
@@ -91,9 +108,9 @@
            (and (not= (get-in score [:physical :value-column])
                       (get-in dashed [:physical :value-column]))
                 (str/includes? (get-in score [:physical :value-column])
-                               "sp_game_score_")
+                               "tr_sp_game_score_")
                 (str/includes? (get-in dashed [:physical :value-column])
-                               "sp_game_score_")))
+                               "tr_sp_game_score_")))
     (check "physical identifiers are bounded"
            true
            (every? #(<= (count %) 63)
@@ -111,13 +128,89 @@
                                :fragments [reviewed-a reviewed-b source]))]
              (not= (mapv :physical (:fields compiled))
                    (mapv :physical (:fields other)))))
+    (let [same-key "deployment.environment.name"
+          target-entries
+          (vec
+           (for [[signal table] [[:spans "otel_traces"]
+                                 [:logs "otel_logs"]
+                                 [:metrics "otel_metrics_gauge"]]
+                 location [:resource-attributes :scope-attributes]]
+             {:signal signal :table table :location location
+              :key same-key :type :string}))
+          targeted (manifest/compile-manifest
+                    (assoc binding :fragments
+                           [{:schema manifest/reviewed-fragment-schema
+                             :authority :advice :source "advice/targets.edn"
+                             :entries target-entries}]))]
+      (check "trace, log, and metric resource/scope identities are disjoint"
+             [6 6 6]
+             [(count (:fields targeted))
+              (count (set (map :id (:fields targeted))))
+              (count (set (map :physical (:fields targeted))))]))
+    (let [cross-signal
+          (manifest/compile-manifest
+           (assoc binding :fragments
+                  [{:schema manifest/reviewed-fragment-schema
+                    :authority :advice :source "advice/cross-signal.edn"
+                    :entries
+                    [{:signal :spans :table "otel_traces"
+                      :location :resource-attributes
+                      :key "shared" :type :int64}
+                     {:signal :logs :table "otel_logs"
+                      :location :resource-attributes
+                      :key "shared" :type :string}]}]))]
+      (check "same location/key on distinct signals does not type-conflict"
+             #{[:spans "otel_traces" :int64]
+               [:logs "otel_logs" :string]}
+             (set (map (juxt :signal :table :type) (:fields cross-signal)))))
+    (let [tables ["otel_metrics_gauge"
+                  "otel_metrics_sum"
+                  "otel_metrics_histogram"]
+          manifests
+          (mapv
+           (fn [table]
+             (manifest/compile-manifest
+              (assoc binding :fragments
+                     [{:schema manifest/reviewed-fragment-schema
+                       :authority :advice
+                       :source "advice/metric-tables.edn"
+                       :entries
+                       [{:signal :metrics :table table
+                         :location :metric-attributes
+                         :key "game.score" :type :int64}]}])))
+           tables)
+          fields (mapv (comp first :fields) manifests)]
+      (check "gauge, sum, and histogram identities are disjoint"
+             [3 3 3]
+             [(count (set (map :checksum manifests)))
+              (count (set (map :id fields)))
+              (count (set (map :physical fields)))])
+      (check "metric table codes remain visible in physical columns"
+             ["av_mg_mt_" "av_ms_mt_" "av_mh_mt_"]
+             (mapv (fn [field]
+                     (let [prefix (str "av_" (identity/target-code field) "_")]
+                       (subs (get-in field [:physical :value-column])
+                             0 (count prefix))))
+                   fields)))
     (check "physical identifier mutation fails validation"
            :otel.exporter.chdb.attribute-manifest/invalid-manifest-field
            (:type
             (thrown-data
              #(manifest/validate-manifest
                (assoc-in compiled [:fields 0 :physical :value-column]
-                         "av_attacker_controlled"))))))
+                         "av_attacker_controlled")))))
+    (check "cross-signal table mutation fails before checksum acceptance"
+           :otel.exporter.chdb.attribute-manifest/invalid-manifest-field
+           (:type
+            (thrown-data
+             #(manifest/validate-manifest
+               (assoc-in compiled [:fields 0 :signal] :logs)))))
+    (check "legacy compiled manifests require explicit migration"
+           :otel.exporter.chdb.attribute-manifest/legacy-manifest
+           (:type
+            (thrown-data
+             #(manifest/validate-manifest
+               (assoc compiled :schema manifest/legacy-manifest-schema))))))
 
   (let [problem-source
         (inferred
@@ -139,6 +232,19 @@
            [:double :int64]
            (:types (first (filter #(= "mixed" (:key %))
                                   (:diagnostics compiled))))))
+
+  (let [resource-source
+        (inferred
+         "src/resource.clj"
+         "(ns resource (:require [otel.resource :as resource]))
+          (resource/resource {\"deployment.environment.name\" \"prod\"
+                              \"unknown\" value})")
+        compiled (compile* [resource-source])]
+    (check "target ambiguity does not mask stronger inference diagnostics"
+           [[] {"deployment.environment.name" :ambiguous-target
+                "unknown" :unknown-inference}]
+           [(:fields compiled)
+            (into {} (map (juxt :key :code) (:diagnostics compiled)))]))
 
   (let [left (reviewed :advice "advice/left.edn"
                        [{:location :log-attributes :key "attempt" :type :int64}])
@@ -173,6 +279,27 @@
            #(manifest/compile-manifest
              (assoc binding :fragments []
                     :schema-url "https://telemetry.invalid/select-me")))))
+  (check "legacy reviewed fragments are not guessed into a v2 target"
+         :otel.exporter.chdb.attribute-manifest/legacy-reviewed-fragment
+         (:type
+          (thrown-data
+           #(compile*
+             [{:schema manifest/legacy-reviewed-fragment-schema
+               :authority :advice :source "advice/legacy.edn"
+               :entries [{:location :resource-attributes
+                          :key "ambiguous" :type :string}]}]))))
+  (check "a signal cannot authorize another signal's physical table"
+         :otel.exporter.chdb.attribute-manifest/invalid-target
+         (:type
+          (thrown-data
+           #(manifest/compile-manifest
+             (assoc binding :fragments
+                    [{:schema manifest/reviewed-fragment-schema
+                      :authority :advice :source "advice/wrong-table.edn"
+                      :entries
+                      [{:signal :logs :table "otel_traces"
+                        :location :resource-attributes
+                        :key "service.name" :type :string}]}])))))
   (doseq [[label binding-key malformed]
           [["malformed dataset identity is rejected" :dataset-id "bad/dataset"]
            ["malformed application identity is rejected" :application-id ""]

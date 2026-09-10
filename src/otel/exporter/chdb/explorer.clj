@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [jdbc.core :as jdbc]
             [otel.context :as context]
+            [otel.exporter.chdb.attribute-identity :as attribute-identity]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]))
 
 (def max-time-range-nanos
@@ -31,7 +32,11 @@
 
 (def ^:private typed-span-request-keys
   #{:end-unix-nano :keys :limit :max-text-length :signal :start-unix-nano})
-(def ^:private safe-typed-column #"a[sv]_sp_[a-z0-9_]+_[0-9a-f]{16}")
+(def ^:private safe-typed-column
+  (re-pattern
+   (str "a[sv]_" (attribute-identity/target-code
+                   attribute-identity/span-attribute-target)
+        "_[a-z0-9_]+_[0-9a-f]{16}")))
 
 (def max-counter-source-points
   "Largest raw cumulative-counter snapshot set accepted by one request."
@@ -1312,9 +1317,14 @@
            {:column column}))
   (str "`" column "`"))
 
-(defn- typed-span-values-query [{:keys [physical]}]
+(defn- typed-span-values-query [{:keys [physical table] :as field}]
   (let [value-column (checked-typed-column (:value-column physical))
-        status-column (checked-typed-column (:status-column physical))]
+        status-column (checked-typed-column (:status-column physical))
+        expected-target attribute-identity/span-attribute-target]
+    (when-not (= expected-target (attribute-identity/target-of field))
+      (fail! ::invalid-typed-column
+             "typed span capability contains an invalid table target"
+             {:target (select-keys field [:signal :table :location])}))
     (when (= value-column status-column)
       (fail! ::invalid-typed-column
              "typed value and status columns must be distinct" {}))
@@ -1325,7 +1335,7 @@
          "                              " status-column " IN (0, 4),\n"
          "                              SpanAttributes[?], ''), ?) AS value,\n"
          "         " status-column " AS typedstatus\n"
-         "  FROM otel_traces\n"
+         "  FROM " table "\n"
          "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
          "    AND toUnixTimestamp64Nano(Timestamp) < ?\n"
          ")\n"

@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-attribute-registry-store-test
-  (:require [jdbc.chdb.durable.backend :as backend]
+  (:require [clojure.string :as str]
+            [jdbc.chdb.durable.backend :as backend]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-store :as store]))
@@ -11,7 +12,8 @@
     :fragments
     [{:schema manifest/reviewed-fragment-schema
       :authority :advice :source "advice/checkout.edn"
-      :entries [{:location :span-attributes
+      :entries [{:signal :spans :table "otel_traces"
+                 :location :span-attributes
                  :key "checkout.complete" :type :boolean}]}]}))
 
 (defn- thrown-data [f]
@@ -154,4 +156,25 @@
 
     (check "canonical wire rendering is stable across input map order"
            (store/render store/empty-catalog)
-           (store/render (into {} (reverse (seq store/empty-catalog)))))))
+           (store/render (into {} (reverse (seq store/empty-catalog)))))
+
+    (check "persisted legacy manifest records fail closed at catalog validation"
+           :otel.exporter.chdb.attribute-manifest/legacy-manifest
+           (:type
+            (thrown-data
+             #(store/validate-catalog
+               (assoc store/empty-catalog
+                      :records
+                      [(assoc-in prepared [:manifest :schema]
+                                 manifest/legacy-manifest-schema)])))))
+
+    (let [legacy-backend (backend/memory-backend)
+          v2-wire (str (pr-str (assoc store/empty-catalog
+                                      :records [prepared])) "\n")
+          legacy-wire (str/replace v2-wire manifest/manifest-schema
+                                   manifest/legacy-manifest-schema)]
+      (backend/put-bytes-if-absent!
+       legacy-backend store/object-key (.getBytes legacy-wire "UTF-8"))
+      (check "loading persisted v1 data reports the migration boundary"
+             :otel.exporter.chdb.attribute-registry-store/legacy-catalog
+             (:type (thrown-data #(store/load! legacy-backend)))))))

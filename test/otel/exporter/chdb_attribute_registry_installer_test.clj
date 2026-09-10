@@ -14,7 +14,8 @@
      :fragments
      [{:schema manifest/reviewed-fragment-schema
        :authority :advice :source "advice/checkout.edn"
-       :entries [{:location :span-attributes
+       :entries [{:signal :spans :table "otel_traces"
+                  :location :span-attributes
                   :key "checkout.complete" :type :boolean}]}]})))
 
 (defn- thrown-data [f]

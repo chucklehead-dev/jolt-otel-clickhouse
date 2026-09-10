@@ -19,9 +19,12 @@
     [{:schema manifest/reviewed-fragment-schema
       :authority :advice :source "advice/checkout.edn"
       :entries
-      [{:location :span-attributes :key "checkout.name" :type :string}
-       {:location :span-attributes :key "checkout.complete" :type :boolean}
-       {:location :span-attributes :key "checkout.count" :type :int64}]}]}))
+      [{:signal :spans :table "otel_traces"
+        :location :span-attributes :key "checkout.name" :type :string}
+       {:signal :spans :table "otel_traces"
+        :location :span-attributes :key "checkout.complete" :type :boolean}
+       {:signal :spans :table "otel_traces"
+        :location :span-attributes :key "checkout.count" :type :int64}]}]}))
 
 (defn- installed []
   (let [manifest (compiled)
