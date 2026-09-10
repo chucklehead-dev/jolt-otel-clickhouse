@@ -6,8 +6,9 @@ compatibility; they are awkward for numeric filters and aggregates. Frequently
 queried attributes can eventually be copied into dedicated typed columns while
 the existing text entry remains available.
 
-This release provides the safe first step: a pure manifest compiler. It does not
-connect to chDB, run DDL, inspect stored telemetry, or change exporter rows.
+This release provides two safe building blocks: a pure manifest compiler and a
+persistence-ready registry lifecycle/planner for span attributes. Neither
+connects to chDB, runs DDL, inspects stored telemetry, or changes exporter rows.
 
 ```mermaid
 flowchart LR
@@ -16,8 +17,10 @@ flowchart LR
     E[Deployment dataset and application binding] --> D
     B --> D
     D --> F[Checksummed typed manifest]
-    F -. future, separately authorized .-> G[Database installer]
-    G -. future .-> H[Typed exporter and queries]
+    F --> G[Persistence-ready registry record]
+    G --> H[Deterministic column plan]
+    H -. future, separately authorized .-> I[Database installer]
+    I -. future .-> J[Typed exporter and queries]
 ```
 
 ## Compile a manifest
@@ -85,11 +88,54 @@ conflicting types, unsupported values, and dynamic keys become explicit
 diagnostics and do not produce fields. A reviewed fragment may promote a safe
 declaration separately; inference cannot silently override it.
 
+## Prepare and reconcile a registry record
+
+The registry API turns an approved manifest into a record that a deployment
+store can persist. The store, not this library, must compare-and-set the record
+at its `:generation` before applying an operation plan.
+
+```clojure
+(require '[otel.exporter.chdb.attribute-registry :as registry])
+
+(def preparing (registry/prepare compiled persisted-records))
+(def first-pass (registry/reconcile preparing
+                                    (:generation preparing)
+                                    observed-column-types))
+
+;; Persist (:record first-pass) with a generation CAS before executing these.
+(:operations first-pass)
+;; => [{:op :add-column, :table "otel_traces", ...}]
+```
+
+The lifecycle is `:preparing`, `:active`, `:failed`, or `:retired`. Missing
+columns keep the record preparing and produce sorted, idempotent operation data.
+An existing column with the wrong type moves it to failed without producing an
+operation. A corrected schema can retry through preparing and becomes active
+only after every expected value and status column is observed with its exact
+type. Retired records cannot reactivate. Repeating the same observation is
+idempotent, and stale generations fail before a transition.
+
+An installer must reconcile persisted records against the physical schema on
+every startup before exposing active descriptors to a query or export consumer.
+Loading a previously active record alone is not proof that an operator has not
+changed the table since the prior process exited.
+
+Each value column reserves a `UInt8` status column with stable meanings for
+historical-untyped, absent, present-empty, valid, and invalid. Exporting those
+statuses is a later ingestion slice; reserving them now prevents nullable data
+from becoming an ambiguous contract.
+
+This first registry seam intentionally accepts only `:span-attributes`, which
+map unambiguously to `otel_traces`. Resource and scope attributes occur on more
+than one signal table. Their manifest identity needs a signal/table dimension
+before this planner can support them without installing a projection on the
+wrong table.
+
 ## What remains
 
-A later slice will persist manifests and install their columns through an
-explicit state machine. Only an active persisted descriptor should become
-queryable. That work must distinguish historical-untyped, absent,
-present-empty, valid, and invalid row states, reconcile interrupted DDL, and
-prove direct-export and OTLP-receiver equivalence. None of those database or
-ingestion claims are made by this compiler-only release.
+A later slice will supply the compare-and-set registry store and execute these
+plans through crash-safe, idempotent DDL. Only a persisted active descriptor
+should become queryable. Export still needs to populate the reserved per-row
+statuses and typed values, reconcile interrupted DDL at every cut, and prove
+direct-export and OTLP-receiver equivalence. None of those database or ingestion
+claims are made by this storage-independent planner.
