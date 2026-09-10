@@ -13,7 +13,8 @@ observed span-table schema. An explicit deployment installer can execute only
 those registry-owned additive columns, re-observe the table, and publish
 descriptors only after the active generation is persisted. Ambiguous writes are
 proved by canonical reread and interrupted preparing records remain recoverable.
-This preview does not change export or query behavior yet. See
+The returned process-local descriptor capability can enable typed span columns
+on the existing exporter while retaining its generic `SpanAttributes` map. See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
 example.
 

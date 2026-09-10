@@ -8,6 +8,7 @@
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-attribute-manifest-test :as manifest-test]
+            [otel.exporter.chdb-attribute-projection-test :as attribute-projection-test]
             [otel.exporter.chdb-attribute-registry-test :as registry-test]
             [otel.exporter.chdb-attribute-registry-installer-test :as registry-installer-test]
             [otel.exporter.chdb-attribute-registry-store-test :as registry-store-test]
@@ -43,6 +44,7 @@
   ;; public namespace must install the shim itself.
   (doseq [source-ns ['otel.exporter.chdb
                      'otel.exporter.chdb.attribute-manifest
+                     'otel.exporter.chdb.attribute-projection
                      'otel.exporter.chdb.attribute-registry
                      'otel.exporter.chdb.attribute-registry-installer
                      'otel.exporter.chdb.attribute-registry-store
@@ -546,6 +548,7 @@
   (reset! failures 0)
   (dependency-test/run check)
   (manifest-test/run check)
+  (attribute-projection-test/run check)
   (registry-test/run check)
   (registry-store-test/run check)
   (registry-installer-test/run check)

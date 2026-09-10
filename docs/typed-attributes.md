@@ -173,7 +173,8 @@ at the application boundary:
 (installer/install-approved!
  object-backend
  compiled
- {:execute-ddl! #(jdbc/execute! connection %)
+ {:target connection
+  :execute-ddl! #(jdbc/execute! connection %)
   :observe-columns
   #(into {}
          (map (juxt :name :type))
@@ -228,16 +229,63 @@ than one signal table. Their manifest identity needs a signal/table dimension
 before this planner can support them without installing a projection on the
 wrong table.
 
+## Export confirmed typed span values
+
+An active installer result includes an opaque, process-local `:descriptor-set`.
+This is the only typed-schema input accepted by the exporter; a bare descriptor
+vector, loaded active record, manifest, or telemetry payload cannot substitute
+for installation confirmation.
+
+```clojure
+(def installation
+  (installer/install-approved! object-backend compiled installer-runtime))
+
+(def exporter
+  (otel.exporter.chdb/exporter
+   {:connection connection
+    :signals #{:spans}
+    :typed-span-descriptors (:descriptor-set installation)}))
+```
+
+For each declared span attribute, export writes the library-owned value column
+and its `UInt8` status. Exact strings, booleans, and signed 64-bit integers use
+status `3` (`:valid`). Missing values use the ClickHouse type's default with
+status `1` (`:absent`); an empty string uses status `2` (`:present-empty`); and
+a wrong type, overflowing integer, or duplicate normalized key uses the safe
+default with status `4` (`:invalid`). Rows exported without a capability omit
+the additive columns, whose ClickHouse default status `0` means
+`:historical-untyped`.
+
+The original `SpanAttributes Map(String,String)` is always populated as before.
+This preserves ClickStack compatibility, undeclared attributes, and a readable
+fallback for invalid promoted values. Typed projection does not read the
+catalog, observe schema, or execute DDL during export; it can only use the
+capability minted after `install-approved!` completed. The capability represents
+one confirmed startup generation. If another process changes the catalog or
+physical schema, recreate installation/exporter state before relying on it.
+The install runtime's required `:target` is normally that same connection. The
+capability is identity-bound to it, and exporter construction rejects reuse with
+another connection before processing any row.
+
+The descriptor-set class necessarily has a host-visible constructor, but its
+value also carries a private identity issuer checked on every consumption.
+Ordinary construction with copied record/snapshot/descriptors and a missing or
+different issuer therefore fails. Deliberate same-process reflection or private
+Var access is outside this trust boundary: code with that authority could also
+invoke the database effects directly. Typed exporter configuration requires an
+explicit `:connection`; a `:db-spec`-owned connection cannot be proven identical
+to the target captured by installation.
+
 ## What remains
 
-Only an installer-returned active descriptor should become queryable. Export
-still needs to populate the reserved per-row statuses and typed values, consume
-those descriptors without bypassing installation, and prove direct-export and
-OTLP-receiver equivalence. The injectable installer is covered at deterministic
-crash cuts, but the state-machine model above and a native chDB integration gate
-remain. The current process-local fresh observation can also be invalidated by
-an out-of-band DDL change immediately after it returns; deployments requiring a
-stronger invariant need database-side ownership or a shared schema lease. A
-later catalog writer can likewise supersede a returned generation, so consumers
-must retain the result's record/snapshot identity rather than treating the bare
-descriptor vector as an eternal capability.
+Only an installer-returned active descriptor should become queryable. Query
+planning still needs an equivalent generation-bound adapter, and direct-export
+versus OTLP-receiver typed-value equivalence remains unproved. The injectable
+installer and pure export projection have focused coverage, but the state-machine
+model above and a native chDB integration gate remain. The current process-local
+fresh observation can also be invalidated by an out-of-band DDL change
+immediately after it returns; deployments requiring a stronger invariant need
+database-side ownership or a shared schema lease. A later catalog writer can
+likewise supersede a returned generation, so consumers must retain the result's
+record/snapshot identity rather than treating the bare descriptor vector as an
+eternal capability.

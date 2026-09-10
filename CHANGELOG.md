@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Allow the span exporter to consume the installer-issued active descriptor
+  capability and populate typed value/status columns. Generic SpanAttributes
+  remain present, and export without a capability retains legacy behavior. A
+  private issuer and exact process-local target identity prevent ordinary
+  capability forgery or cross-connection reuse.
 - Add a span-only typed-column installer with injectable DDL execution and
   physical-schema observation. It persists preparing before additive DDL and
   returns descriptors only after fresh observation and active-state CAS.
