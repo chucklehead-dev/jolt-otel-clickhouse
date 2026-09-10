@@ -297,8 +297,10 @@ uses only `otel_traces` and the manifest-derived physical value/status columns;
 the logical key, text bound, time window, and limit remain JDBC parameters.
 Statuses `2` and `3` read the typed value. Historical-untyped (`0`) and invalid
 (`4`) rows fall back to `SpanAttributes[key]`, preserving useful results across
-migration and malformed values. Absent (`1`) and unknown statuses contribute no
-value. Results retain `:typed-status` and identify `:typed` versus
+migration and malformed values. A status-`2` empty string remains an explicit
+group rather than disappearing under the normal nonempty-value filter. Absent
+(`1`) and unknown statuses contribute no value. Results retain `:typed-status`
+and identify `:typed` versus
 `:generic-fallback` source.
 
 This API does not accept a table, expression, manifest, record, or bare
@@ -309,12 +311,14 @@ path for its established semantic fields and needs no descriptor capability.
 
 ## What remains
 
-Only an installer-returned active descriptor should become queryable.
+Only an installer-issued active descriptor capability is queryable.
 Direct-export versus OTLP-receiver typed-value equivalence remains unproved,
 and typed numeric filtering/aggregation beyond bounded value distributions is
-not yet exposed. The injectable installer, export projection, and explorer path
-have focused coverage, but the state-machine model above and a native chDB
-integration gate remain. The current process-local
+not yet exposed. The installer, direct span export, generic compatibility map,
+and explorer path have an in-memory native chDB round-trip gate covering
+historical, absent, present-empty, valid, and invalid statuses, including an
+`Int64` maximum and a hostile parameter-bound logical key. The state-machine
+model above remains. The current process-local
 fresh observation can also be invalidated by an out-of-band DDL change
 immediately after it returns; deployments requiring a stronger invariant need
 database-side ownership or a shared schema lease. A later catalog writer can

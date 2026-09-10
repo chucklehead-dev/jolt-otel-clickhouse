@@ -89,6 +89,7 @@
                   (str/includes? sql "SpanAttributes[?]")
                   (str/includes? sql "IN (2, 3)")
                   (str/includes? sql "IN (0, 4)")
+                  (str/includes? sql "notEmpty(value) OR typedstatus = 2")
                   (str/includes? sql "`av_sp_")
                   (str/includes? sql "`as_sp_")
                   (not (str/includes? sql key))

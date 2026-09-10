@@ -1329,7 +1329,7 @@
          "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
          "    AND toUnixTimestamp64Nano(Timestamp) < ?\n"
          ")\n"
-         "WHERE notEmpty(value)\n"
+         "WHERE notEmpty(value) OR typedstatus = 2\n"
          "GROUP BY value, typedstatus\n"
          "ORDER BY count DESC, value ASC, typedstatus ASC\n"
          "LIMIT ?")))
