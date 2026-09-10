@@ -276,13 +276,49 @@ invoke the database effects directly. Typed exporter configuration requires an
 explicit `:connection`; a `:db-spec`-owned connection cannot be proven identical
 to the target captured by installation.
 
+## Query confirmed typed span values
+
+The explorer consumes that same capability and exact connection identity for a
+bounded top-values query:
+
+```clojure
+(explorer/typed-span-values
+ connection
+ (:descriptor-set installation)
+ {:signal :spans
+  :keys ["checkout.count" "checkout.complete"]
+  :start-unix-nano window-start
+  :end-unix-nano window-end
+  :limit 20})
+```
+
+Every requested key must be unique and approved by the capability. The query
+uses only `otel_traces` and the manifest-derived physical value/status columns;
+the logical key, text bound, time window, and limit remain JDBC parameters.
+Statuses `2` and `3` read the typed value. Historical-untyped (`0`) and invalid
+(`4`) rows fall back to `SpanAttributes[key]`, preserving useful results across
+migration and malformed values. A status-`2` empty string remains an explicit
+group rather than disappearing under the normal nonempty-value filter. Absent
+(`1`) and unknown statuses contribute no value. Results retain `:typed-status`
+and identify `:typed` versus
+`:generic-fallback` source.
+
+This API does not accept a table, expression, manifest, record, or bare
+descriptor vector. Unknown keys, duplicates, non-span signals, extra request
+keys such as `:table` or `:sql`, and cross-connection capabilities fail before
+JDBC execution. The original closed `top-values` API remains the generic-map
+path for its established semantic fields and needs no descriptor capability.
+
 ## What remains
 
-Only an installer-returned active descriptor should become queryable. Query
-planning still needs an equivalent generation-bound adapter, and direct-export
-versus OTLP-receiver typed-value equivalence remains unproved. The injectable
-installer and pure export projection have focused coverage, but the state-machine
-model above and a native chDB integration gate remain. The current process-local
+Only an installer-issued active descriptor capability is queryable.
+Direct-export versus OTLP-receiver typed-value equivalence remains unproved,
+and typed numeric filtering/aggregation beyond bounded value distributions is
+not yet exposed. The installer, direct span export, generic compatibility map,
+and explorer path have an in-memory native chDB round-trip gate covering
+historical, absent, present-empty, valid, and invalid statuses, including an
+`Int64` maximum and a hostile parameter-bound logical key. The state-machine
+model above remains. The current process-local
 fresh observation can also be invalidated by an out-of-band DDL change
 immediately after it returns; deployments requiring a stronger invariant need
 database-side ownership or a shared schema lease. A later catalog writer can

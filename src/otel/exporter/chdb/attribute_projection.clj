@@ -56,14 +56,18 @@
       (valid-value? type (first values)) [(first values) (:valid codes)]
       :else [fallback (:invalid codes)])))
 
+(defn confirmed-span-fields
+  "Return manifest fields only after issuer and target identity confirmation."
+  [descriptor-set target]
+  (get-in (confirmed-record descriptor-set target) [:manifest :fields]))
+
 (defn span-projector
   "Compile an installer-confirmed descriptor capability into a row projector.
 
   The returned function accepts raw span attributes and returns only the
   library-owned physical value/status columns."
   [descriptor-set target]
-  (let [record (confirmed-record descriptor-set target)
-        fields (get-in record [:manifest :fields])]
+  (let [fields (confirmed-span-fields descriptor-set target)]
     (fn [attributes]
       (let [values-by-key
             (reduce (fn [values [key value]]

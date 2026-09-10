@@ -8,7 +8,8 @@
   (:require [db.jdbc]
             [clojure.string :as str]
             [jdbc.core :as jdbc]
-            [otel.context :as context]))
+            [otel.context :as context]
+            [otel.exporter.chdb.attribute-projection :as attribute-projection]))
 
 (def max-time-range-nanos
   "Largest accepted half-open query window (24 hours)."
@@ -27,6 +28,10 @@
   256)
 
 (def default-text-length 128)
+
+(def ^:private typed-span-request-keys
+  #{:end-unix-nano :keys :limit :max-text-length :signal :start-unix-nano})
+(def ^:private safe-typed-column #"a[sv]_sp_[a-z0-9_]+_[0-9a-f]{16}")
 
 (def max-counter-source-points
   "Largest raw cumulative-counter snapshot set accepted by one request."
@@ -267,6 +272,61 @@
            "attribute explorer bound must be a positive integer within its hard cap"
            {:parameter parameter :value value :minimum 1 :maximum maximum}))
   value)
+
+(defn- validate-typed-span-request! [connection descriptor-set options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed span values require the installed target connection"
+           {:connection connection}))
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "typed span values request must be a map" {:request options}))
+  (when-let [unknown (seq (remove typed-span-request-keys (keys options)))]
+    (fail! ::unsupported-request-key
+           "typed span values request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (when-not (= :spans (:signal options))
+    (fail! ::unsupported-typed-signal
+           "typed attribute query selection supports spans only"
+           {:signal (:signal options) :supported-signals [:spans]}))
+  (let [requested (:keys options)
+        fields (attribute-projection/confirmed-span-fields
+                descriptor-set connection)
+        by-key (into {} (map (juxt :key identity) fields))]
+    (when-not (and (vector? requested)
+                   (<= 1 (count requested) max-field-count)
+                   (every? #(and (string? %) (<= 1 (count %) max-text-length)
+                                 (not (str/blank? %)))
+                           requested))
+      (fail! ::invalid-typed-keys
+             "typed span keys must be a bounded non-empty string vector"
+             {:keys requested :maximum max-field-count}))
+    (when-not (= (count requested) (count (set requested)))
+      (fail! ::duplicate-typed-keys
+             "typed span keys must not contain duplicates" {:keys requested}))
+    (doseq [key requested]
+      (when-not (contains? by-key key)
+        (fail! ::unknown-typed-key
+               "typed span key is not approved by this descriptor capability"
+               {:key key :approved-keys (mapv :key fields)})))
+    (let [start (validate-instant! :start-unix-nano
+                                   (:start-unix-nano options))
+          end (validate-instant! :end-unix-nano (:end-unix-nano options))]
+      (when-not (< start end)
+        (fail! ::invalid-time-window
+               "typed span values require a non-empty increasing window"
+               {:start-unix-nano start :end-unix-nano end}))
+      (when (> (- end start) max-time-range-nanos)
+        (fail! ::time-range-too-large
+               "typed span values time window exceeds the 24 hour hard cap"
+               {:actual (- end start) :maximum max-time-range-nanos}))
+      {:fields (mapv by-key requested)
+       :start start :end end
+       :limit (validate-positive-cap! :limit (:limit options) max-result-limit)
+       :text-length
+       (validate-positive-cap! :max-text-length
+                               (get options :max-text-length default-text-length)
+                               max-text-length)})))
 
 (defn- validate-metric-name! [value]
   (when-not (and (string? value)
@@ -1241,6 +1301,76 @@
                             [(distribution-query config field)
                              text-length start end limit]
                             {:max-rows limit})))
+        fields)))))
+
+(defn- checked-typed-column [column]
+  (when-not (and (string? column)
+                 (<= (count column) 63)
+                 (re-matches safe-typed-column column))
+    (fail! ::invalid-typed-column
+           "typed span capability contains an invalid physical column"
+           {:column column}))
+  (str "`" column "`"))
+
+(defn- typed-span-values-query [{:keys [physical]}]
+  (let [value-column (checked-typed-column (:value-column physical))
+        status-column (checked-typed-column (:status-column physical))]
+    (when (= value-column status-column)
+      (fail! ::invalid-typed-column
+             "typed value and status columns must be distinct" {}))
+    (str "SELECT value, typedstatus, count() AS count\n"
+         "FROM (\n"
+         "  SELECT leftUTF8(multiIf(" status-column " IN (2, 3),\n"
+         "                              toString(" value-column "),\n"
+         "                              " status-column " IN (0, 4),\n"
+         "                              SpanAttributes[?], ''), ?) AS value,\n"
+         "         " status-column " AS typedstatus\n"
+         "  FROM otel_traces\n"
+         "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
+         "    AND toUnixTimestamp64Nano(Timestamp) < ?\n"
+         ")\n"
+         "WHERE notEmpty(value) OR typedstatus = 2\n"
+         "GROUP BY value, typedstatus\n"
+         "ORDER BY count DESC, value ASC, typedstatus ASC\n"
+         "LIMIT ?")))
+
+(defn typed-span-values
+  "Return bounded distributions for installer-approved span attribute keys.
+
+  Typed statuses 2/3 read the physical value. Historical or invalid rows fall
+  back to the generic SpanAttributes map using a bound logical-key parameter;
+  absent or unknown statuses produce no value. Physical identifiers and the
+  only table name come from library-owned data."
+  [connection descriptor-set options]
+  (let [{:keys [fields start end limit text-length]}
+        (validate-typed-span-request! connection descriptor-set options)]
+    (context/with-instrumentation-suppressed
+      (vec
+       (mapcat
+        (fn [{:keys [key] :as field}]
+          (let [rows (jdbc/fetch
+                      connection
+                      [(typed-span-values-query field)
+                       key text-length start end limit]
+                      {:max-rows limit})]
+            (when-not (and (vector? rows) (<= (count rows) limit))
+              (fail! ::invalid-typed-result
+                     "typed span value result exceeds its request bound"
+                     {:key key :actual (when (vector? rows) (count rows))
+                      :maximum limit}))
+            (mapv
+             (fn [{:keys [value typedstatus count]}]
+               (when-not (and (string? value)
+                              (integer? count) (not (neg? count))
+                              (contains? #{0 2 3 4} typedstatus))
+                 (fail! ::invalid-typed-result
+                        "typed span value row has invalid status or shape"
+                        {:key key :typed-status typedstatus}))
+               {:attribute-key key :count count :signal :spans
+                :source (if (contains? #{2 3} typedstatus)
+                          :typed :generic-fallback)
+                :typed-status typedstatus :value value})
+             rows)))
         fields)))))
 
 (defn metric-series
