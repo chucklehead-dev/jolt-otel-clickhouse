@@ -5,6 +5,12 @@ uses ClickStack's correlation and search column names (`TraceId`, `SpanId`,
 `ParentSpanId`, `ServiceName`, `SpanName`, `Duration`, `Body`, and attribute
 maps), so the demo and later ClickStack integration share the same query model.
 
+The library can also compile reviewed attribute declarations and build-time
+`otel.attribute-schema/v1` hints into a deterministic typed storage manifest.
+This preview does not install columns or change export behavior yet. See
+[`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
+example.
+
 ## Install
 
 Pin the exact commit you have reviewed:
