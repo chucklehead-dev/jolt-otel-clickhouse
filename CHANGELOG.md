@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Resolve `jolt-crypto` once from canonical upstream revision `5effcc89` and
+  exclude OTel's older compatibility-fork declaration. Dependency selection no
+  longer depends on graph traversal order.
 - Add a pure, deterministic compiler for operator-reviewed typed attribute
   manifests. It produces stable ClickHouse field descriptors without changing a
   database or authorizing schema changes from telemetry.
