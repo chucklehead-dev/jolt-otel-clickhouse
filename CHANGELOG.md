@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add a capability- and connection-bound explorer query for approved typed span
+  keys. Physical value/status columns are library-owned, caller values remain
+  parameters, and historical or invalid rows use the generic attribute map.
 - Allow the span exporter to consume the installer-issued active descriptor
   capability and populate typed value/status columns. Generic SpanAttributes
   remain present, and export without a capability retains legacy behavior. A
