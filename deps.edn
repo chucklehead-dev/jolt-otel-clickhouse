@@ -5,7 +5,7 @@
          :git/sha "58f090caa31445bcf9403a15bdd01b1901a4e860"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "fc95971fdb6041cee303717a9dacc4ed04de9b16"
+         :git/sha "72e42d12d3d95fe5310ff173512c20db40053190"
          ;; OTel's pinned fork revision has the Jolt 0.8 value-first FFI fix,
          ;; but predates the canonical upstream provider and large-input work.
          ;; Exclude that subtree declaration and select the reviewed superset

@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-typed-query-native-test
-  (:require [db.jdbc]
+  (:require [clojure.data.json :as json]
+            [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
@@ -7,7 +8,14 @@
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.explorer :as explorer]
             [otel.exporter.chdb.schema :as schema]
-            [otel.sdk.export :as export]))
+            [otel.exporter.memory :as memory]
+            [otel.otlp.encode :as otlp-encode]
+            [otel.otlp.http-receiver :as receiver]
+            [otel.otlp.json :as otlp-json]
+            [otel.resource :as resource]
+            [otel.sdk.export :as export]
+            [otel.sdk.tracer :as sdk-tracer]
+            [otel.trace :as trace]))
 
 (def malicious-key "checkout.count') OR 1=1 --")
 (def empty-key "checkout.note")
@@ -48,6 +56,47 @@
   (when-not (export/export-spans! exporter spans)
     (throw (or (chdb-export/last-error exporter)
                (ex-info "native typed span export failed" {})))))
+
+(defn- canonical-equivalence-span []
+  (let [memory-exporter (memory/exporter)
+        provider
+        (sdk-tracer/tracer-provider
+         {:resource (resource/resource {"service.name" "typed-receiver"})
+          :processors [(export/simple-processor memory-exporter)]})
+        tracer (sdk-tracer/get-tracer
+                provider
+                {:name "typed-receiver-test" :version "1"
+                 :attributes {"scope.attribute" true}})
+        current
+        (trace/start-span
+         tracer "typed-direct-receiver-equivalence"
+         {:attributes {malicious-key int64-max empty-key ""}
+          :start-timestamp (+ timestamp-base 2000)})
+        linked
+        (trace/span-context
+         {:trace-id "10000000000000000000000000000000"
+          :span-id "1000000000000000"
+          :trace-flags 1})]
+    (trace/add-event! current "canonical-event" {"event.empty" ""}
+                      (+ timestamp-base 2001))
+    (trace/add-link! current linked {"link.valid" true})
+    (trace/end! current (+ timestamp-base 2002))
+    (first (memory/spans memory-exporter))))
+
+(defn- parse-json-body [request limit]
+  (let [body (:body request)
+        encoded-bytes (alength (.getBytes body "UTF-8"))]
+    (when (> encoded-bytes limit)
+      (throw (receiver/body-too-large limit encoded-bytes)))
+    {:value (json/read-str body) :encoded-bytes encoded-bytes}))
+
+(defn- rows-for-trace [connection trace-id]
+  (jdbc/fetch connection
+              ["select * from otel_traces where TraceId=?" trace-id]))
+
+(defn- manifest-field [installation key]
+  (first (filter #(= key (:key %))
+                 (get-in installation [:record :manifest :fields]))))
 
 (defn run [check]
   (println "native capability-bound typed span round trip")
@@ -98,4 +147,49 @@
                actual)
         (check "status-1 absent rows are not published"
                false
-               (boolean (some #(= 1 (:typed-status %)) actual)))))))
+               (boolean (some #(= 1 (:typed-status %)) actual))))
+
+      (let [source (canonical-equivalence-span)
+            trace-id (get-in source [:span-context :trace-id])
+            direct-ok (export/export-spans! typed-exporter [source])
+            direct-rows (rows-for-trace connection trace-id)
+            direct-row (first direct-rows)
+            payload (otlp-json/write-str
+                     (otlp-encode/traces-request [source]))
+            encoded-bytes (alength (.getBytes payload "UTF-8"))
+            handler (receiver/handler
+                     {:parse-body parse-json-body
+                      :exporter typed-exporter})
+            response
+            (handler {:request-method :post
+                      :uri receiver/traces-path
+                      :headers {"content-type" "application/json"
+                                "content-length" (str encoded-bytes)}
+                      :body payload})
+            received-rows (rows-for-trace connection trace-id)
+            int-field (manifest-field installation malicious-key)
+            empty-field (manifest-field installation empty-key)
+            physical-key #(keyword (get-in % [:physical %2]))]
+        (check "direct typed export succeeds before receiver ingestion"
+               [true 1] [(boolean direct-ok) (count direct-rows)])
+        (check "real OTLP JSON reaches the receiver without partial success"
+               [200 "{}"] [(:status response) (:body response)])
+        (check "direct and receiver paths persist identical full physical rows"
+               [2 true]
+               [(count received-rows)
+                (every? #(= direct-row %) received-rows)])
+        (check "equivalent rows retain large-int and present-empty statuses"
+               [int64-max 3 "" 2]
+               [(get direct-row (physical-key int-field :value-column))
+                (get direct-row (physical-key int-field :status-column))
+                (get direct-row (physical-key empty-field :value-column))
+                (get direct-row (physical-key empty-field :status-column))])
+        (check "generic attribute compatibility survives both ingestion paths"
+               {malicious-key (str int64-max) empty-key ""}
+               (:spanattributes direct-row))
+        (check "causal nested values begin and remain free of synthetic zero counts"
+               [false false false false]
+               [(contains? (first (:events source)) :dropped-attributes-count)
+                (contains? (first (:links source)) :dropped-attributes-count)
+                (.contains (:eventsjson direct-row) "dropped-attributes-count")
+                (.contains (:linksjson direct-row) "dropped-attributes-count")])))))

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Pin the merged canonical OTel receiver record contract and qualify that direct
+  export and real OTLP JSON receiver ingestion produce identical typed physical
+  rows with the same descriptor capability and chDB connection.
 - Qualify typed physical-schema evidence by canonical signal and table. Closed,
   bounded observations reject missing, duplicate, unknown, cross-signal, and
   wrong-table evidence before DDL or descriptor publication, while physical
