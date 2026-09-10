@@ -28,8 +28,10 @@
         statements (atom [])
         events (atom [])
         next-column (atom 0)
+        target (atom :installer-target)
         runtime
-        {:emit! #(swap! events conj %)
+        {:target target
+         :emit! #(swap! events conj %)
          :observe-columns #(into {} @schema)
          :execute-ddl!
          (fn [statement]
@@ -39,7 +41,7 @@
              (swap! schema assoc name type)))}]
     {:backend (backend/memory-backend) :columns columns :events events
      :manifest manifest :next-column next-column :runtime runtime
-     :schema schema :statements statements}))
+     :schema schema :statements statements :target target}))
 
 (defn- published? [events]
   (boolean (some #(= :descriptors-published (:event %)) events)))
@@ -229,4 +231,12 @@
       (check "renderer rejects caller-controlled identifier or SQL text"
              :otel.exporter.chdb.attribute-registry-installer/invalid-operation
              (:type (thrown-data
-                     #(installer/render-add-column record injected)))))))
+                     #(installer/render-add-column record injected)))))
+
+    (let [{:keys [backend manifest runtime]} (fixture)]
+      (check "installer runtime requires an explicit non-nil target identity"
+             :otel.exporter.chdb.attribute-registry-installer/invalid-runtime
+             (:type
+              (thrown-data
+               #(installer/install-approved! backend manifest
+                                              (dissoc runtime :target))))))))

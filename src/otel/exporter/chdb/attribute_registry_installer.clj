@@ -15,21 +15,28 @@
 (def ^:private event-set (set event-values))
 (def ^:private safe-identifier-pattern #"[a-z][a-z0-9_]{0,62}")
 (def ^:private allowed-value-types #{"String" "Bool" "Int64"})
-(def ^:private allowed-options #{:emit! :execute-ddl! :observe-columns})
+(def ^:private allowed-options
+  #{:emit! :execute-ddl! :observe-columns :target})
+(def ^:private descriptor-issuer (atom nil))
+
+(deftype ^:private ConfirmedActiveDescriptorSet
+  [issuer target record snapshot descriptors])
 
 (defn- fail! [message type data]
   (throw (ex-info message (assoc data :type type
                                  :attribute-registry-installer/error true))))
 
-(defn- checked-runtime [{:keys [emit! execute-ddl! observe-columns]
+(defn- checked-runtime [{:keys [emit! execute-ddl! observe-columns target]
                          :or {emit! (fn [_] nil)}
                          :as runtime}]
   (when-not (and (map? runtime)
                  (every? allowed-options (keys runtime))
-                 (fn? emit!) (fn? execute-ddl!) (fn? observe-columns))
+                 (some? target) (fn? emit!)
+                 (fn? execute-ddl!) (fn? observe-columns))
     (fail! "typed attribute installer requires a closed effect runtime"
            ::invalid-runtime {}))
-  {:emit! emit! :execute-ddl! execute-ddl! :observe-columns observe-columns})
+  {:emit! emit! :execute-ddl! execute-ddl!
+   :observe-columns observe-columns :target target})
 
 (defn- emit-event! [emit! event]
   (when-not (contains? event-set (:event event))
@@ -75,9 +82,25 @@
     (emit-event! emit! {:event :schema-observed :phase phase})
     observed))
 
-(defn- result [status record snapshot descriptors]
-  (sorted-map :descriptors descriptors :record record
-              :snapshot snapshot :status status))
+(defn descriptor-set-data
+  "Return immutable installation evidence from an active descriptor capability.
+
+  Capabilities are minted only by `install-approved!` after fresh observation
+  and confirmed active persistence. Bare records or descriptor vectors are not
+  accepted."
+  [descriptor-set]
+  (when-not (and (instance? ConfirmedActiveDescriptorSet descriptor-set)
+                 (identical? descriptor-issuer (.-issuer descriptor-set)))
+    (fail! "typed descriptors require an installer-confirmed active capability"
+           ::unconfirmed-descriptors {}))
+  {:descriptors (.-descriptors descriptor-set)
+   :record (.-record descriptor-set)
+   :snapshot (.-snapshot descriptor-set)
+   :target (.-target descriptor-set)})
+
+(defn- result [status record snapshot descriptors descriptor-set]
+  (sorted-map :descriptor-set descriptor-set :descriptors descriptors
+              :record record :snapshot snapshot :status status))
 
 (defn install-approved!
   "Install one deployment-approved span manifest through crash-safe cuts.
@@ -87,7 +110,7 @@
   lifecycle record. Descriptors are returned only after an active record is
   confirmed persisted from the current snapshot."
   [object-backend approved-manifest runtime]
-  (let [{:keys [emit! execute-ddl! observe-columns]}
+  (let [{:keys [emit! execute-ddl! observe-columns target]}
         (checked-runtime runtime)
         loaded (store/load! object-backend)
         _ (emit-event! emit! {:event :snapshot-loaded
@@ -140,5 +163,8 @@
         (let [descriptors (registry/expected-columns persisted-final)]
           (emit-event! emit! {:event :descriptors-published
                               :generation (:generation persisted-final)})
-          (result :active persisted-final final-snapshot descriptors))
-        (result state persisted-final final-snapshot [])))))
+          (result :active persisted-final final-snapshot descriptors
+                  (ConfirmedActiveDescriptorSet.
+                   descriptor-issuer target persisted-final final-snapshot
+                   descriptors)))
+        (result state persisted-final final-snapshot [] nil)))))

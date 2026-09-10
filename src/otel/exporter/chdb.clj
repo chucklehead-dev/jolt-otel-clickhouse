@@ -6,6 +6,7 @@
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
             [otel.context :as context]
+            [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
@@ -81,7 +82,7 @@
       (or (:observed-time-unix-nano record) 0)
       event-time)))
 
-(defn- span-row [span]
+(defn- span-row [span typed-projector]
   (let [context (:span-context span)
         scope (:scope span)
         resource (:resource span)
@@ -106,7 +107,10 @@
       "EventsJSON" (json/write-str events)
       "LinksJSON" (json/write-str links)}
      (event-columns events)
-     (link-columns links))))
+     (link-columns links)
+     (if typed-projector
+       (typed-projector (:attributes span))
+       {}))))
 
 (defn- log-row [record]
   (let [scope (:scope record)
@@ -301,7 +305,8 @@
       (try
         (when (seq spans)
           (insert-json-rows! connection "insert into otel_traces"
-                             (map span-row spans)))
+                             (map #(span-row % (:typed-span-projector @state))
+                                  spans)))
         (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -370,10 +375,12 @@
   when this exporter creates the schema, checkpoints it; every non-empty logical
   signal batch returns true only after its WAL flush commits or reconciles.
   :persistence-barrier supplies the same post-batch contract for another
-  persistence implementation and is mutually exclusive with :durable?."
+  persistence implementation and is mutually exclusive with :durable?.
+  :typed-span-descriptors accepts only the opaque capability returned in an
+  active `install-approved!` result; the generic SpanAttributes map remains."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
-            persistence-barrier]
+            persistence-barrier typed-span-descriptors]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -382,8 +389,14 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
+   (when (and typed-span-descriptors (nil? connection))
+     (throw (ex-info "Typed span descriptors require their explicit install connection"
+                     {:type ::typed-descriptors-require-connection})))
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))
+         typed-projector (when typed-span-descriptors
+                           (attribute-projection/span-projector
+                            typed-span-descriptors conn))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (when durable?
@@ -407,6 +420,7 @@
                               :connection-close-status :open
                               :connection-closed? false
                               :persistence-barrier barrier
+                              :typed-span-projector typed-projector
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t
