@@ -321,6 +321,15 @@ The install runtime's required `:target` is normally that same connection. The
 capability is identity-bound to it, and exporter construction rejects reuse with
 another connection before processing any row.
 
+Direct export and OTLP receiver ingestion share this exact exporter boundary.
+The native gate installs one capability on one connection, writes a canonical
+SDK-ended span directly, then sends the same span through OTLP JSON encoding,
+real JSON parsing, and `otel.otlp.http-receiver/handler` into that same exporter.
+The complete stored physical rows, including promoted values/statuses, generic
+attributes, events, links, resource, and scope metadata, must be identical. The
+receiver is a Ring boundary rather than a socket server; network transport and
+authentication remain host-owned and outside this equivalence claim.
+
 The descriptor-set class necessarily has a host-visible constructor, but its
 value also carries a private identity issuer checked on every consumption.
 Ordinary construction with copied record/snapshot/descriptors and a missing or
@@ -366,9 +375,10 @@ path for its established semantic fields and needs no descriptor capability.
 ## What remains
 
 Only an installer-issued active descriptor capability is queryable.
-Direct-export versus OTLP-receiver typed-value equivalence remains unproved,
-and typed numeric filtering/aggregation beyond bounded value distributions is
-not yet exposed. The installer, direct span export, generic compatibility map,
+Direct-export versus OTLP-receiver typed-row equivalence is qualified for one
+canonical span fixture on the same process-local capability and connection.
+Typed numeric filtering/aggregation beyond bounded value distributions is not
+yet exposed. The installer, direct span export, generic compatibility map,
 and explorer path have an in-memory native chDB round-trip gate covering
 historical, absent, present-empty, valid, and invalid statuses, including an
 `Int64` maximum and a hostile parameter-bound logical key. The state-machine
