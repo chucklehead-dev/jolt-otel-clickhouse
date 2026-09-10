@@ -96,6 +96,17 @@
              [(:state failed) (:generation failed)
               (:operations conflict-result) (get-in failed [:failure :code])
               (get-in failed [:failure :columns])])
+      (check "persisted failures cannot forge an unknown projected column"
+             :otel.exporter.chdb.attribute-registry/invalid-record
+             (:type
+              (thrown-data
+               #(registry/validate-record
+                 (assoc failed :failure
+                        {:code :column-type-conflict
+                         :columns
+                         [{:actual-type "String" :expected-type nil
+                           :name "not_a_manifest_projection"
+                           :table "otel_traces"}]})))))
       (check "a corrected failed install retries through preparing"
              [:preparing 3 4 nil]
              [(:state retrying) (:generation retrying)

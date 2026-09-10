@@ -112,6 +112,7 @@
           #(and (exact-keys? % #{:actual-type :expected-type :name :table})
                 (= span-table (:table %))
                 (string? (:name %)) (<= (count (:name %)) 63)
+                (contains? expected (:name %))
                 (= (get expected (:name %)) (:expected-type %))
                 (string? (:actual-type %))
                 (<= (count (:actual-type %)) max-observed-type-length))
