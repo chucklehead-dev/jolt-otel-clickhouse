@@ -173,6 +173,71 @@
            #(manifest/compile-manifest
              (assoc binding :fragments []
                     :schema-url "https://telemetry.invalid/select-me")))))
+  (doseq [[label binding-key malformed]
+          [["malformed dataset identity is rejected" :dataset-id "bad/dataset"]
+           ["malformed application identity is rejected" :application-id ""]
+           ["malformed lineage identity is rejected" :lineage "bad lineage"]]]
+    (check label
+           :otel.exporter.chdb.attribute-manifest/invalid-binding
+           (:type
+            (thrown-data
+             #(manifest/compile-manifest
+               (assoc binding binding-key malformed :fragments []))))))
+  (doseq [[label malformed]
+          [["zero manifest version is rejected" 0]
+           ["negative manifest version is rejected" -1]
+           ["overflowing manifest version is rejected" 9223372036854775808]]]
+    (check label
+           :otel.exporter.chdb.attribute-manifest/invalid-binding
+           (:type
+            (thrown-data
+             #(manifest/compile-manifest
+               (assoc binding :version malformed :fragments []))))))
+  (check "attribute keys longer than 256 characters are rejected"
+         :otel.exporter.chdb.attribute-manifest/invalid-key
+         (:type
+          (thrown-data
+           #(compile*
+             [(reviewed :advice "advice/oversized-key.edn"
+                        [{:location :span-attributes
+                          :key (apply str (repeat 257 "k"))
+                          :type :string}])]))))
+  (check "more than 4096 fragments are rejected before consumption"
+         :otel.exporter.chdb.attribute-manifest/invalid-input
+         (:type
+          (thrown-data
+           #(compile*
+             (repeat 4097
+                     (reviewed :advice "advice/empty.edn" []))))))
+  (let [entry {:location :span-attributes :key "shared" :type :string}]
+    (check "more than 65536 total entries are rejected before compilation"
+           :otel.exporter.chdb.attribute-manifest/too-many-entries
+           (:type
+            (thrown-data
+             #(compile*
+               [(reviewed :advice "advice/first.edn"
+                          (vec (repeat 32768 entry)))
+                (reviewed :advice "advice/second.edn"
+                          (vec (repeat 32769 entry)))])))))
+  (let [max-binding-id (str "b" (apply str (repeat 127 "x")))
+        max-key (apply str (repeat 256 "k"))
+        compiled
+        (manifest/compile-manifest
+         {:dataset-id max-binding-id
+          :application-id max-binding-id
+          :lineage max-binding-id
+          :version 9223372036854775807
+          :fragments
+          [(reviewed :advice "advice/boundary.edn"
+                     [{:location :metric-attributes
+                       :key max-key
+                       :type :int64}])]})]
+    (check "maximum valid binding version and key boundaries compile"
+           [max-binding-id max-binding-id max-binding-id
+            9223372036854775807 max-key]
+           [(:dataset-id compiled) (:application-id compiled)
+            (:lineage compiled) (:version compiled)
+            (get-in compiled [:fields 0 :key])]))
   (let [compiled (compile* [])]
     (check "checksum mutation fails validation"
            :otel.exporter.chdb.attribute-manifest/checksum-mismatch
