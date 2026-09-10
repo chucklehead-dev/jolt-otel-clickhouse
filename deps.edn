@@ -5,7 +5,7 @@
          :git/sha "58f090caa31445bcf9403a15bdd01b1901a4e860"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "b18830ae1fc6eef6add5e059ae302e94a1f0ed70"}
+         :git/sha "fc95971fdb6041cee303717a9dacc4ed04de9b16"}
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "932444043c0c06f9e295ba4963419b2481e9dd07"}}

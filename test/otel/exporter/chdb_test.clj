@@ -7,6 +7,7 @@
             [jolt.process :as process]
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-attribute-manifest-test :as manifest-test]
             [otel.exporter.chdb-benchmark :as benchmark]
             [otel.exporter.chdb-explorer-test :as explorer-test]
             [otel.exporter.chdb.schema :as schema]
@@ -37,6 +38,7 @@
   ;; AOT cache so jdbc.core is compiled in a genuinely fresh runtime where the
   ;; public namespace must install the shim itself.
   (doseq [source-ns ['otel.exporter.chdb
+                     'otel.exporter.chdb.attribute-manifest
                      'otel.exporter.chdb.schema
                      'otel.exporter.chdb.explorer]]
     (let [expression (str "(require '" source-ns ")"
@@ -535,6 +537,7 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (manifest-test/run check)
   (run-clean-source-load-check)
   (run-backend-benchmark-gate)
   (run-migration-checks)
