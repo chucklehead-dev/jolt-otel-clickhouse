@@ -3,13 +3,16 @@
 
   This namespace is storage-independent and emits data operations, never SQL.
   A registry store must persist each returned record with a generation CAS."
-  (:require [otel.exporter.chdb.attribute-manifest :as manifest]))
+  (:require [malli.core :as m]
+            [otel.exporter.chdb.attribute-manifest :as manifest]))
 
 (def registry-schema "jolt-otel-clickhouse.attribute-registry/v1")
 
-(def states
-  "Closed persisted lifecycle states."
-  #{:preparing :active :failed :retired})
+(def state-values
+  "Canonical order of the closed persisted lifecycle states."
+  [:preparing :active :failed :retired])
+
+(def states (set state-values))
 
 (def status-codes
   "Stable per-row status values reserved for the typed exporter slice."
@@ -24,14 +27,62 @@
 (def ^:private max-generation 9223372036854775807)
 (def ^:private max-catalog-records 4096)
 (def ^:private max-observed-columns 131072)
+(def ^:private max-observed-name-length 256)
 (def ^:private max-observed-type-length 256)
+
+(def generation-schema
+  "Positive bounded generation used by registry-store CAS operations."
+  (m/schema [:int {:min 1 :max max-generation}]))
+
+(def failure-column-schema
+  (m/schema
+   [:map {:closed true}
+    [:actual-type [:string {:max max-observed-type-length}]]
+    [:expected-type :string]
+    [:name [:string {:max 63}]]
+    [:table [:= span-table]]]))
+
+(def failure-schema
+  "Closed persisted registry failure envelope."
+  (m/schema
+   [:map {:closed true}
+    [:code [:= :column-type-conflict]]
+    [:columns [:vector {:min 1} failure-column-schema]]]))
+
+(def registry-record-schema
+  "Closed structural envelope for persisted registry records.
+
+  `validate-record` additionally checks the embedded manifest, state-dependent
+  failure rules, and that every failure names an approved projection."
+  (m/schema
+   [:map {:closed true}
+    [:failure [:maybe failure-schema]]
+    [:generation generation-schema]
+    [:manifest :map]
+    [:schema [:= registry-schema]]
+    [:state (into [:enum] state-values)]]))
+
+(def observed-schema
+  "Bounded physical `column-name -> ClickHouse-type` observation."
+  (m/schema
+   [:map-of {:max max-observed-columns}
+    [:string {:max max-observed-name-length}]
+    [:string {:max max-observed-type-length}]]))
+
+(def add-column-operation-schema
+  "Closed data operation emitted to a future separately-authorized installer."
+  (m/schema
+   [:map {:closed true}
+    [:field-id :string]
+    [:name [:string {:max 63}]]
+    [:op [:= :add-column]]
+    [:role [:enum :value :status]]
+    [:table [:= span-table]]
+    [:type :string]]))
 
 (defn- fail! [message type data]
   (throw (ex-info message (assoc data :type type
                                  :attribute-registry/error true))))
-
-(defn- exact-keys? [value expected]
-  (and (map? value) (= expected (set (keys value)))))
 
 (declare canonical-value)
 
@@ -43,9 +94,6 @@
     (vector? value) (mapv canonical-value value)
     (sequential? value) (mapv canonical-value value)
     :else value))
-
-(defn- valid-generation? [value]
-  (and (integer? value) (pos? value) (<= value max-generation)))
 
 (defn- next-generation [generation]
   (when (= max-generation generation)
@@ -103,34 +151,21 @@
 
 (defn- valid-failure? [failure columns]
   (let [expected (into {} (map (juxt :name :type) columns))]
-    (and (exact-keys? failure #{:code :columns})
-         (= :column-type-conflict (:code failure))
-         (vector? (:columns failure))
-         (not (empty? (:columns failure)))
+    (and (m/validate failure-schema failure)
          (= (:columns failure) (canonical-conflicts (:columns failure)))
          (every?
-          #(and (exact-keys? % #{:actual-type :expected-type :name :table})
-                (= span-table (:table %))
-                (string? (:name %)) (<= (count (:name %)) 63)
-                (contains? expected (:name %))
+          #(and (contains? expected (:name %))
                 (= (get expected (:name %)) (:expected-type %))
-                (string? (:actual-type %))
-                (<= (count (:actual-type %)) max-observed-type-length))
+                (string? (:expected-type %)))
           (:columns failure)))))
 
 (defn validate-record
   "Validate the closed persisted registry record shape and embedded manifest."
   [record]
-  (when-not (exact-keys? record #{:failure :generation :manifest :schema :state})
+  (when-not (m/validate registry-record-schema record)
     (fail! "attribute registry record must use the closed v1 envelope"
-           ::invalid-record {:record record}))
-  (when-not (and (= registry-schema (:schema record))
-                 (contains? states (:state record))
-                 (valid-generation? (:generation record)))
-    (fail! "attribute registry record has invalid lifecycle metadata"
            ::invalid-record
-           {:schema (:schema record) :state (:state record)
-            :generation (:generation record)}))
+           {:explain (m/explain registry-record-schema record)}))
   (let [columns (column-descriptors
                  (ensure-span-manifest! (:manifest record)))]
     (if (= :failed (:state record))
@@ -167,11 +202,10 @@
           (->> records
                (mapcat
                 (fn [record]
-                  (let [dataset-id (get-in record [:manifest :dataset-id])]
-                    (map (fn [column]
-                           [[dataset-id (:table column) (:name column)]
-                            [(:field-identity column) (:role column)]])
-                         (expected-columns record)))))
+                  (map (fn [column]
+                         [[(:table column) (:name column)]
+                          [(:field-identity column) (:role column)]])
+                       (expected-columns record))))
                (group-by first)
                (filter (fn [[_ entries]]
                          (> (count (distinct (map second entries))) 1)))
@@ -179,8 +213,7 @@
       (when collision
         (fail! "persisted registry records collide on a physical column"
                ::physical-collision
-               {:dataset-id (first collision)
-                :table (second collision) :column (nth collision 2)})))
+               {:table (first collision) :column (second collision)})))
     records))
 
 (defn- assert-no-collision! [candidate records]
@@ -189,11 +222,9 @@
         (into {}
               (mapcat
                (fn [record]
-                 (when (= (:dataset-id candidate)
-                          (get-in record [:manifest :dataset-id]))
-                   (map (fn [column]
-                          [[(:table column) (:name column)] column])
-                        (expected-columns record))))
+                 (map (fn [column]
+                        [[(:table column) (:name column)] column])
+                      (expected-columns record)))
                records))]
     (doseq [column (column-descriptors candidate)
             :let [existing (get existing-columns
@@ -240,13 +271,10 @@
                                :actual (:generation record)})))
 
 (defn- validate-observed! [observed]
-  (when-not (and (map? observed) (<= (count observed) max-observed-columns)
-                 (every? (fn [[name type]]
-                           (and (string? name) (string? type)
-                                (<= (count type) max-observed-type-length)))
-                         observed))
+  (when-not (m/validate observed-schema observed)
     (fail! "observed physical schema must be a bounded string map"
-           ::invalid-observed-schema {}))
+           ::invalid-observed-schema
+           {:explain (m/explain observed-schema observed)}))
   observed)
 
 (defn- transition [record state failure]
@@ -287,13 +315,18 @@
                                          :columns conflicts)))
 
         (seq missing)
-        (sorted-map
-         :operations
-         (mapv #(into (sorted-map)
-                      (assoc (select-keys % [:field-id :name :role :table :type])
-                             :op :add-column))
-               missing)
-         :record (transition record :preparing nil))
+        (let [operations
+              (mapv #(into (sorted-map)
+                           (assoc
+                            (select-keys % [:field-id :name :role :table :type])
+                            :op :add-column))
+                    missing)]
+          (when-not (every? #(m/validate add-column-operation-schema %)
+                            operations)
+            (fail! "attribute registry generated an invalid closed operation"
+                   ::invalid-operation {}))
+          (sorted-map :operations operations
+                      :record (transition record :preparing nil)))
 
         :else
         (sorted-map :operations []

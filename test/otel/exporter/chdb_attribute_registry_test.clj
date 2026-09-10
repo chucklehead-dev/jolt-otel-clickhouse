@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-attribute-registry-test
   (:require [clojure.set :as set]
             [clojure.string :as str]
+            [malli.core :as m]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]))
 
@@ -45,6 +46,11 @@
            [registry/registry-schema :preparing 1 nil (:checksum compiled)]
            [(:schema prepared) (:state prepared) (:generation prepared)
             (:failure prepared) (get-in prepared [:manifest :checksum])])
+    (check "public Malli record schema describes the prepared envelope"
+           [true false]
+           [(m/validate registry/registry-record-schema prepared)
+            (m/validate registry/registry-record-schema
+                        (assoc prepared :telemetry-state :active))])
     (check "span fields reserve value and status columns"
            [4 #{:value :status} #{"otel_traces"} #{"Int64" "Bool" "UInt8"}]
            [(count columns) (set (map :role columns)) (set (map :table columns))
@@ -59,6 +65,10 @@
            (let [rendered (pr-str operations)]
              (and (not (str/includes? rendered "ALTER"))
                   (not (str/includes? rendered ":sql")))))
+    (check "every planned operation satisfies the public closed Malli schema"
+           true
+           (every? #(m/validate registry/add-column-operation-schema %)
+                   operations))
     (check "a partial physical schema plans only missing columns"
            (mapv :name (rest columns))
            (let [first-column (first columns)]
@@ -96,6 +106,16 @@
              [(:state failed) (:generation failed)
               (:operations conflict-result) (get-in failed [:failure :code])
               (get-in failed [:failure :columns])])
+      (let [status-column (first (filter #(= :status (:role %)) columns))
+            status-conflict
+            (registry/reconcile
+             prepared 1 {(:name status-column) "String"})]
+        (check "wrong status-column type also fails closed without operations"
+               [:failed [] "UInt8"]
+               [(get-in status-conflict [:record :state])
+                (:operations status-conflict)
+                (get-in status-conflict
+                        [:record :failure :columns 0 :expected-type])]))
       (check "persisted failures cannot forge an unknown projected column"
              :otel.exporter.chdb.attribute-registry/invalid-record
              (:type
@@ -156,6 +176,24 @@
              (set/intersection
               (set (map :name columns))
               (set (map :name (registry/expected-columns other))))))
+    (let [descriptor
+          (fn [manifest]
+            [{:field-id "forced-collision"
+              :field-identity
+              {:application-id (:application-id manifest)}
+              :name "av_forced_collision"
+              :role :value :table "otel_traces" :type "Int64"}])]
+      (check "catalog-wide physical ownership rejects a forced digest collision"
+             :otel.exporter.chdb.attribute-registry/physical-collision
+             (:type
+              (thrown-data
+               #(with-redefs-fn
+                  {(resolve
+                    'otel.exporter.chdb.attribute-registry/column-descriptors)
+                   descriptor}
+                  (fn []
+                    (registry/prepare
+                     (compile-app "billing" 1) [active])))))))
     (check "record rendering is deterministic and clock-free"
            true
            (let [rendered (registry/render prepared)
@@ -169,13 +207,15 @@
             :valid 3 :invalid 4}
            registry/status-codes))
 
-  (let [resource-manifest
-        (compile-app "checkout" 1
-                     [{:location :resource-attributes
-                       :key "deployment.environment" :type :string}])]
-    (check "signal-ambiguous resource locations fail this span-only seam"
-           :otel.exporter.chdb.attribute-registry/unsupported-location
-           (:type (thrown-data #(registry/prepare resource-manifest)))))
+  (doseq [location [:resource-attributes :scope-attributes]]
+    (let [ambiguous-manifest
+          (compile-app "checkout" 1
+                       [{:location location
+                         :key "deployment.environment" :type :string}])]
+      (check (str "signal-ambiguous " (name location)
+                  " fail this span-only seam")
+             :otel.exporter.chdb.attribute-registry/unsupported-location
+             (:type (thrown-data #(registry/prepare ambiguous-manifest))))))
   (check "telemetry cannot inject a registry lifecycle state"
          :otel.exporter.chdb.attribute-manifest/invalid-input
          (:type

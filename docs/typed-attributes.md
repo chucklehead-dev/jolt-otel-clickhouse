@@ -94,6 +94,12 @@ The registry API turns an approved manifest into a record that a deployment
 store can persist. The store, not this library, must compare-and-set the record
 at its `:generation` before applying an operation plan.
 
+The namespace exports Malli schemas for the registry record, generation,
+failure, observed-schema, and add-column operation envelopes. Malli owns the
+closed structural contract and can feed Hegel generators; checksum authority,
+catalog collisions, lifecycle transitions, and physical reconciliation remain
+explicit functions because they relate more than one value or state.
+
 ```clojure
 (require '[otel.exporter.chdb.attribute-registry :as registry])
 
@@ -114,6 +120,12 @@ operation. A corrected schema can retry through preparing and becomes active
 only after every expected value and status column is observed with its exact
 type. Retired records cannot reactivate. Repeating the same observation is
 idempotent, and stale generations fail before a transition.
+
+The catalog supplied to `prepare` must include every registry record targeting
+the same physical table. Collision checks intentionally do not stop at a
+logical `dataset-id`: field identities include that dataset, but physical
+column ownership is enforced across the whole catalog so a truncated-digest
+collision cannot hide behind two deployment labels.
 
 An installer must reconcile persisted records against the physical schema on
 every startup before exposing active descriptors to a query or export consumer.

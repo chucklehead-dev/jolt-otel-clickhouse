@@ -15,6 +15,8 @@ The first publication pins only remotely reachable immutable dependencies:
 - `jolt-lang/jolt-crypto` is selected directly from canonical upstream commit
   `5effcc89a3258499a79a2a3d69edad9e7800d1bf` at
   `https://github.com/jolt-lang/jolt-crypto.git`.
+- `metosin/malli` 0.20.1 defines the public typed-registry data schemas and is
+  exercised by the pinned-Jolt aggregate gate.
 - The test alias pins `io.github.chucklehead-dev/jolt-hegel` to
   `b214f769983211431c74e427f0f35553cfba7b34`.
 
