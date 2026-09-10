@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-typed-query-native-test
   (:require [clojure.data.json :as json]
+            [clojure.string :as str]
             [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
@@ -21,6 +22,8 @@
 (def malicious-key "checkout.count') OR 1=1 --")
 (def empty-key "checkout.note")
 (def unknown-key "checkout.dynamic")
+(def int64-exact-above-double 9007199254740993)
+(def int64-min -9223372036854775808)
 (def int64-max 9223372036854775807)
 (def timestamp-base 1700000000000000000)
 
@@ -135,8 +138,12 @@
       (export! typed-exporter
                [(span 1 {malicious-key int64-max empty-key ""})
                 (span 2 {malicious-key "not-an-int"})
-                (span 3 {})])
-      (export! legacy-exporter [(span 4 {malicious-key "legacy"})])
+                (span 3 {})
+                (span 5 {malicious-key int64-exact-above-double})
+                (span 7 {malicious-key int64-min})])
+      (export! legacy-exporter
+               [(span 4 {malicious-key "legacy"})
+                (span 6 {malicious-key 7})])
       (let [actual
             (sort-by (juxt :attribute-key :typed-status :value)
                      (explorer/typed-span-values
@@ -149,9 +156,16 @@
                (sort-by
                 (juxt :attribute-key :typed-status :value)
                 [{:attribute-key malicious-key :count 1 :signal :spans
+                  :source :generic-fallback :typed-status 0 :value "7"}
+                 {:attribute-key malicious-key :count 1 :signal :spans
                   :source :generic-fallback :typed-status 0 :value "legacy"}
                  {:attribute-key malicious-key :count 1 :signal :spans
                   :source :typed :typed-status 3 :value (str int64-max)}
+                 {:attribute-key malicious-key :count 1 :signal :spans
+                  :source :typed :typed-status 3 :value (str int64-min)}
+                 {:attribute-key malicious-key :count 1 :signal :spans
+                  :source :typed :typed-status 3
+                  :value (str int64-exact-above-double)}
                  {:attribute-key malicious-key :count 1 :signal :spans
                   :source :generic-fallback :typed-status 4
                   :value "not-an-int"}
@@ -161,6 +175,67 @@
         (check "status-1 absent rows are not published"
                false
                (boolean (some #(= 1 (:typed-status %)) actual))))
+
+      (let [base-request
+            {:signal :spans :attribute-key malicious-key
+             :group-by [] :aggregates [:count :min :max]
+             :start-unix-nano timestamp-base
+             :end-unix-nano (+ timestamp-base 1000)
+             :limit 20}
+            valid-only
+            (explorer/typed-span-int64-aggregates
+             connection descriptor-set
+             (assoc base-request :predicate {:gte 0}))
+            exact-range
+            (explorer/typed-span-int64-aggregates
+             connection descriptor-set
+             (assoc base-request
+                    :predicate {:gte int64-exact-above-double
+                                :lt (inc int64-exact-above-double)}))
+            maximum
+            (explorer/typed-span-int64-aggregates
+             connection descriptor-set
+             (assoc base-request :predicate {:gte int64-max}))
+            minimum
+            (explorer/typed-span-int64-aggregates
+             connection descriptor-set
+             (assoc base-request :predicate {:lt (inc int64-min)}))
+            empty-range
+            (explorer/typed-span-int64-aggregates
+             connection descriptor-set
+             (assoc base-request :predicate {:gte 1 :lt 2}))
+            query-var
+            (ns-resolve 'otel.exporter.chdb.explorer
+                        'typed-span-int64-aggregate-query)
+            original-query @query-var
+            status-stripped
+            (with-redefs-fn
+              {query-var
+               (fn [request]
+                 (str/replace (original-query request)
+                              #"  AND `as_[^`]+` = 3\n" ""))}
+              #(explorer/typed-span-int64-aggregates
+                connection descriptor-set
+                (assoc base-request :predicate {:gte 0})))]
+        (check "status-3 guard excludes numeric fallback and invalid defaults"
+               [{:count 2 :min int64-exact-above-double :max int64-max
+                 :source :typed :typed-status 3}]
+               (mapv #(select-keys % [:count :min :max :source :typed-status])
+                     valid-only))
+        (check "typed Int64 range remains exact above double precision"
+               [[[1 int64-exact-above-double int64-exact-above-double]] true]
+               [(mapv (juxt :count :min :max) exact-range)
+                (> int64-exact-above-double 9007199254740992)])
+        (check "one-sided predicate retains the signed Int64 maximum"
+               [[1 int64-max int64-max]]
+               (mapv (juxt :count :min :max) maximum))
+        (check "one-sided predicate retains the signed Int64 minimum"
+               [[1 int64-min int64-min]]
+               (mapv (juxt :count :min :max) minimum))
+        (check "empty typed numeric range returns no synthetic aggregate row"
+               [] empty-range)
+        (check "removing the status guard admits non-valid physical defaults"
+               false (= valid-only status-stripped)))
 
       (let [source (canonical-equivalence-span)
             trace-id (get-in source [:span-context :trace-id])

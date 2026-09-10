@@ -18,8 +18,10 @@ registry-owned additive columns, re-observe the table, and publish descriptors
 only after the active generation is persisted. Ambiguous writes are proved by
 canonical reread and interrupted preparing records remain recoverable.
 The returned process-local descriptor capability can enable typed span columns
-on the existing exporter and bounded explorer queries while retaining its
-generic `SpanAttributes` map. See
+on the existing exporter, bounded value distributions, and exact Int64 range
+aggregates while retaining its generic `SpanAttributes` map. Numeric aggregate
+queries use only status-valid typed values and never reinterpret fallback text.
+See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
 example, including the fail-closed v1-to-v2 manifest migration boundary.
 

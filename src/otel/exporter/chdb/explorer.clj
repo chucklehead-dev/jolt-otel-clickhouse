@@ -32,11 +32,29 @@
 
 (def ^:private typed-span-request-keys
   #{:end-unix-nano :keys :limit :max-text-length :signal :start-unix-nano})
+(def ^:private typed-int64-aggregate-request-keys
+  #{:aggregates :attribute-key :end-unix-nano :group-by :limit
+    :max-text-length :predicate :signal :start-unix-nano})
 (def ^:private safe-typed-column
   (re-pattern
    (str "a[sv]_" (attribute-identity/target-code
                    attribute-identity/span-attribute-target)
         "_[a-z0-9_]+_[0-9a-f]{16}")))
+
+(def ^:private int64-min -9223372036854775808)
+(def ^:private int64-max 9223372036854775807)
+(def ^:private typed-int64-predicate-keys #{:gte :lt})
+(def ^:private typed-int64-aggregate-order [:count :min :max :avg])
+(def ^:private typed-int64-group-order [:service-name])
+(def ^:private typed-int64-groups
+  {:service-name {:expression "ServiceName" :alias "servicename"
+                  :result-key :servicename :output-key :service-name}})
+
+(def max-typed-int64-scan-rows 100000)
+(def max-typed-int64-scan-bytes 67108864)
+(def max-typed-int64-result-bytes 1048576)
+(def max-typed-int64-memory-bytes 134217728)
+(def max-typed-int64-query-seconds 5)
 
 (def max-counter-source-points
   "Largest raw cumulative-counter snapshot set accepted by one request."
@@ -142,6 +160,15 @@
    :aggregates {:gauge scalar-aggregate-order
                 :sum scalar-aggregate-order
                 :histogram histogram-aggregate-order}})
+
+(defn supported-typed-span-int64-aggregates
+  "Return the closed recipe vocabulary for typed-span-int64-aggregates."
+  []
+  {:aggregates typed-int64-aggregate-order
+   :group-by typed-int64-group-order
+   :predicate-keys [:gte :lt]
+   :signals [:spans]
+   :types [:int64]})
 
 (defn supported-cumulative-counter-series
   "Return the closed choices accepted by cumulative-counter-series. The
@@ -364,6 +391,97 @@
                {:parameter parameter :value value
                 :supported allowed}))))
   values)
+
+(defn- int64? [value]
+  (and (integer? value) (<= int64-min value int64-max)))
+
+(defn- validate-typed-int64-predicate! [predicate]
+  (when-not (and (map? predicate)
+                 (seq predicate)
+                 (every? typed-int64-predicate-keys (keys predicate))
+                 (every? int64? (vals predicate)))
+    (fail! ::invalid-typed-int64-predicate
+           "typed Int64 predicate must contain bounded :gte or :lt values"
+           {:predicate predicate :supported-keys [:gte :lt]}))
+  (when (and (contains? predicate :gte)
+             (contains? predicate :lt)
+             (not (< (:gte predicate) (:lt predicate))))
+    (fail! ::invalid-typed-int64-predicate
+           "typed Int64 predicate must describe a non-empty half-open range"
+           {:predicate predicate}))
+  predicate)
+
+(defn- validate-typed-int64-aggregate-request!
+  [connection descriptor-set options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed Int64 aggregates require the installed target connection"
+           {:connection connection}))
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "typed Int64 aggregate request must be a map" {:request options}))
+  (when-let [unknown
+             (seq (remove typed-int64-aggregate-request-keys (keys options)))]
+    (fail! ::unsupported-request-key
+           "typed Int64 aggregate request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (when-not (= :spans (:signal options))
+    (fail! ::unsupported-typed-signal
+           "typed Int64 aggregates support spans only"
+           {:signal (:signal options) :supported-signals [:spans]}))
+  (let [attribute-key (:attribute-key options)
+        group-by (get options :group-by [])
+        aggregates (get options :aggregates [:count])
+        predicate (validate-typed-int64-predicate! (:predicate options))
+        fields (attribute-projection/confirmed-span-fields
+                descriptor-set connection)
+        field (first (filter #(= attribute-key (:key %)) fields))
+        start (validate-instant! :start-unix-nano
+                                 (:start-unix-nano options))
+        end (validate-instant! :end-unix-nano (:end-unix-nano options))]
+    (when-not (and (string? attribute-key)
+                   (<= 1 (count attribute-key) max-text-length)
+                   (not (str/blank? attribute-key)))
+      (fail! ::invalid-typed-key
+             "typed Int64 aggregate key must be a bounded nonblank string"
+             {:maximum max-text-length}))
+    (when-not field
+      (fail! ::unknown-typed-key
+             "typed Int64 aggregate key is not approved by this capability"
+             {:key attribute-key :approved-keys (mapv :key fields)}))
+    (when-not (= :int64 (:type field))
+      (fail! ::unsupported-typed-aggregate-type
+             "typed numeric aggregates require an approved Int64 field"
+             {:key attribute-key :type (:type field)
+              :supported-types [:int64]}))
+    (validate-closed-vector! :group-by group-by typed-int64-group-order
+                             (count typed-int64-group-order))
+    (when (empty? aggregates)
+      (fail! ::invalid-series-vector
+             "typed Int64 aggregates must select at least one aggregate"
+             {:parameter :aggregates :value aggregates}))
+    (validate-closed-vector! :aggregates aggregates
+                             typed-int64-aggregate-order
+                             (count typed-int64-aggregate-order))
+    (when-not (< start end)
+      (fail! ::invalid-time-window
+             "typed Int64 aggregate window must be non-empty"
+             {:start-unix-nano start :end-unix-nano end}))
+    (when (> (- end start) max-time-range-nanos)
+      (fail! ::time-range-too-large
+             "typed Int64 aggregate window exceeds the 24 hour hard cap"
+             {:actual (- end start) :maximum max-time-range-nanos}))
+    {:aggregates aggregates
+     :field field
+     :group-by group-by
+     :limit (validate-positive-cap! :limit (:limit options) max-result-limit)
+     :predicate predicate
+     :start start
+     :end end
+     :text-length
+     (validate-positive-cap! :max-text-length
+                             (get options :max-text-length default-text-length)
+                             max-text-length)}))
 
 (defn- metric-aggregate-map [metric-kind]
   (if (= :histogram metric-kind)
@@ -1382,6 +1500,139 @@
                 :typed-status typedstatus :value value})
              rows)))
         fields)))))
+
+(defn- typed-int64-aggregate-expression [value-column aggregate]
+  (case aggregate
+    :count "count() AS count"
+    :min (str "min(" value-column ") AS min")
+    :max (str "max(" value-column ") AS max")
+    :avg (str "avg(" value-column ") AS avg")))
+
+(defn- typed-span-int64-aggregate-query
+  [{:keys [aggregates field group-by predicate]}]
+  (let [value-column (checked-typed-column
+                      (get-in field [:physical :value-column]))
+        status-column (checked-typed-column
+                       (get-in field [:physical :status-column]))
+        expected-target attribute-identity/span-attribute-target
+        group-selects
+        (mapv (fn [group]
+                (let [{:keys [expression alias]} (get typed-int64-groups group)]
+                  (str "leftUTF8(toString(" expression "), ?) AS " alias)))
+              group-by)
+        aggregate-selects
+        (mapv #(typed-int64-aggregate-expression value-column %) aggregates)
+        selects (concat group-selects aggregate-selects)
+        group-aliases (mapv (comp :alias typed-int64-groups) group-by)]
+    (when-not (= expected-target (attribute-identity/target-of field))
+      (fail! ::invalid-typed-column
+             "typed Int64 capability contains an invalid table target"
+             {:target (select-keys field [:signal :table :location])}))
+    (when (= value-column status-column)
+      (fail! ::invalid-typed-column
+             "typed Int64 value and status columns must be distinct" {}))
+    (str "SELECT " (str/join ",\n       " selects) "\n"
+         "FROM " (:table field) "\n"
+         "WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
+         "  AND toUnixTimestamp64Nano(Timestamp) < ?\n"
+         "  AND " status-column " = 3\n"
+         (when (contains? predicate :gte)
+           (str "  AND " value-column " >= ?\n"))
+         (when (contains? predicate :lt)
+           (str "  AND " value-column " < ?\n"))
+         (when (seq group-aliases)
+           (str "GROUP BY " (str/join ", " group-aliases) "\n"))
+         "HAVING count() > 0\n"
+         (when (seq group-aliases)
+           (str "ORDER BY count() DESC, "
+                (str/join " ASC, " group-aliases) " ASC\n"))
+         "LIMIT ?\n"
+         "SETTINGS max_result_bytes = " max-typed-int64-result-bytes
+         ", max_rows_to_read = " max-typed-int64-scan-rows
+         ", max_bytes_to_read = " max-typed-int64-scan-bytes
+         ", max_memory_usage = " max-typed-int64-memory-bytes
+         ", max_execution_time = " max-typed-int64-query-seconds
+         ", max_threads = 1")))
+
+(defn- typed-span-int64-aggregate-params
+  [{:keys [end group-by limit predicate start text-length]}]
+  (vec
+   (concat (repeat (count group-by) text-length)
+           [start end]
+           (when (contains? predicate :gte) [(:gte predicate)])
+           (when (contains? predicate :lt) [(:lt predicate)])
+           [limit])))
+
+(defn- typed-span-int64-aggregate-row!
+  [{:keys [aggregates field group-by text-length]} row]
+  (let [group-result-keys
+        (mapv (comp :result-key typed-int64-groups) group-by)
+        expected-keys (set (concat group-result-keys aggregates))]
+    (when-not (and (map? row) (= expected-keys (set (keys row))))
+      (fail! ::invalid-typed-result
+             "typed Int64 aggregate row has an invalid closed shape"
+             {:expected-keys (vec (sort-by str expected-keys))}))
+    (doseq [group group-by]
+      (let [{:keys [result-key]} (get typed-int64-groups group)
+            value (get row result-key)]
+        (when-not (and (string? value) (<= (count value) text-length))
+          (fail! ::invalid-typed-result
+                 "typed Int64 aggregate group value is invalid"
+                 {:group group}))))
+    (doseq [aggregate aggregates]
+      (let [value (get row aggregate)]
+        (when-not
+         (case aggregate
+           :count (and (integer? value) (not (neg? value)))
+           (:min :max) (int64? value)
+           :avg (finite-number? value))
+          (fail! ::invalid-typed-result
+                 "typed Int64 aggregate value is invalid"
+                 {:aggregate aggregate}))))
+    (merge
+     {:attribute-key (:key field)
+      :field-id (:id field)
+      :manifest-version (get-in field [:identity :version])
+      :signal :spans
+      :source :typed
+      :typed-status 3}
+     (into {}
+           (map (fn [group]
+                  (let [{:keys [result-key output-key]}
+                        (get typed-int64-groups group)]
+                    [output-key (get row result-key)])))
+           group-by)
+     (into {}
+           (map (fn [aggregate]
+                  [aggregate
+                   (if (= :avg aggregate)
+                     (double (get row aggregate))
+                     (get row aggregate))]))
+           aggregates))))
+
+(defn typed-span-int64-aggregates
+  "Return bounded numeric aggregates for one installer-approved Int64 span key.
+
+  Only status-3 typed values participate. Historical, absent, present-empty,
+  and invalid rows are never parsed from the generic string map. The optional
+  group is closed to :service-name, predicates are exact Int64 :gte/:lt bounds,
+  and aggregate choices are :count, :min, :max, and :avg. All request numbers
+  are JDBC parameters; the table and physical columns come from the confirmed
+  descriptor capability."
+  [connection descriptor-set options]
+  (let [{:keys [limit] :as request}
+        (validate-typed-int64-aggregate-request!
+         connection descriptor-set options)
+        sqlvec (into [(typed-span-int64-aggregate-query request)]
+                     (typed-span-int64-aggregate-params request))]
+    (context/with-instrumentation-suppressed
+      (let [rows (jdbc/fetch connection sqlvec {:max-rows limit})]
+        (when-not (and (vector? rows) (<= (count rows) limit))
+          (fail! ::invalid-typed-result
+                 "typed Int64 aggregate result exceeds its request bound"
+                 {:actual (when (vector? rows) (count rows))
+                  :maximum limit}))
+        (mapv #(typed-span-int64-aggregate-row! request %) rows)))))
 
 (defn metric-series
   "Return one bounded aggregate series for an exact metric name.
