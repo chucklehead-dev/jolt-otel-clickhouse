@@ -209,6 +209,13 @@
            #(compile*
              (repeat 4097
                      (reviewed :advice "advice/empty.edn" []))))))
+  (check "exactly 4096 fragments compile"
+         [[] []]
+         (let [compiled
+               (compile*
+                (repeat 4096
+                        (reviewed :advice "advice/empty.edn" [])))]
+           [(:fields compiled) (:diagnostics compiled)]))
   (let [entry {:location :span-attributes :key "shared" :type :string}]
     (check "more than 65536 total entries are rejected before compilation"
            :otel.exporter.chdb.attribute-manifest/too-many-entries
@@ -218,7 +225,16 @@
                [(reviewed :advice "advice/first.edn"
                           (vec (repeat 32768 entry)))
                 (reviewed :advice "advice/second.edn"
-                          (vec (repeat 32769 entry)))])))))
+                          (vec (repeat 32769 entry)))]))))
+    (check "exactly 65536 total entries compile"
+           [1 "shared" [:advice]]
+           (let [compiled
+                 (compile*
+                  [(reviewed :advice "advice/maximum.edn"
+                             (vec (repeat 65536 entry)))])]
+             [(count (:fields compiled))
+              (get-in compiled [:fields 0 :key])
+              (mapv :authority (get-in compiled [:fields 0 :provenance]))])))
   (let [max-binding-id (str "b" (apply str (repeat 127 "x")))
         max-key (apply str (repeat 256 "k"))
         compiled
