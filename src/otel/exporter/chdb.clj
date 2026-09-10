@@ -3,6 +3,7 @@
   (:require [db.jdbc]
             [clojure.data.json :as json]
             [clojure.string :as str]
+            [jdbc.chdb :as chdb]
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
             [otel.context :as context]
@@ -139,11 +140,7 @@
 ;; is the string ClickHouse stores. Its exact bytes are data at rest that queries
 ;; and existing rows depend on, so those stay on clojure.data.json.
 (def ^:private log-insert
-  (fast-json/compile-insert
-   (str "insert into otel_logs ("
-        (str/join ", " schema/clickstack-log-insert-columns)
-        ")")
-   schema/clickstack-log-insert-columns))
+  (fast-json/compile-insert "otel_logs" schema/clickstack-log-insert-columns))
 
 (def ^:private trace-insert
   ;; span-row carries the migration-v1 EventsJSON/LinksJSON columns alongside
@@ -152,7 +149,7 @@
   ;; insert list plus those two. write-payload fails closed if span-row and this
   ;; list ever disagree.
   (fast-json/compile-insert
-   "insert into otel_traces"
+   "otel_traces"
    (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"])))
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
@@ -174,14 +171,21 @@
   It reproduces single-threaded with no data appended, on 26.7.0 and on
   26.7.2-rc.2 alike, and is suppressed unless stderr is a terminal. The query
   API does not share that path."
-  [connection compiled rows]
-  (let [statement (fast-json/write-payload compiled rows)]
-    (when (oversize? statement)
+  [connection compiled rows durable?]
+  (let [payload (fast-json/write-rows compiled rows)]
+    (when (oversize? payload)
       (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                      {:bytes (alength (.getBytes statement "UTF-8"))
+                      {:bytes (alength (.getBytes payload "UTF-8"))
                        :limit max-insert-bytes})))
     (context/with-instrumentation-suppressed
-      (jdbc/execute! connection statement))))
+      (if durable?
+        ;; The Durable writer serializes statements into its WAL and replays
+        ;; them, so it takes the whole statement. Only the ordinary driver can
+        ;; be handed the rows as data.
+        (jdbc/execute! connection (str (:statement compiled)
+                                       " FORMAT JSONEachRow\n" payload))
+        (chdb/insert-rows! connection (:table compiled) (:columns compiled)
+                           payload)))))
 
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
@@ -197,9 +201,7 @@
   (into {}
         (map (fn [[kind columns]]
                [kind (fast-json/compile-insert
-                      (str "insert into " (get schema/metric-table-names kind)
-                           " (" (str/join ", " columns) ")")
-                      columns)]))
+                      (get schema/metric-table-names kind) columns)]))
         schema/clickstack-metric-insert-columns))
 
 (defn- metric-rows [resource collected]
@@ -241,12 +243,13 @@
                    "Max" (double (or (:max point) 0.0))
                    "AggregationTemporality" (temporality-code (:temporality metric))}))))
 
-(defn- export-metric-type! [connection type rows]
+(defn- export-metric-type! [connection type rows durable?]
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
       (insert-json-rows! connection
                          (get metric-inserts type)
-                         (map #(dissoc % :_type) selected)))))
+                         (map #(dissoc % :_type) selected)
+                         durable?))))
 
 (defn- signal-open? [owned? expected-signals state signal]
   (cond
@@ -332,7 +335,8 @@
       false
       (try
         (when (seq spans)
-          (insert-json-rows! connection trace-insert (map span-row spans)))
+          (insert-json-rows! connection trace-insert (map span-row spans)
+                             (boolean (:durable? @state))))
         (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -364,7 +368,8 @@
                                         [(assoc metric :data-points [point])]}]))]]
                       (assoc row :_type (:type metric))))]
           (doseq [type [:gauge :sum :histogram]]
-            (export-metric-type! connection type rows))
+            (export-metric-type! connection type rows
+                                 (boolean (:durable? @state))))
           (complete-batch! connection state (boolean (seq rows))))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -378,7 +383,8 @@
       false
       (try
         (when (seq records)
-          (insert-json-rows! connection log-insert (map log-row records)))
+          (insert-json-rows! connection log-insert (map log-row records)
+                             (boolean (:durable? @state))))
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)

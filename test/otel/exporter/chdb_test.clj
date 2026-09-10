@@ -414,8 +414,17 @@
               :events []
               :links []
               :status {:code :unset}}]
+    ;; An ordinary connection now reaches the driver through
+    ;; jdbc.chdb/insert-rows!, which takes the rows as data rather than as SQL;
+    ;; a Durable connection still goes through jdbc/execute! because its WAL
+    ;; records statements. Both seams are stubbed so this asserts suppression
+    ;; on whichever path the exporter takes.
     (with-redefs [jdbc/execute!
                   (fn [_ _]
+                    (swap! seen conj (context/instrumentation-suppressed?))
+                    {:count 1})
+                  jdbc.chdb/insert-rows!
+                  (fn [& _]
                     (swap! seen conj (context/instrumentation-suppressed?))
                     {:count 1})]
       (check "span export succeeds under suppression"

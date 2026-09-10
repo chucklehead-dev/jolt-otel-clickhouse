@@ -124,14 +124,23 @@
 
 (defn compile-insert
   "Precompute everything about a signal's insert that does not vary per row: the
-  statement prefix, and one constant fragment per column carrying its separator,
-  quoted name and colon. `columns` must be exactly the key set the row producer
-  emits; `write-payload` checks that on the first row of every batch."
-  [statement columns]
+  table, its column order, and one constant fragment per column carrying that
+  column's separator, quoted name and colon.
+
+  `columns` must be exactly the key set the row producer emits; `write-rows`
+  checks that on the first row of every batch. The driver builds the statement
+  from the table and column names itself, so nothing here is SQL."
+  [table columns]
   (let [cols (vec columns)]
-    {:statement (str statement " FORMAT JSONEachRow\n")
+    {:table table
      :columns cols
      :column-set (set cols)
+     ;; A Durable connection records statements in its WAL and replays them on
+     ;; recovery, so that path needs the statement rather than table+columns.
+     ;; Built once here; the ordinary path never uses it.
+     :statement (str "insert into " table
+                     (when (seq cols)
+                       (str " (" (clojure.string/join ", " cols) ")")))
      ;; {"Timestamp": for the first column, ,"TraceId": for the rest.
      :fragments (vec (map-indexed
                       (fn [i c] (str (if (zero? i) "{\"" ",\"") c "\":"))
@@ -149,8 +158,10 @@
                      :missing (vec (remove (set (keys row)) (:columns compiled)))
                      :unexpected (vec (remove (:column-set compiled) (keys row)))}))))
 
-(defn write-payload
-  "The complete `INSERT ... FORMAT JSONEachRow\\n<rows>` statement."
+(defn write-rows
+  "The JSONEachRow body: one JSON object per row and nothing else. The INSERT
+  statement is the driver's to build, so that it never has to read this data
+  as SQL."
   ^String [compiled rows]
   (when-let [row (first rows)]
     (check-row! compiled row))
@@ -158,7 +169,6 @@
         columns (:columns compiled)
         n (count columns)
         sb (StringBuilder. (max 256 (* (count rows) 1024)))]
-    (.append sb ^String (:statement compiled))
     (doseq [row rows]
       (loop [i 0]
         (when (< i n)

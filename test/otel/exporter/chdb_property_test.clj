@@ -5,6 +5,7 @@
             [hegel.generator :as g]
             [hegel.stateful :as hs]
             [hegel.trace :as ht]
+            [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.explorer :as explorer]
@@ -417,6 +418,13 @@
                    (do
                      (record-event! journal {:kind :insert :phase :throw})
                      (throw failure))
+                   (record-event! journal {:kind :insert :phase :return})))
+               jdbc.chdb/insert-rows!
+               (fn [& _]
+                 (if (= :insert-failure outcome)
+                   (do
+                     (record-event! journal {:kind :insert :phase :throw})
+                     (throw failure))
                    (record-event! journal {:kind :insert :phase :return})))]
               (invoke-batch! exporter signal non-empty?))]
          (record-event! journal {:kind :export :phase :return :result result})
@@ -465,6 +473,10 @@
                    :last-error nil}))]
        (let [result
              (with-redefs [jdbc/execute!
+                           (fn [& _]
+                             (swap! implementation-actions conj "insertSuccess")
+                             {:count 1})
+                           jdbc.chdb/insert-rows!
                            (fn [& _]
                              (swap! implementation-actions conj "insertSuccess")
                              {:count 1})]
@@ -534,28 +546,27 @@
                      {} false #{:spans :logs :metrics}
                      (atom {:closed-signals #{}
                             :connection-closed? false :last-error nil}))]
-       (with-redefs [jdbc/execute!
-                     (fn [_ statement]
-                       (let [[table payload]
-                             (str/split
-                              statement #" FORMAT JSONEachRow\n" 2)]
-                         (swap! captured conj
-                                [table (vec (remove str/blank?
-                                                    (str/split-lines payload)))])
-                         0))]
+       (with-redefs [jdbc.chdb/insert-rows!
+                     (fn [_ table columns rows & _]
+                       (swap! captured conj
+                              [table (vec columns)
+                               (vec (remove str/blank? (str/split-lines rows)))])
+                       0)]
          (check! (export/export-spans! exporter [span])
                  "otel-exporter/span-export" "span export failed" {})
          (check! (sdk-logs/export-logs! exporter [log])
                  "otel-exporter/log-export" "log export failed" {}))
-       (let [[[span-table span-lines] [log-table log-lines]] @captured
+       (let [[[span-table _span-columns span-lines]
+              [log-table log-columns log-lines]] @captured
              span-wire (json/read-str (first span-lines))
              log-wire (json/read-str (first log-lines))]
-         (check! (= "insert into otel_traces" span-table)
+         (check! (= "otel_traces" span-table)
                  "otel-exporter/table-routing" "signal used the wrong table" {})
-         (check! (= (str "insert into otel_logs ("
-                         (str/join ", " schema/clickstack-log-insert-columns)
-                         ")")
-                    log-table)
+         (check! (= "otel_logs" log-table)
+                 "otel-exporter/table-routing" "signal used the wrong table" {})
+         ;; The driver builds the statement from these, so the column order is
+         ;; asserted directly rather than through the SQL it used to produce.
+         (check! (= (vec schema/clickstack-log-insert-columns) log-columns)
                  "otel-exporter/log-insert-columns"
                  "log insert columns differ from the pinned collector order" {})
          (check! (= [trace-id span-id trace-id span-id]
@@ -642,15 +653,14 @@
                      {} false #{:metrics}
                      (atom {:closed-signals #{}
                             :connection-closed? false :last-error nil}))]
-       (with-redefs [jdbc/execute!
-                     (fn [_ statement]
-                       (let [[query payload]
-                             (str/split statement #" FORMAT JSONEachRow\n" 2)]
-                         (swap! captured conj
-                                [query (json/read-str
-                                        (first (remove str/blank?
-                                                       (str/split-lines payload))))])
-                         0))]
+       (with-redefs [jdbc.chdb/insert-rows!
+                     (fn [_ table columns rows & _]
+                       (swap! captured conj
+                              [[table (vec columns)]
+                               (json/read-str
+                                (first (remove str/blank?
+                                               (str/split-lines rows))))])
+                       0)]
          (check! (export/export-metrics! exporter resource collected)
                  "otel-exporter/metric-export" "metric export failed" {}))
        (let [rows (into {} (map (fn [[query row]]
@@ -661,10 +671,8 @@
                  "supported metric kinds did not each produce one row" {})
          (doseq [[kind metric-name] [[:gauge "g"] [:sum "s"] [:histogram "h"]]]
            (let [[query row] (get rows metric-name)]
-             (check! (= (str "insert into " (get schema/metric-table-names kind)
-                             " (" (str/join ", "
-                                             (get schema/clickstack-metric-insert-columns kind))
-                             ")")
+             (check! (= [(get schema/metric-table-names kind)
+                         (vec (get schema/clickstack-metric-insert-columns kind))]
                         query)
                      "otel-exporter/metric-insert-columns"
                      "metric insert columns differ from the pinned collector" {:kind kind})
