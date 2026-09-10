@@ -146,7 +146,9 @@ explicit functions because they relate more than one value or state.
   (registry-store/commit-record! object-backend snapshot preparing))
 (def first-pass (registry/reconcile preparing
                                     (:generation preparing)
-                                    observed-column-types))
+                                    [{:signal :spans
+                                      :table "otel_traces"
+                                      :columns observed-column-types}]))
 
 ;; Persist :preparing before executing these through a separately authorized
 ;; installer. Reload after each commit; do not reuse an old snapshot.
@@ -168,7 +170,11 @@ it reports an ambiguous commit; the caller must reload and reconcile instead of
 blindly replaying an old snapshot. A definite competing write reports a stale
 snapshot.
 
-The lifecycle is `:preparing`, `:active`, `:failed`, or `:retired`. Missing
+The lifecycle is `:preparing`, `:active`, `:failed`, or `:retired`. Physical
+evidence is a bounded vector of closed `:signal`, `:table`, and `:columns`
+envelopes. Signal/table pairs come from `attribute-identity`; unknown,
+cross-signal, duplicate, or missing target-table envelopes fail before planning.
+Only columns in the record's exact table participate in reconciliation. Missing
 columns keep the record preparing and produce sorted, idempotent operation data.
 An existing column with the wrong type moves it to failed without producing an
 operation. A corrected schema can retry through preparing and becomes active
@@ -209,9 +215,13 @@ at the application boundary:
  {:target connection
   :execute-ddl! #(jdbc/execute! connection %)
   :observe-columns
-  #(into {}
-         (map (juxt :name :type))
-         (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})
+  #(vector
+    {:signal :spans
+     :table "otel_traces"
+     :columns
+     (into {}
+           (map (juxt :name :type))
+           (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})})
 ```
 
 The installer renders only `ALTER TABLE otel_traces ADD COLUMN IF NOT EXISTS`
@@ -238,18 +248,26 @@ An optional `:emit!` effect receives the closed event sequence
 `:ddl-applied`, and `:descriptors-published`. These events contain no clock or
 telemetry payload and make deterministic crash-cut traces available to Hegel or
 a model adapter. `:record-persisted` is emitted only after the catalog CAS is
-confirmed; `:descriptors-published` is emitted afterward.
+confirmed; `:descriptors-published` is emitted afterward. Every
+`:schema-observed` event carries the canonical record-owned `:signal` and
+`:table`; invalid or wrong-table evidence is rejected before that event.
 
-A future state-machine model should use catalog value/ETag, physical column
-map, installer phase, intended record generation, and published descriptor
-generation as state. Its actions are load, prepare-CAS, observe, plan,
+A future state-machine model should use catalog value/ETag, a table-qualified
+physical column map, installer phase, intended record generation, and published
+descriptor generation as state. Its actions are load, prepare-CAS, observe, plan,
 execute-one, observe-after-DDL, final-CAS, publish, competing-CAS, and crash. The
 central safety invariant is: every publication is justified by a confirmed
 persisted active generation and all of its columns matched a fresh observation
 in that attempt. A fair-retry liveness property should show convergence after
 any crash when additive execution eventually succeeds and no competing writer
-wins forever. Running that model is intentionally deferred while the existing
-exhaustive Durable check owns machine resources.
+wins forever. This slice deliberately defers changing or running that joined
+model to the subsequent model/trace issue. Its executable bridge assumption is
+now explicit: one install attempt has exactly one manifest-owned target, a
+schema-observed event names that target, and reconciliation requires a fresh
+envelope for that exact table. Pure reconciliation tests exercise all five
+closed tables; only the span target reaches DDL. Running the future model is
+intentionally deferred while the existing exhaustive Durable check owns machine
+resources.
 
 Each value column reserves a `UInt8` status column with stable meanings for
 historical-untyped, absent, present-empty, valid, and invalid. The current span

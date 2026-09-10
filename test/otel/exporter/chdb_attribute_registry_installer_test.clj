@@ -33,7 +33,8 @@
         runtime
         {:target target
          :emit! #(swap! events conj %)
-         :observe-columns #(into {} @schema)
+         :observe-columns #(vector {:columns (into {} @schema)
+                                    :signal :spans :table "otel_traces"})
          :execute-ddl!
          (fn [statement]
            (swap! statements conj statement)
@@ -68,11 +69,17 @@
            (mapv #(installer/render-add-column
                    (registry/prepare manifest) %)
                  (:operations
-                  (registry/reconcile (registry/prepare manifest) 1 {})))
+                  (registry/reconcile
+                   (registry/prepare manifest) 1
+                   [{:columns {} :signal :spans :table "otel_traces"}])))
            @statements)
     (check "descriptor publication follows fresh observation and active CAS"
            [:schema-observed :record-persisted :descriptors-published]
            (mapv :event (take-last 3 @events)))
+    (check "schema trace evidence carries the record-owned signal and table"
+           #{[:spans "otel_traces"]}
+           (set (map (juxt :signal :table)
+                     (filter #(= :schema-observed (:event %)) @events))))
 
     (reset! events [])
     (let [loaded-active-crash
@@ -201,6 +208,28 @@
                [(:status failed) (get-in failed [:record :failure :code])
                 @statements (:descriptors failed) (published? @events)])))
 
+    (let [{:keys [backend columns events manifest runtime schema statements]}
+          (fixture)
+          exact-columns (into {} (map (juxt :name :type)) columns)
+          _ (reset! schema exact-columns)
+          wrong-table-runtime
+          (assoc runtime :observe-columns
+                 #(vector {:columns exact-columns
+                           :signal :logs :table "otel_logs"}))
+          failure
+          (thrown-data
+           #(installer/install-approved! backend manifest wrong-table-runtime))]
+      (check "wrong-table mutant preserves the formerly sufficient column map"
+             exact-columns
+             (get-in ((:observe-columns wrong-table-runtime)) [0 :columns]))
+      (check "wrong-table evidence fails before DDL or descriptor publication"
+             [:otel.exporter.chdb.attribute-registry/missing-table-observation
+              [] false false :preparing]
+             [(:type failure) @statements
+              (boolean (some #(= :schema-observed (:event %)) @events))
+              (published? @events)
+              (get-in (store/load! backend) [:catalog :records 0 :state])]))
+
     (let [{:keys [backend events manifest runtime schema]} (fixture)
           competitor-ran? (atom false)
           runtime
@@ -227,7 +256,12 @@
               (published? @events) (count @schema)]))
 
     (let [record (registry/prepare manifest)
-          operation (first (:operations (registry/reconcile record 1 {})))
+          operation (first
+                     (:operations
+                      (registry/reconcile
+                       record 1
+                       [{:columns {} :signal :spans
+                         :table "otel_traces"}])))
           injected (assoc operation :name "owned` String; DROP TABLE x --")]
       (check "renderer rejects caller-controlled identifier or SQL text"
              :otel.exporter.chdb.attribute-registry-installer/invalid-operation

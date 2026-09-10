@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Qualify typed physical-schema evidence by canonical signal and table. Closed,
+  bounded observations reject missing, duplicate, unknown, cross-signal, and
+  wrong-table evidence before DDL or descriptor publication, while physical
+  installation remains limited to span attributes on `otel_traces`.
 - Version typed attribute manifests and reviewed fragments to v2 with an
   explicit closed signal, physical table, and location identity. Checksums,
   field IDs, registry planning, projection, and queries share that identity;

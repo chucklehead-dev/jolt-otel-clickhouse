@@ -23,7 +23,6 @@
               :valid 3
               :invalid 4))
 
-(def ^:private span-table (:table identity/span-attribute-target))
 (def ^:private status-column-type "UInt8")
 (def ^:private max-generation 9223372036854775807)
 (def ^:private max-catalog-records 4096)
@@ -41,7 +40,7 @@
     [:actual-type [:string {:max max-observed-type-length}]]
     [:expected-type :string]
     [:name [:string {:max 63}]]
-    [:table [:= span-table]]]))
+    [:table (into [:enum] (keys identity/table-signals))]]))
 
 (def failure-schema
   "Closed persisted registry failure envelope."
@@ -63,12 +62,22 @@
     [:schema [:= registry-schema]]
     [:state (into [:enum] state-values)]]))
 
-(def observed-schema
-  "Bounded physical `column-name -> ClickHouse-type` observation."
+(def observed-table-schema
+  "One closed, table-qualified physical-schema observation."
   (m/schema
-   [:map-of {:max max-observed-columns}
-    [:string {:max max-observed-name-length}]
-    [:string {:max max-observed-type-length}]]))
+   [:map {:closed true}
+    [:columns
+     [:map-of {:max max-observed-columns}
+      [:string {:max max-observed-name-length}]
+      [:string {:max max-observed-type-length}]]]
+    [:signal (into [:enum] (sort identity/signals))]
+    [:table (into [:enum] (keys identity/table-signals))]]))
+
+(def observed-schema
+  "Bounded physical-schema evidence, qualified by closed signal/table identity."
+  (m/schema
+   [:vector {:min 1 :max (count identity/table-signals)}
+    observed-table-schema]))
 
 (def add-column-operation-schema
   "Closed data operation emitted to a future separately-authorized installer."
@@ -78,7 +87,7 @@
     [:name [:string {:max 63}]]
     [:op [:= :add-column]]
     [:role [:enum :value :status]]
-    [:table [:= span-table]]
+    [:table (into [:enum] (keys identity/table-signals))]
     [:type :string]]))
 
 (defn- fail! [message type data]
@@ -283,12 +292,61 @@
            ::stale-generation {:expected expected-generation
                                :actual (:generation record)})))
 
-(defn- validate-observed! [observed]
+(defn validate-observed-schema
+  "Validate table-qualified physical evidence and reject ambiguous identities."
+  [observed]
   (when-not (m/validate observed-schema observed)
-    (fail! "observed physical schema must be a bounded string map"
+    (fail! "observed physical schema must use the bounded table envelope"
            ::invalid-observed-schema
            {:explain (m/explain observed-schema observed)}))
-  observed)
+  (doseq [{:keys [signal table]} observed]
+    (when-not (= signal (get identity/table-signals table))
+      (fail! "observed table has a cross-signal identity"
+             ::invalid-observed-schema {:signal signal :table table})))
+  (when-let [duplicate
+             (->> observed
+                  (group-by :table)
+                  (filter (fn [[_ entries]] (> (count entries) 1)))
+                  ffirst)]
+    (fail! "observed physical schema contains an ambiguous duplicate table"
+           ::invalid-observed-schema {:table duplicate}))
+  (vec (sort-by :table observed)))
+
+(defn observed-columns-for
+  "Return columns observed for exactly one canonical table, or fail closed."
+  [observed table]
+  (when-not (contains? identity/table-signals table)
+    (fail! "registry requested an unknown physical table"
+           ::invalid-observed-table {:table table}))
+  (or (:columns (first (filter #(= table (:table %))
+                               (validate-observed-schema observed))))
+      (fail! "physical observation omitted the registry record table"
+             ::missing-table-observation {:table table})))
+
+(defn reconcile-physical-columns
+  "Compare trusted expected descriptors with their exact observed table.
+
+  This pure, storage-independent seam supports every closed table identity;
+  registry preparation remains the separate span-only physical allowlist."
+  [columns observed]
+  (let [tables (set (map :table columns))]
+    (when-not (and (seq columns)
+                   (= 1 (count tables))
+                   (contains? identity/table-signals (first tables)))
+      (fail! "physical columns must resolve to exactly one canonical table"
+             ::invalid-expected-columns {:tables (vec (sort tables))}))
+    (let [observed (observed-columns-for observed (first tables))]
+      (sorted-map
+       :conflicts
+       (canonical-conflicts
+        (keep (fn [{:keys [table name type]}]
+                (when-let [actual (get observed name)]
+                  (when (not= type actual)
+                    (sorted-map :actual-type actual
+                                :expected-type type
+                                :name name :table table))))
+              columns))
+       :missing (filterv #(not (contains? observed (:name %))) columns)))))
 
 (defn- transition [record state failure]
   (if (and (= state (:state record)) (= failure (:failure record)))
@@ -297,7 +355,7 @@
            :generation (next-generation (:generation record)))))
 
 (defn reconcile
-  "Compare a persisted record with an observed `column-name -> type` map.
+  "Compare a persisted record with bounded table-qualified schema evidence.
 
   Missing columns produce sorted idempotent `:add-column` data operations.
   Exact presence activates the record. A wrong existing type fails closed."
@@ -307,18 +365,9 @@
     (when (= :retired (:state record))
       (fail! "retired registry records cannot be reconciled"
              ::invalid-transition {:state :retired}))
-    (let [observed (validate-observed! observed)
-          columns (expected-columns record)
-          conflicts
-          (canonical-conflicts
-           (keep (fn [{:keys [table name type]}]
-                   (when-let [actual (get observed name)]
-                     (when (not= type actual)
-                       (sorted-map :actual-type actual
-                                   :expected-type type
-                                   :name name :table table))))
-                 columns))
-          missing (filterv #(not (contains? observed (:name %))) columns)]
+    (let [columns (expected-columns record)
+          {:keys [conflicts missing]}
+          (reconcile-physical-columns columns observed)]
       (cond
         (seq conflicts)
         (sorted-map

@@ -4,6 +4,7 @@
   Invocation is the deployment authorization boundary. Telemetry never enters
   this API. Database execution and observation are explicit injected effects."
   (:require [malli.core :as m]
+            [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-store :as store]))
 
@@ -77,9 +78,23 @@
       (fail! "committed catalog omitted the requested registry record"
              ::missing-record {:record-key key})))
 
-(defn- observe! [observe-columns emit! phase]
-  (let [observed (observe-columns)]
-    (emit-event! emit! {:event :schema-observed :phase phase})
+(defn- record-target [record]
+  (let [targets (->> (get-in record [:manifest :fields])
+                     (map identity/target-of)
+                     distinct
+                     vec)]
+    (when-not (= 1 (count targets))
+      (fail! "typed attribute record must name exactly one canonical target"
+             ::invalid-record-target {:targets targets}))
+    (first targets)))
+
+(defn- observe! [observe-columns emit! phase target]
+  (let [observed (registry/validate-observed-schema (observe-columns))]
+    ;; Prove that this attempt observed the record-owned table before emitting
+    ;; evidence that a model adapter may consume.
+    (registry/observed-columns-for observed (:table target))
+    (emit-event! emit! {:event :schema-observed :phase phase
+                        :signal (:signal target) :table (:table target)})
     observed))
 
 (defn descriptor-set-data
@@ -117,6 +132,7 @@
                               :revision (get-in loaded [:catalog :revision])})
         prepared (registry/prepare approved-manifest
                                    (get-in loaded [:catalog :records]))
+        record-target (record-target prepared)
         key (registry/record-key prepared)
         prepared-write (store/commit-record! object-backend loaded prepared)
         prepared-snapshot (:snapshot prepared-write)
@@ -124,7 +140,7 @@
         _ (emit-event! emit! {:event :record-persisted
                               :generation (:generation persisted)
                               :state (:state persisted)})
-        before (observe! observe-columns emit! :before-ddl)
+        before (observe! observe-columns emit! :before-ddl record-target)
         initial-plan (registry/reconcile persisted (:generation persisted) before)
         operations (:operations initial-plan)
         planned-record (:record initial-plan)
@@ -148,7 +164,7 @@
     (let [final-plan (if (seq operations)
                        (registry/reconcile
                         authority-record (:generation authority-record)
-                        (observe! observe-columns emit! :after-ddl))
+                        (observe! observe-columns emit! :after-ddl record-target))
                        initial-plan)
           final-record (:record final-plan)
           final-write (store/commit-record! object-backend authority-snapshot

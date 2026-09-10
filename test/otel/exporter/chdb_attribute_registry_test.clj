@@ -2,6 +2,7 @@
   (:require [clojure.set :as set]
             [clojure.string :as str]
             [malli.core :as m]
+            [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry :as registry]))
 
@@ -29,15 +30,26 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
-(defn- observed-schema [record]
-  (into {} (map (juxt :name :type) (registry/expected-columns record))))
+(defn- table-observation [table columns]
+  [{:columns columns
+    :signal (get identity/table-signals table)
+    :table table}])
+
+(defn- observed-schema
+  ([record]
+   (observed-schema record
+                    (into {} (map (juxt :name :type)
+                                  (registry/expected-columns record)))))
+  ([record columns]
+   (table-observation (:table (first (registry/expected-columns record)))
+                      columns)))
 
 (defn run [check]
   (println "typed attribute registry lifecycle")
   (let [compiled (compile-app "checkout" 1)
         prepared (registry/prepare compiled)
         columns (registry/expected-columns prepared)
-        empty-plan (registry/reconcile prepared 1 {})
+        empty-plan (registry/reconcile prepared 1 (observed-schema prepared {}))
         operations (:operations empty-plan)
         exact (observed-schema prepared)
         active-result (registry/reconcile prepared 1 exact)
@@ -51,6 +63,13 @@
            [(m/validate registry/registry-record-schema prepared)
             (m/validate registry/registry-record-schema
                         (assoc prepared :telemetry-state :active))])
+    (check "public observed schema requires table-qualified closed evidence"
+           [true false false]
+           [(m/validate registry/observed-schema exact)
+            (m/validate registry/observed-schema
+                        (get-in exact [0 :columns]))
+            (m/validate registry/observed-schema
+                        [(assoc (first exact) :telemetry-table "otel_logs")])])
     (check "span fields reserve value and status columns"
            [4 #{:value :status} #{"otel_traces"} #{"Int64" "Bool" "UInt8"}]
            [(count columns) (set (map :role columns)) (set (map :table columns))
@@ -75,7 +94,9 @@
              (mapv :name
                    (:operations
                     (registry/reconcile
-                     prepared 1 {(:name first-column) (:type first-column)})))))
+                     prepared 1
+                     (observed-schema
+                      prepared {(:name first-column) (:type first-column)}))))))
     (check "preparing stays stable while the same work remains"
            prepared (:record empty-plan))
     (check "exact physical presence activates once"
@@ -93,9 +114,10 @@
 
     (let [column (first columns)
           conflict-result
-          (registry/reconcile prepared 1 {(:name column) "Float64"})
+          (registry/reconcile
+           prepared 1 (observed-schema prepared {(:name column) "Float64"}))
           failed (:record conflict-result)
-          retry-result (registry/reconcile failed 2 {})
+          retry-result (registry/reconcile failed 2 (observed-schema failed {}))
           retrying (:record retry-result)
           recovered
           (:record (registry/reconcile retrying 3 (observed-schema retrying)))]
@@ -109,7 +131,8 @@
       (let [status-column (first (filter #(= :status (:role %)) columns))
             status-conflict
             (registry/reconcile
-             prepared 1 {(:name status-column) "String"})]
+             prepared 1
+             (observed-schema prepared {(:name status-column) "String"}))]
         (check "wrong status-column type also fails closed without operations"
                [:failed [] "UInt8"]
                [(get-in status-conflict [:record :state])
@@ -135,13 +158,57 @@
              [:active 4 nil]
              [(:state recovered) (:generation recovered) (:failure recovered)]))
     (let [[first-column second-column] columns
-          forward (array-map (:name first-column) "WrongA"
-                             (:name second-column) "WrongB")
-          reverse-order (array-map (:name second-column) "WrongB"
-                                   (:name first-column) "WrongA")]
+          forward (observed-schema
+                   prepared (array-map (:name first-column) "WrongA"
+                                       (:name second-column) "WrongB"))
+          reverse-order (observed-schema
+                         prepared (array-map (:name second-column) "WrongB"
+                                             (:name first-column) "WrongA"))]
       (check "schema observation order cannot change a failed transition"
              (registry/reconcile prepared 1 forward)
              (registry/reconcile prepared 1 reverse-order)))
+
+    (doseq [[table signal] identity/table-signals]
+      (let [columns {"shared_column" "String"}
+            evidence [{:columns columns :signal signal :table table}]
+            expected [{:name "shared_column" :table table :type "String"}]]
+        (check (str "pure reconciliation is exact for " table)
+               {:conflicts [] :missing []}
+               (registry/reconcile-physical-columns expected evidence))))
+    (let [same-column "shared_column"
+          all-tables
+          (mapv (fn [[table signal]]
+                  {:columns {same-column table} :signal signal :table table})
+                identity/table-signals)]
+      (check "same-name evidence from all five tables remains table-qualified"
+             (into (sorted-map)
+                   (map (fn [[table _]]
+                          [table {same-column table}]))
+                   identity/table-signals)
+             (into (sorted-map)
+                   (map (fn [[table _]]
+                          [table (registry/observed-columns-for all-tables table)]))
+                   identity/table-signals)))
+
+    (doseq [[label evidence expected-type]
+            [["missing target table" []
+              :otel.exporter.chdb.attribute-registry/invalid-observed-schema]
+             ["duplicate target table"
+              (into exact exact)
+              :otel.exporter.chdb.attribute-registry/invalid-observed-schema]
+             ["unknown observed table"
+              [{:columns {} :signal :spans :table "otel_unknown"}]
+              :otel.exporter.chdb.attribute-registry/invalid-observed-schema]
+             ["cross-signal observed table"
+              [(assoc (first exact) :signal :logs)]
+              :otel.exporter.chdb.attribute-registry/invalid-observed-schema]
+             ["wrong-table evidence"
+              [{:columns (get-in exact [0 :columns])
+                :signal :logs :table "otel_logs"}]
+              :otel.exporter.chdb.attribute-registry/missing-table-observation]]]
+      (check (str label " fails closed before planning")
+             expected-type
+             (:type (thrown-data #(registry/reconcile prepared 1 evidence)))))
 
     (check "stale generation cannot transition registry state"
            :otel.exporter.chdb.attribute-registry/stale-generation
