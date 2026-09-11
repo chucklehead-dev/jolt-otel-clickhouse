@@ -46,6 +46,38 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
+(deftype WriteCountingBackend [delegate writes]
+  backend/ObjectBackend
+  (get-bytes [_ key] (backend/get-bytes delegate key))
+  (get-with-etag [_ key] (backend/get-with-etag delegate key))
+  (put-file-if-absent! [_ key path]
+    (swap! writes inc)
+    (backend/put-file-if-absent! delegate key path))
+  (put-bytes-if-absent! [_ key bytes]
+    (swap! writes inc)
+    (backend/put-bytes-if-absent! delegate key bytes))
+  (replace-if-match! [_ key bytes etag]
+    (swap! writes inc)
+    (backend/replace-if-match! delegate key bytes etag))
+  (download-to-file! [_ key path]
+    (backend/download-to-file! delegate key path)))
+
+(defn- selector [manifest]
+  (select-keys manifest [:dataset-id :application-id :lineage :version]))
+
+(declare fixture)
+
+(defn- acquisition-fixture []
+  (let [{:keys [backend columns manifest runtime schema] :as fixture} (fixture)
+        _ (installer/install-approved! backend manifest runtime)
+        exact-columns (into {} (map (juxt :name :type)) columns)
+        _ (reset! schema exact-columns)
+        writes (atom 0)]
+    (assoc fixture
+           :exact-columns exact-columns
+           :reader-backend (WriteCountingBackend. backend writes)
+           :writes writes)))
+
 (defn- fixture []
   (let [manifest (compiled)
         record (registry/prepare manifest)
@@ -323,4 +355,196 @@
              (:type
               (thrown-data
                #(installer/install-approved! backend manifest
-                                              (dissoc runtime :target))))))))
+                                              (dissoc runtime :target))))))
+
+    (let [{:keys [events exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          fresh-target (atom :fresh-reader-target)
+          _ (reset! events [])
+          acquired
+          (installer/acquire-active!
+           reader-backend (selector manifest)
+           {:target fresh-target
+            :emit! #(swap! events conj %)
+            :observe-columns
+            #(vector {:columns exact-columns :signal :spans
+                      :table "otel_traces"})})
+          data (installer/descriptor-set-data (:descriptor-set acquired))]
+      (check "restart reader acquires a freshly confirmed active capability"
+             [:active 2 true 0 {:generation 2 :revision 2}
+              [:snapshot-loaded :schema-observed :snapshot-confirmed
+               :descriptors-published]]
+             [(:status acquired) (get-in acquired [:record :generation])
+              (identical? fresh-target (:target data)) @writes
+              (select-keys
+               (first (filter #(= :snapshot-confirmed (:event %)) @events))
+               [:generation :revision])
+              (mapv :event @events)]))
+
+    (let [{:keys [exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          ddl-calls (atom 0)
+          observes (atom 0)
+          failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :forbidden-ddl-reader)
+              :execute-ddl! (fn [_] (swap! ddl-calls inc))
+              :observe-columns
+              (fn []
+                (swap! observes inc)
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))]
+      (check "read-only acquisition rejects a DDL effect before any effect"
+             [:otel.exporter.chdb.attribute-registry-installer/invalid-runtime
+             0 0 0]
+             [(:type failure) @ddl-calls @observes @writes]))
+
+    (let [{:keys [exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          observes (atom 0)
+          missing
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (assoc (selector manifest)
+                                   :application-id "not-installed")
+             {:target (atom :unselected-reader)
+              :observe-columns
+              (fn []
+                (swap! observes inc)
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))
+          malformed
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (assoc (selector manifest) :state :active)
+             {:target (atom :malformed-selector-reader)
+              :observe-columns
+              (fn []
+                (swap! observes inc)
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))]
+      (check "operator selector is closed and must name a persisted record"
+             [:otel.exporter.chdb.attribute-registry-installer/missing-record
+              :otel.exporter.chdb.attribute-registry-installer/invalid-selector
+              0 0]
+             [(:type missing) (:type malformed) @observes @writes]))
+
+    (let [{:keys [backend exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          snapshot (store/load! backend)
+          record (first (get-in snapshot [:catalog :records]))
+          retired (registry/retire record (:generation record))
+          _ (store/commit-record! backend snapshot retired)
+          observes (atom 0)
+          failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :inactive-reader)
+              :observe-columns
+              (fn []
+                (swap! observes inc)
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))]
+      (check "persisted non-active state is rejected before physical access"
+             [:otel.exporter.chdb.attribute-registry-installer/inactive-record
+              0 0]
+             [(:type failure) @observes @writes]))
+
+    (let [{:keys [columns exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          column (first columns)
+          missing-failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :drift-reader)
+              :observe-columns
+              #(vector {:columns (dissoc exact-columns (:name column))
+                        :signal :spans
+                        :table "otel_traces"})}))
+          conflict-failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :type-drift-reader)
+              :observe-columns
+              #(vector {:columns (assoc exact-columns (:name column)
+                                        "WrongType")
+                        :signal :spans
+                        :table "otel_traces"})}))]
+      (check "physical drift cannot reacquire persisted active descriptors"
+             [[:otel.exporter.chdb.attribute-registry-installer/physical-drift
+               1 0]
+              [:otel.exporter.chdb.attribute-registry-installer/physical-drift
+               0 1]
+              0]
+             [[(:type missing-failure) (count (:missing missing-failure))
+               (count (:conflicts missing-failure))]
+              [(:type conflict-failure) (count (:missing conflict-failure))
+               (count (:conflicts conflict-failure))]
+              @writes]))
+
+    (let [{:keys [exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :wrong-table-reader)
+              :observe-columns
+              #(vector {:columns exact-columns :signal :logs
+                        :table "otel_logs"})}))]
+      (check "wrong-table evidence cannot reacquire descriptors"
+             [:otel.exporter.chdb.attribute-registry/missing-table-observation 0]
+             [(:type failure) @writes]))
+
+    (let [{:keys [backend exact-columns manifest reader-backend writes]}
+          (acquisition-fixture)
+          changed? (atom false)
+          failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :stale-generation-reader)
+              :observe-columns
+              (fn []
+                (when (compare-and-set! changed? false true)
+                  (let [snapshot (store/load! backend)
+                        record (first (get-in snapshot [:catalog :records]))]
+                    (store/commit-record!
+                     backend snapshot
+                     (registry/retire record (:generation record)))))
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))]
+      (check "generation change during observation fences descriptor acquisition"
+             [:otel.exporter.chdb.attribute-registry-installer/stale-generation
+              2 3 0]
+             [(:type failure) (:expected failure) (:actual failure) @writes]))
+
+    (let [{:keys [backend exact-columns events manifest reader-backend writes]}
+          (acquisition-fixture)
+          changed? (atom false)
+          _ (reset! events [])
+          failure
+          (thrown-data
+           #(installer/acquire-active!
+             reader-backend (selector manifest)
+             {:target (atom :stale-catalog-reader)
+              :emit! #(swap! events conj %)
+              :observe-columns
+              (fn []
+                (when (compare-and-set! changed? false true)
+                  (let [snapshot (store/load! backend)
+                        other (registry/prepare
+                               (compiled "billing")
+                               (get-in snapshot [:catalog :records]))]
+                    (store/commit-record! backend snapshot other)))
+                [{:columns exact-columns :signal :spans
+                  :table "otel_traces"}])}))]
+      (check "unrelated catalog change during observation fences publication"
+             [:otel.exporter.chdb.attribute-registry-installer/stale-snapshot
+              false 0]
+             [(:type failure) (published? @events) @writes]))))

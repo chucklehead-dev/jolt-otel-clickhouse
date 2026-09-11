@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add read-only acquisition of persisted active typed-span descriptors for
+  restart and fresh-process consumers. Acquisition freshly verifies the exact
+  physical table, then fences publication on unchanged catalog ETag, revision,
+  and record generation without accepting a DDL effect or writing the catalog.
 - Add a bounded capability- and connection-confirmed Int64 span aggregate
   query. Exact half-open range predicates and closed count/min/max/average
   recipes read only status-valid physical values; numeric-looking historical or

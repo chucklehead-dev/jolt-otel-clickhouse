@@ -11,13 +11,19 @@
 (def event-values
   "Closed event vocabulary for crash-cut traces and future model validation."
   [:snapshot-loaded :record-persisted :schema-observed
-   :ddl-started :ddl-applied :descriptors-published])
+   :ddl-started :ddl-applied :snapshot-confirmed :descriptors-published])
 
 (def ^:private event-set (set event-values))
 (def ^:private safe-identifier-pattern #"[a-z][a-z0-9_]{0,62}")
 (def ^:private allowed-value-types #{"String" "Bool" "Int64"})
 (def ^:private allowed-options
   #{:emit! :execute-ddl! :observe-columns :target})
+(def ^:private allowed-acquisition-options
+  #{:emit! :observe-columns :target})
+(def ^:private selector-keys
+  #{:dataset-id :application-id :lineage :version})
+(def ^:private selector-value-pattern #"[A-Za-z0-9][A-Za-z0-9._-]{0,127}")
+(def ^:private max-version 9223372036854775807)
 (def ^:private descriptor-issuer (atom nil))
 
 (deftype ^:private ConfirmedActiveDescriptorSet
@@ -38,6 +44,29 @@
            ::invalid-runtime {}))
   {:emit! emit! :execute-ddl! execute-ddl!
    :observe-columns observe-columns :target target})
+
+(defn- checked-acquisition-runtime
+  [{:keys [emit! observe-columns target]
+    :or {emit! (fn [_] nil)}
+    :as runtime}]
+  (when-not (and (map? runtime)
+                 (every? allowed-acquisition-options (keys runtime))
+                 (some? target) (fn? emit!) (fn? observe-columns))
+    (fail! "typed descriptor acquisition requires a closed read-only runtime"
+           ::invalid-runtime {}))
+  {:emit! emit! :observe-columns observe-columns :target target})
+
+(defn- checked-selector
+  [{:keys [dataset-id application-id lineage version] :as selector}]
+  (when-not (and (map? selector)
+                 (= selector-keys (set (keys selector)))
+                 (every? #(and (string? %)
+                               (boolean (re-matches selector-value-pattern %)))
+                         [dataset-id application-id lineage])
+                 (integer? version) (pos? version) (<= version max-version))
+    (fail! "typed descriptor acquisition requires a closed deployment selector"
+           ::invalid-selector {:selector selector}))
+  [dataset-id application-id lineage version])
 
 (defn- emit-event! [emit! event]
   (when-not (contains? event-set (:event event))
@@ -98,11 +127,11 @@
     observed))
 
 (defn descriptor-set-data
-  "Return immutable installation evidence from an active descriptor capability.
+  "Return immutable confirmation evidence from an active descriptor capability.
 
-  Capabilities are minted only by `install-approved!` after fresh observation
-  and confirmed active persistence. Bare records or descriptor vectors are not
-  accepted."
+  Capabilities are minted only by `install-approved!` or `acquire-active!`
+  after fresh observation and confirmed active persistence. Bare records or
+  descriptor vectors are not accepted."
   [descriptor-set]
   (when-not (and (instance? ConfirmedActiveDescriptorSet descriptor-set)
                  (identical? descriptor-issuer (.-issuer descriptor-set)))
@@ -116,6 +145,69 @@
 (defn- result [status record snapshot descriptors descriptor-set]
   (sorted-map :descriptor-set descriptor-set :descriptors descriptors
               :record record :snapshot snapshot :status status))
+
+(defn- confirmed-result [target record snapshot]
+  (let [descriptors (registry/expected-columns record)]
+    (result :active record snapshot descriptors
+            (ConfirmedActiveDescriptorSet.
+             descriptor-issuer target record snapshot descriptors))))
+
+(defn acquire-active!
+  "Acquire one persisted active descriptor set without mutation or DDL.
+
+  `selector` is the operator-selected deployment identity. The selected record
+  must already be active, its exact table must freshly match every expected
+  column, and a post-observation reread must retain the same opaque ETag,
+  catalog revision, record generation, and record value. Only then is a
+  connection-bound descriptor capability returned."
+  [object-backend selector runtime]
+  (let [{:keys [emit! observe-columns target]}
+        (checked-acquisition-runtime runtime)
+        key (checked-selector selector)
+        loaded (store/load! object-backend)
+        _ (emit-event! emit! {:event :snapshot-loaded :phase :before-schema
+                              :revision (get-in loaded [:catalog :revision])})
+        record (snapshot-record loaded key)]
+    (when-not (= :active (:state record))
+      (fail! "typed descriptor acquisition requires a persisted active record"
+             ::inactive-record {:record-key key :state (:state record)
+                                :generation (:generation record)}))
+    (let [owned-target (record-target record)
+          observed (observe! observe-columns emit! :acquire owned-target)
+          {:keys [conflicts missing]}
+          (registry/reconcile-physical-columns
+           (registry/expected-columns record) observed)]
+      (when (or (seq conflicts) (seq missing))
+        (fail! "persisted active typed columns drifted from physical schema"
+               ::physical-drift {:record-key key :conflicts conflicts
+                                 :missing missing}))
+      (let [confirmed (store/load! object-backend)
+            latest-record (snapshot-record confirmed key)
+            loaded-revision (get-in loaded [:catalog :revision])
+            confirmed-revision (get-in confirmed [:catalog :revision])]
+        (cond
+          (not= (:generation record) (:generation latest-record))
+          (fail! "typed descriptor generation changed during acquisition"
+                 ::stale-generation
+                 {:record-key key :expected (:generation record)
+                  :actual (:generation latest-record)})
+
+          (or (not= (:etag loaded) (:etag confirmed))
+              (not= loaded-revision confirmed-revision)
+              (not= record latest-record))
+          (fail! "typed descriptor catalog changed during acquisition"
+                 ::stale-snapshot
+                 {:record-key key :expected-revision loaded-revision
+                  :actual-revision confirmed-revision})
+
+          :else
+          (do
+            (emit-event! emit! {:event :snapshot-confirmed
+                                :generation (:generation latest-record)
+                                :revision confirmed-revision})
+            (emit-event! emit! {:event :descriptors-published
+                                :generation (:generation latest-record)})
+            (confirmed-result target latest-record confirmed)))))))
 
 (defn install-approved!
   "Install one deployment-approved span manifest through crash-safe cuts.
@@ -176,11 +268,8 @@
                           :generation (:generation persisted-final)
                           :state state})
       (if (= :active state)
-        (let [descriptors (registry/expected-columns persisted-final)]
+        (do
           (emit-event! emit! {:event :descriptors-published
                               :generation (:generation persisted-final)})
-          (result :active persisted-final final-snapshot descriptors
-                  (ConfirmedActiveDescriptorSet.
-                   descriptor-issuer target persisted-final final-snapshot
-                   descriptors)))
+          (confirmed-result target persisted-final final-snapshot))
         (result state persisted-final final-snapshot [] nil)))))
