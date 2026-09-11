@@ -99,10 +99,12 @@
           :signals [:spans]
           :types [:int64]}
          (explorer/supported-typed-span-int64-aggregates))
-  (check "explorer publishes closed Boolean and string filter operators"
-         {:operators {:boolean [:eq] :string [:eq :prefix :contains]}
+  (check "explorer publishes closed Boolean, Int64, and string filter operators"
+         {:operators {:boolean [:eq]
+                      :int64 [:eq :gte :lt]
+                      :string [:eq :prefix :contains]}
           :signals [:spans]
-          :types [:boolean :string]}
+          :types [:boolean :int64 :string]}
          (explorer/supported-typed-span-filters))
   (let [{:keys [descriptor-set descriptors installation target]} (installed)
         calls (atom [])]
@@ -294,10 +296,125 @@
                     (not (str/includes? (first match-call) malicious-string-key))
                     (not (str/includes? (first match-call) malicious-string-value))))))
 
+    (let [filter-calls (atom [])
+          exact-int64 9007199254740993]
+      (with-redefs
+        [jdbc/fetch
+         (fn [connection sqlvec options]
+           (swap! filter-calls conj
+                  [connection sqlvec options
+                   (context/instrumentation-suppressed?)])
+           (if (str/includes? (first sqlvec) "countIf(typedstatus = 3)")
+             [coverage-row]
+             [{:attributevalue exact-int64
+               :parentspanid "0000000000000000"
+               :servicename "checkout"
+               :spanid "1111111111111111"
+               :spanname "checkout.remaining"
+               :timestampunixnano 1700000000000000001
+               :traceid "11111111111111111111111111111111"
+               :typedstatus 3}]))]
+        (let [result
+              (explorer/typed-span-filtered-traces
+               target descriptor-set
+               (filter-request malicious-key :gte exact-int64))
+              equal-result
+              (explorer/typed-span-filtered-traces
+               target descriptor-set
+               (filter-request malicious-key :eq exact-int64))
+              upper-result
+              (explorer/typed-span-filtered-traces
+               target descriptor-set
+               (filter-request malicious-key :lt exact-int64))]
+          (check "typed Int64 filters preserve values above double precision"
+                 [exact-int64 :int64 3
+                  {:operator :gte :value exact-int64}]
+                 [(get-in result [:matches 0 :attribute-value])
+                  (:attribute-type result)
+                  (get-in result [:matches 0 :typed-status])
+                  (:filter result)])
+          (check "typed Int64 filters retain honest availability coverage"
+                 {:absent 3
+                  :historical-untyped-fallback 5
+                  :historical-untyped-unavailable 6
+                  :invalid 4 :present-empty 1 :total 21 :valid 2}
+                 (:coverage result))
+          (check "typed Int64 filters expose only the closed numeric grammar"
+                 [{:operator :gte :value exact-int64}
+                  {:operator :eq :value exact-int64}
+                  {:operator :lt :value exact-int64}]
+                 (mapv :filter [result equal-result upper-result]))))
+      (let [[_ _ _ coverage-suppressed?] (first @filter-calls)
+            [_ [sql & params] options match-suppressed?]
+            (second @filter-calls)
+            [_ [equal-sql & equal-params]] (nth @filter-calls 3)
+            [_ [upper-sql & upper-params]] (nth @filter-calls 5)]
+        (check "typed Int64 predicate and caller scalars remain parameters"
+               [42 42 1700000000000000000 1700000001000000000
+                exact-int64 7]
+               params)
+        (check "typed Int64 filter SQL is status-valid, bounded, and map-free"
+               true
+               (and coverage-suppressed? match-suppressed?
+                    (= {:max-rows 7} options)
+                    (str/includes? sql "FROM otel_traces")
+                    (str/includes? sql " >= ?")
+                    (str/includes? sql " = 3")
+                    (str/includes? sql "max_rows_to_read = 100000")
+                    (not (str/includes? sql "SpanAttributes"))
+                    (not (str/includes? sql malicious-key))))
+        (check "typed Int64 equality and upper bounds stay bound"
+               true
+               (and (str/includes? equal-sql " = ?")
+                    (str/includes? upper-sql " < ?")
+                    (= exact-int64 (nth equal-params 4))
+                    (= exact-int64 (nth upper-params 4))))))
+
+    (doseq [[row label]
+            [[{:attributevalue 7
+               :parentspanid "0000000000000000"
+               :servicename "checkout"
+               :spanid "1111111111111111"
+               :spanname "checkout.remaining"
+               :timestampunixnano 1700000000000000001
+               :traceid "11111111111111111111111111111111"
+               :typedstatus 0}
+              "historical Int64 fallback cannot become a typed match"]
+             [{:attributevalue 7.0
+               :parentspanid "0000000000000000"
+               :servicename "checkout"
+               :spanid "1111111111111111"
+               :spanname "checkout.remaining"
+               :timestampunixnano 1700000000000000001
+               :traceid "11111111111111111111111111111111"
+               :typedstatus 3}
+              "non-integral Int64 results fail closed"]]]
+      (with-redefs
+        [jdbc/fetch
+         (fn [_ sqlvec _]
+           (if (str/includes? (first sqlvec) "countIf(typedstatus = 3)")
+             [coverage-row]
+             [row]))]
+        (check label
+               :otel.exporter.chdb.explorer/invalid-typed-result
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-filtered-traces
+                   target descriptor-set
+                   (filter-request malicious-key :eq 7)))))))
+
     (let [queries (atom 0)
           invalid-filter-requests
-          [[(filter-request malicious-key :eq 1)
-            :otel.exporter.chdb.explorer/unsupported-typed-filter-type]
+          [[(filter-request malicious-key :prefix 1)
+            :otel.exporter.chdb.explorer/unsupported-typed-filter-operator]
+           [(filter-request malicious-key :eq 1.0)
+            :otel.exporter.chdb.explorer/invalid-typed-filter-value]
+           [(filter-request malicious-key :eq 9223372036854775808)
+            :otel.exporter.chdb.explorer/invalid-typed-filter-value]
+           [(filter-request malicious-key :lt -9223372036854775809)
+            :otel.exporter.chdb.explorer/invalid-typed-filter-value]
+           [(filter-request "unknown.key" :eq 1)
+            :otel.exporter.chdb.explorer/unknown-typed-key]
            [(filter-request "checkout.complete" :contains false)
             :otel.exporter.chdb.explorer/unsupported-typed-filter-operator]
            [(filter-request "checkout.complete" :eq "false")

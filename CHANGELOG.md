@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add exact signed-Int64 equality and lower/upper-bound span filters to the
+  capability-bound typed trace query. Numeric-looking historical or invalid
+  fallback text remains excluded, while the existing count/min/max/average
+  aggregate surface supplies the bounded numeric summaries used by viewers.
+
 - Add capability-bound Boolean and string filters for typed span attributes.
   Boolean equality and exact/prefix/contains string predicates use only bound
   values and status-valid physical columns. Results include bounded trace
