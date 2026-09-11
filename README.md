@@ -469,6 +469,14 @@ curl https://clickhouse.com/ | sh
 bench/segment-export/clickhouse-ingest.sh 60 50000
 ```
 
+A third script stands up a single-node ClickHouse Keeper and measures what
+replication costs per insert, and what `insert_deduplication_token` does and
+does not guarantee when a segment is delivered more than once:
+
+```sh
+bench/segment-export/replicated-dedup.sh 60 50000
+```
+
 Neither harness touches the repository; both write under `/tmp`. The recorded
 baseline, its limitations, and two corrections to earlier estimates are in
 [`docs/benchmarks/segment-export.md`](docs/benchmarks/segment-export.md). The

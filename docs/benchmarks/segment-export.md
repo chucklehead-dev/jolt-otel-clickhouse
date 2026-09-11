@@ -145,6 +145,83 @@ An edge writer should set `output_format_parquet_row_group_size` explicitly
 rather than inherit chDB's default. At the ~50,000-row segment size the knee
 analysis recommends this does not bite, but it would at larger segments.
 
+## ReplicatedMergeTree and deduplication
+
+Captured on the same host with a single-node ClickHouse Keeper, via
+`bench/segment-export/replicated-dedup.sh`. 60 segments of 50,000 rows.
+
+| engine | pattern | rows/s | ms/insert |
+| --- | --- | ---: | ---: |
+| MergeTree | 60 sequential | 225,197 | 222.0 |
+| MergeTree | 60 x 8-parallel | 458,520 | 109.0 |
+| ReplicatedMergeTree | 60 sequential | 214,554 | 233.0 |
+| ReplicatedMergeTree | 60 x 8-parallel | 457,711 | 109.2 |
+| Replicated + `insert_deduplication_token` | 60 x 8-parallel | 432,742 | 115.5 |
+
+**Replication costs about 5% sequentially and nothing measurable at 8-way
+concurrency** (233.0 vs 222.0 ms per insert serial; 109.2 vs 109.0 parallel).
+The Keeper round trip is real but overlaps, and the design already wants that
+concurrency. Adding the deduplication token costs a further ~6% (115.5 ms).
+Keeper handled roughly 33 transactions per insert.
+
+Replaying all 60 segments a second time through the token path took 4.98 s,
+wrote nothing, and left the row count identical.
+
+### What deduplication actually guarantees
+
+Each row is one experiment: rows before the duplicate delivery, then after.
+
+| # | scenario | before -> after | meaning |
+| --- | --- | --- | --- |
+| A | identical `INSERT..SELECT` twice, no token | 50,000 -> 100,000 | **content dedup does not cover `INSERT..SELECT`** |
+| A' | identical `INSERT..VALUES` twice, no token | 3 -> 3 | content dedup does cover `VALUES` |
+| B | same token, *different* segments | 50,000 -> 50,000 | the second segment is **silently dropped** |
+| C | different tokens, *identical* segment | 50,000 -> 100,000 | a token **replaces** content dedup |
+| D | retry after window eviction (`window=2`) | 100,000 -> 200,000 | a late retry slips through |
+| E | non-replicated MergeTree, defaults | 50,000 -> 100,000 | the token is **ignored entirely** |
+| F | non-replicated + `non_replicated_deduplication_window=100` | 50,000 -> 50,000 | token honoured, no Keeper needed |
+| G | 8 concurrent inserts, one token | 0 -> 50,000 | race-safe |
+
+Three of these change the design.
+
+**A is the important one.** Segment ingest is `INSERT INTO ... SELECT FROM
+s3(...)`, and ClickHouse's default content-hash deduplication does not apply to
+it — verified against A', where the same table deduplicates an identical
+`VALUES` insert. There is no implicit backstop: an explicit
+`insert_deduplication_token` is the only thing standing between at-least-once
+delivery and duplicated telemetry.
+
+**B and C together** mean the token must be a function of segment content and
+nothing else. A colliding token discards a real segment with no error; a
+spuriously differing token admits a duplicate. The existing
+`{generation}-{sequence}-{sha256}` object key has exactly the right property,
+and a key carrying a UUID or an upload timestamp would have exactly the wrong
+one.
+
+**F** means ReplicatedMergeTree is not strictly required. A single-node centre
+can set `non_replicated_deduplication_window` and get the same token semantics
+with no Keeper at all.
+
+### Deduplication window defaults
+
+Measured from `system.merge_tree_settings` on 26.9.1:
+
+| setting | default |
+| --- | ---: |
+| `replicated_deduplication_window` | 10,000 |
+| `replicated_deduplication_window_seconds` | 3,600 |
+| `replicated_deduplication_window_for_async_inserts` | 10,000 |
+| `replicated_deduplication_window_seconds_for_async_inserts` | 604,800 |
+| `non_replicated_deduplication_window` | 0 |
+
+Hashes are dropped when either bound is passed, so the **block count binds
+first at fleet scale**. A 1,000-node fleet sealing 50,000-row segments at 2,000
+spans/s produces about 40 inserts/s, against which 10,000 blocks is roughly 250
+seconds of history — not the hour the seconds bound suggests. Any redelivery
+later than about four minutes would land as a duplicate. The window has to be
+sized against the real retry horizon, and a ledger table remains the answer for
+anything beyond it.
+
 ## Capacity, derived
 
 At 2,000 spans/s per node and 40 B/row, using the measured figures above.
@@ -181,10 +258,9 @@ retry tractable.
 
 ## Not measured
 
-- `ReplicatedMergeTree`. Every centre-side number uses a non-replicated table.
-  Replication adds a Keeper round trip per insert, and
-  `insert_deduplication_token` — the deduplication mechanism the design
-  depends on — requires it. This is the most important open measurement.
+- A second replica. The replicated numbers above use a single replica against
+  a single-node Keeper, so they capture the Keeper round trip on the insert
+  path but not replication traffic, part fetches, or replica lag.
 - Real object storage. Both harnesses use local files; no S3 latency, no
   multipart upload, no `s3Cluster` fan-out.
 - Materialized views firing on insert at the centre.
@@ -198,6 +274,7 @@ jolt -M:segment-benchmark 100000 10000 512   # quick pass
 
 curl https://clickhouse.com/ | sh            # centre needs a clickhouse binary
 bench/segment-export/clickhouse-ingest.sh 60 50000
+bench/segment-export/replicated-dedup.sh 60 50000   # Keeper + replication + dedup
 ```
 
 Neither harness touches the repository; both write under `/tmp`.

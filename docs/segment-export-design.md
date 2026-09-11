@@ -176,12 +176,39 @@ At-least-once delivery plus retries means segments will be offered twice. Set
 `{generation}-{sequence}-{sha256}` — deterministic and content-addressed — a
 re-upload after a crash produces the identical key, and a re-insert is a no-op.
 Durable V1 solved this for its own purposes and the property transfers intact.
+Measured, replaying all 60 segments through this path wrote nothing and left
+the row count identical, including when eight duplicate deliveries of one
+segment raced each other.
 
-Two caveats. The token window is bounded (`replicated_deduplication_window`,
-~100 blocks or 7 days), so a long-tail retry can slip past it; back it with a
-small ledger table keyed by object key for the tail and for audit. And the
-token requires `ReplicatedMergeTree`, whose per-insert Keeper cost is
-**unmeasured** — see the open questions.
+Four things about it are sharper than they look, all measured in
+[`benchmarks/segment-export.md`](benchmarks/segment-export.md):
+
+**The token is mandatory, not a belt-and-braces addition.** ClickHouse's
+default content-hash deduplication does not cover `INSERT ... SELECT`, which is
+exactly the shape segment ingest uses — an identical segment inserted twice
+with no token produced 100,000 rows from 50,000. The same table deduplicates an
+identical `INSERT ... VALUES` correctly, so this is a property of the insert
+form, not of the table. There is no implicit backstop.
+
+**The token must be a function of segment content and nothing else.** A
+colliding token discards a real segment with no error, and a spuriously
+differing token admits a duplicate; both were reproduced. The
+`{generation}-{sequence}-{sha256}` key has the right property. A key carrying a
+UUID or an upload timestamp would have exactly the wrong one.
+
+**Size the window against the retry horizon.** `replicated_deduplication_window`
+defaults to 10,000 blocks and `replicated_deduplication_window_seconds` to
+3,600; hashes drop when either is passed, so the block count binds first at
+fleet scale. At ~40 inserts/s — 1,000 nodes sealing 50,000-row segments — 10,000
+blocks is about 250 seconds of history, so a redelivery more than roughly four
+minutes late lands as a duplicate. Raise the count deliberately, and keep the
+ledger table for anything beyond it.
+
+**Replication is optional for this.** A single-node centre can set
+`non_replicated_deduplication_window` and get identical token semantics with no
+Keeper. Where replication is wanted for its own sake, it costs about 5% per
+insert sequentially and nothing measurable at the 8-way concurrency this design
+already uses; the token adds a further ~6%.
 
 Never key segments by UUID or upload time. Determinism is what makes this work.
 
@@ -258,8 +285,9 @@ their own store on a PVC.
 
 ## Open questions
 
-1. **`ReplicatedMergeTree` insert cost.** Unmeasured, and the deduplication
-   design depends on it. Measure before committing.
+1. **A second replica.** The replicated measurements use one replica against a
+   single-node Keeper, so they cover the Keeper round trip on the insert path
+   but not replication traffic, part fetches, or replica lag.
 2. **`PARTITION BY toStartOfHour(Timestamp)` on `otel_traces`** — worth 1.5x,
    costs a physical migration against a compatibility boundary.
 3. **Real object storage.** All measurements use local files. No S3 latency, no
