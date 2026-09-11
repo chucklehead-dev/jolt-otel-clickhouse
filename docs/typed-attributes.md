@@ -233,10 +233,43 @@ logical `dataset-id`: field identities include that dataset, but physical
 column ownership is enforced across the whole catalog so a truncated-digest
 collision cannot hide behind two deployment labels.
 
-An installer must reconcile persisted records against the physical schema on
-every startup before exposing active descriptors to a query or export consumer.
-Loading a previously active record alone is not proof that an operator has not
-changed the table since the prior process exited.
+Every startup must reconcile or read-only-confirm persisted records against the
+physical schema before exposing active descriptors to a query or export
+consumer. Loading a previously active record alone is not proof that an
+operator has not changed the table since the prior process exited.
+
+When schema repair is not authorized, a restarted or read-only process can
+instead acquire a capability from an already active record. The operator names
+the exact persisted deployment identity; the acquisition path loads and
+validates that active record, freshly observes its record-owned table, and then
+rereads the catalog. It publishes only when the opaque ETag, catalog revision,
+record generation, and record value are unchanged across observation. The
+runtime deliberately has no DDL effect and acquisition never writes the
+catalog:
+
+```clojure
+(installer/acquire-active!
+ object-backend
+ {:dataset-id "telemetry-prod"
+  :application-id "checkout"
+  :lineage "checkout-v1"
+  :version 1}
+ {:target connection
+  :observe-columns
+  #(vector
+    {:signal :spans
+     :table "otel_traces"
+     :columns
+     (into {}
+           (map (juxt :name :type))
+           (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})})
+```
+
+The selector is closed operator configuration, not telemetry or a producer
+schema URL. Missing, inactive, retired, or physically drifted records fail
+closed. A concurrent generation change has a distinct stale-generation error;
+any other catalog change invalidates the optimistic snapshot and requires a
+fresh acquisition attempt.
 
 The crash-recovery sequence is deliberately small: persist `:preparing`, apply
 the returned idempotent data operations through a separately authorized DDL
@@ -290,10 +323,13 @@ older active or failed state.
 
 An optional `:emit!` effect receives the closed event sequence
 `:snapshot-loaded`, `:record-persisted`, `:schema-observed`, `:ddl-started`,
-`:ddl-applied`, and `:descriptors-published`. These events contain no clock or
-telemetry payload and make deterministic crash-cut traces available to Hegel or
-a model adapter. `:record-persisted` is emitted only after the catalog CAS is
-confirmed; `:descriptors-published` is emitted afterward. Every
+`:ddl-applied`, `:snapshot-confirmed`, and `:descriptors-published`. These
+events contain no clock or telemetry payload and make deterministic crash-cut
+traces available to Hegel or a model adapter. `:record-persisted` is emitted
+only after the catalog CAS is confirmed. Read-only acquisition emits
+`:snapshot-confirmed` only after its post-observation reread fences the ETag,
+revision, and generation; `:descriptors-published` follows either confirmation.
+Every
 `:schema-observed` event carries the canonical record-owned `:signal` and
 `:table`; invalid or wrong-table evidence is rejected before that event.
 
@@ -330,10 +366,10 @@ allowlist expands.
 
 ## Export confirmed typed span values
 
-An active installer result includes an opaque, process-local `:descriptor-set`.
-This is the only typed-schema input accepted by the exporter; a bare descriptor
-vector, loaded active record, manifest, or telemetry payload cannot substitute
-for installation confirmation.
+An active install or read-only acquisition result includes an opaque,
+process-local `:descriptor-set`. This is the only typed-schema input accepted
+by the exporter; a bare descriptor vector, loaded active record, manifest, or
+telemetry payload cannot substitute for current confirmation.
 
 ```clojure
 (def installation
