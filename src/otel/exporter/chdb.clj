@@ -7,6 +7,7 @@
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
             [otel.context :as context]
+            [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.json :as fast-json]
             [otel.exporter.chdb.schema :as schema]
             [otel.sdk.export :as export]
@@ -83,7 +84,7 @@
       (or (:observed-time-unix-nano record) 0)
       event-time)))
 
-(defn- span-row [span]
+(defn- span-row [span typed-projector]
   (let [context (:span-context span)
         scope (:scope span)
         resource (:resource span)
@@ -108,7 +109,10 @@
       "EventsJSON" (json/write-str events)
       "LinksJSON" (json/write-str links)}
      (event-columns events)
-     (link-columns links))))
+     (link-columns links)
+     (if typed-projector
+       (typed-projector (:attributes span))
+       {}))))
 
 (defn- log-row [record]
   (let [scope (:scope record)
@@ -142,15 +146,27 @@
 (def ^:private log-insert
   (fast-json/compile-insert "otel_logs" schema/clickstack-log-insert-columns))
 
-(def ^:private trace-insert
+(def ^:private base-trace-columns
   ;; span-row carries the migration-v1 EventsJSON/LinksJSON columns alongside
   ;; the v2 nested Events.*/Links.* ones. Both are real columns on otel_traces
   ;; and both have always been written, so the compiled spec is the schema's
-  ;; insert list plus those two. write-payload fails closed if span-row and this
+  ;; insert list plus those two. write-rows fails closed if span-row and this
   ;; list ever disagree.
+  (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"]))
+
+(defn- trace-insert-spec
+  "Compile the trace insert for this exporter's actual row shape.
+
+  A typed span projector merges installer-confirmed physical value/status
+  columns into every row, so the compiled spec has to carry them too: the
+  column set is fixed once the projector is built, but it is not knowable at
+  namespace load time."
+  [typed-columns]
   (fast-json/compile-insert
    "otel_traces"
-   (into (vec schema/clickstack-trace-insert-columns) ["EventsJSON" "LinksJSON"])))
+   (into base-trace-columns typed-columns)))
+
+(def ^:private trace-insert (trace-insert-spec nil))
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
 
@@ -335,8 +351,10 @@
       false
       (try
         (when (seq spans)
-          (insert-json-rows! connection trace-insert (map span-row spans)
-                             (boolean (:durable? @state))))
+          (let [{:keys [typed-span-projector typed-span-insert durable?]} @state]
+            (insert-json-rows! connection (or typed-span-insert trace-insert)
+                               (map #(span-row % typed-span-projector) spans)
+                               (boolean durable?))))
         (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -406,10 +424,12 @@
   when this exporter creates the schema, checkpoints it; every non-empty logical
   signal batch returns true only after its WAL flush commits or reconciles.
   :persistence-barrier supplies the same post-batch contract for another
-  persistence implementation and is mutually exclusive with :durable?."
+  persistence implementation and is mutually exclusive with :durable?.
+  :typed-span-descriptors accepts only the opaque capability returned in an
+  active `install-approved!` result; the generic SpanAttributes map remains."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
-            persistence-barrier]
+            persistence-barrier typed-span-descriptors]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -418,8 +438,23 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
+   (when (and typed-span-descriptors (nil? connection))
+     (throw (ex-info "Typed span descriptors require their explicit install connection"
+                     {:type ::typed-descriptors-require-connection})))
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))
+         typed-fields (when typed-span-descriptors
+                        (attribute-projection/confirmed-span-fields
+                         typed-span-descriptors conn))
+         typed-projector (when typed-span-descriptors
+                           (attribute-projection/span-projector
+                            typed-span-descriptors conn))
+         typed-insert (when (seq typed-fields)
+                        (trace-insert-spec
+                         (mapcat (fn [{:keys [physical]}]
+                                   [(:value-column physical)
+                                    (:status-column physical)])
+                                 typed-fields)))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (when durable?
@@ -443,6 +478,8 @@
                               :connection-close-status :open
                               :connection-closed? false
                               :persistence-barrier barrier
+                              :typed-span-projector typed-projector
+                              :typed-span-insert typed-insert
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t

@@ -5,6 +5,26 @@ uses ClickStack's correlation and search column names (`TraceId`, `SpanId`,
 `ParentSpanId`, `ServiceName`, `SpanName`, `Duration`, `Body`, and attribute
 maps), so the demo and later ClickStack integration share the same query model.
 
+The library can also compile reviewed attribute declarations and build-time
+`otel.attribute-schema/v1` hints into a deterministic typed storage manifest.
+Its bundle-backed path consumes an operator-selected set of artifact indexes
+through OTel's validated `otel.attribute-schema.bundle/v1` contract, then binds
+the complete artifact identities to an explicit deployment and to every closed
+signal/table/location field identity. The resulting checksummed manifest can be
+prepared as a registry record, persisted in the complete catalog through an
+object-backend compare-and-set, and reconciled against bounded table-qualified
+schema evidence. An explicit deployment installer can execute only those
+registry-owned additive columns, re-observe the table, and publish descriptors
+only after the active generation is persisted. Ambiguous writes are proved by
+canonical reread and interrupted preparing records remain recoverable.
+The returned process-local descriptor capability can enable typed span columns
+on the existing exporter, bounded value distributions, and exact Int64 range
+aggregates while retaining its generic `SpanAttributes` map. Numeric aggregate
+queries use only status-valid typed values and never reinterpret fallback text.
+See
+[`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
+example, including the fail-closed v1-to-v2 manifest migration boundary.
+
 ## Install
 
 Pin the exact commit you have reviewed:
@@ -18,8 +38,12 @@ Pin the exact commit you have reviewed:
 
 The placeholder must be replaced with a full 40-character commit SHA. The
 library also pins exact commits of `jolt-chdb`, `jolt-otel`, and `data.json`;
-aliases from those Git dependencies do not propagate to applications. Install
-the chDB native library explicitly with:
+aliases from those Git dependencies do not propagate to applications. It
+selects canonical upstream `jolt-crypto` `5effcc89` directly and excludes the
+older compatibility-fork revision inherited through its OTel pin. That
+revision contains the Jolt 0.8 value-first FFI migration, JDK crypto provider
+declarations, and large-input digest/signature fixes. Install the chDB native
+library explicitly with:
 
 ```sh
 jolt -m jdbc.chdb.install

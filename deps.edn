@@ -5,7 +5,16 @@
          :git/sha "69e0e54e3a9e594ebf0044b3d9227682a9468546"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "b18830ae1fc6eef6add5e059ae302e94a1f0ed70"}
+         :git/sha "61f68236b9d21a55a25c627570a08f47571403c5"
+         ;; OTel's pinned fork revision has the Jolt 0.8 value-first FFI fix,
+         ;; but predates the canonical upstream provider and large-input work.
+         ;; Exclude that subtree declaration and select the reviewed superset
+         ;; directly below, independent of dependency traversal order.
+         :exclusions [jolt-lang/jolt-crypto]}
+        jolt-lang/jolt-crypto
+        {:git/url "https://github.com/jolt-lang/jolt-crypto.git"
+         :git/sha "5effcc89a3258499a79a2a3d69edad9e7800d1bf"}
+        metosin/malli {:mvn/version "0.20.1"}
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "932444043c0c06f9e295ba4963419b2481e9dd07"}}
