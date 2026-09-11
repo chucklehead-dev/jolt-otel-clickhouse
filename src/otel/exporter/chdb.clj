@@ -5,20 +5,44 @@
             [clojure.string :as str]
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
+            [otel.any-value :as any]
             [otel.context :as context]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.schema :as schema]
+            [otel.otlp.any-value :as wire-any]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
 
 (defn- key-string [k]
   (cond (string? k) k (keyword? k) (subs (str k) 1) :else (str k)))
 
-(defn- value-string [v]
+(defn- pdata-raw [v]
   (cond
-    (nil? v) ""
-    (or (sequential? v) (map? v)) (json/write-str v)
+    (any/empty-value? v) nil
+    (any/bytes? v) (:bytesValue (wire-any/encode v))
+    (map? v) (into (empty v)
+                   (map (fn [[key value]] [key (pdata-raw value)]) v))
+    (sequential? v) (mapv pdata-raw v)
+    :else v))
+
+(defn- canonical-value-string [v]
+  (cond
+    (any/empty-value? v) ""
+    (any/bytes? v) (:bytesValue (wire-any/encode v))
+    (or (sequential? v) (map? v)) (json/write-str (pdata-raw v))
     :else (str v)))
+
+(defn- value-string [v]
+  ;; Match the collector's pdata Value.AsString for every representable value.
+  ;; Canonical special AnyValues are records and must be recognized before the
+  ;; generic map branch. Invalid direct-SDK values retain OTel's established
+  ;; readable fallback rather than acquiring a different JSON interpretation.
+  (if (nil? v)
+    ""
+    (let [canonical (any/canonicalize v)]
+      (if (:error canonical)
+        (pr-str v)
+        (canonical-value-string (:value canonical))))))
 
 (defn- attrs [m]
   (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))

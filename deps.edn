@@ -5,11 +5,11 @@
          :git/sha "58f090caa31445bcf9403a15bdd01b1901a4e860"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "61f68236b9d21a55a25c627570a08f47571403c5"
-         ;; OTel's pinned fork revision has the Jolt 0.8 value-first FFI fix,
-         ;; but predates the canonical upstream provider and large-input work.
-         ;; Exclude that subtree declaration and select the reviewed superset
-         ;; directly below, independent of dependency traversal order.
+         :git/sha "f24368825e72a7c5dce6bfd176ec424fcfd2eb2f"
+         ;; OTel now names the canonical crypto provider at this same reviewed
+         ;; revision. Keep its subtree declaration excluded and select it
+         ;; directly below so this exporter owns the exact provider and SHA,
+         ;; independent of dependency traversal order.
          :exclusions [jolt-lang/jolt-crypto]}
         jolt-lang/jolt-crypto
         {:git/url "https://github.com/jolt-lang/jolt-crypto.git"

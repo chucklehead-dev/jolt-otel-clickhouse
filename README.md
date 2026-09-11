@@ -156,13 +156,18 @@ Span export fills the parallel arrays and continues filling `EventsJSON` and
 16 embedded log insert columns to the pinned collector's types and codecs. Log
 export uses that explicit column list, including its supported `EventName`
 feature, and follows the collector's timestamp fallback, pdata string, and
-`UInt8` conversion semantics. Migration v4 adds the pinned gauge, sum, and
-explicit-histogram insert columns and types. Resource/scope schema URLs are
-preserved; fields absent from the current canonical metric model use their
-truthful empty defaults: zero flags/dropped-attribute count and five aligned
-empty exemplar arrays. These are bounded trace/log/metric insert parity, not a
-claim that the physical tables are drop-in ClickStack. In particular,
-non-empty exemplars, non-zero point flags, dropped scope attributes,
+`UInt8` conversion semantics. Direct SDK log bodies are canonicalized by the
+pinned OTel dependency and retain the collector's `AsString` projection in the
+existing `Body String` column: maps and arrays use JSON text, bytes use base64,
+explicit empty values use the empty string, and malformed values retain OTel's
+readable fallback. Resource, scope, log, span, and metric attribute maps use the
+same string projection for canonical special and structured values. Migration v4 adds the pinned
+gauge, sum, and explicit-histogram insert columns and types. Resource/scope
+schema URLs are preserved; fields absent from the current canonical metric
+model use their truthful empty defaults: zero flags/dropped-attribute count and
+five aligned empty exemplar arrays. These are bounded trace/log/metric insert
+parity, not a claim that the physical tables are drop-in ClickStack. In
+particular, non-empty exemplars, non-zero point flags, dropped scope attributes,
 exponential histograms, and summaries are not modeled, and the embedded tables
 do not mirror every partition, skip index, TTL, comment, or MergeTree setting.
 
