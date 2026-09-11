@@ -424,4 +424,31 @@ as a compile and correctness gate.
 The dated baseline and runtime availability matrix are in
 [`docs/benchmarks/jolt-chdb-backend.md`](docs/benchmarks/jolt-chdb-backend.md).
 
+### Segment export benchmark
+
+A second, opt-in benchmark measures what it would cost to publish columnar
+segments to object storage alongside the Durable V1 statement WAL, so a central
+ClickHouse or ClickStack cluster can ingest them without replaying SQL. It
+reports the Durable WAL's byte-bound throughput at two payload widths, Parquet
+and Native export rates and sizes, and how both vary with segment size.
+
+```sh
+jolt -M:segment-benchmark                    # 1,000,000 rows
+jolt -M:segment-benchmark 100000 10000 512   # quick pass
+```
+
+The centre-side half needs a real ClickHouse server, because an embedded chDB
+is not a valid stand-in for it:
+
+```sh
+curl https://clickhouse.com/ | sh
+bench/segment-export/clickhouse-ingest.sh 60 50000
+```
+
+Neither harness touches the repository; both write under `/tmp`. The recorded
+baseline, its limitations, and two corrections to earlier estimates are in
+[`docs/benchmarks/segment-export.md`](docs/benchmarks/segment-export.md). The
+architecture built on those measurements is in
+[`docs/segment-export-design.md`](docs/segment-export-design.md).
+
 This project is licensed under the Eclipse Public License 2.0; see `LICENSE`.
