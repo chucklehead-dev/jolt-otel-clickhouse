@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Pin the merged OTel log-body and independent-pipeline contracts. Direct SDK
+  scalar and structured bodies are canonical AnyValues before export; maps and
+  arrays retain JSON text in ClickStack's existing `Body String` column, byte
+  strings use base64, explicit empty values use the empty string, and malformed
+  bodies retain OTel's readable fallback. Attribute maps use the same pdata
+  string projection for canonical empty, byte, map, and array values.
+
 - Add exact signed-Int64 equality and lower/upper-bound span filters to the
   capability-bound typed trace query. Numeric-looking historical or invalid
   fallback text remains excluded, while the existing count/min/max/average

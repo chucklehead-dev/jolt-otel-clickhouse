@@ -6,9 +6,11 @@
             [hegel.stateful :as hs]
             [hegel.trace :as ht]
             [jdbc.core :as jdbc]
+            [otel.any-value :as any]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.explorer :as explorer]
             [otel.exporter.chdb.schema :as schema]
+            [otel.logs :as logs]
             [otel.sdk.export :as export]
             [otel.sdk.logs :as sdk-logs]))
 
@@ -608,6 +610,82 @@
                     (get-in span-wire ["SpanAttributes" attr-key]))
                  "otel-exporter/attributes" "structured attribute did not round-trip" {}))))))
 
+(defn direct-structured-log-body-property []
+  (h/run-test!
+   {:name "direct structured log body export"
+    :database "" :verbosity :quiet :derandomize? true :test-cases 1}
+   (fn [_]
+     (let [captured (atom [])
+           exporter (chdb-export/->ChdbExporter
+                     {} false #{:logs}
+                     (atom {:closed-signals #{}
+                            :connection-closed? false :last-error nil}))
+           provider (sdk-logs/logger-provider
+                     {:processors [(sdk-logs/simple-processor exporter)]})
+           logger (sdk-logs/get-logger provider {:name "structured-body"})]
+       (with-redefs [jdbc/execute! (fn [_ statement]
+                                     (swap! captured conj statement)
+                                     0)]
+         (logs/emit! logger
+                     {:severity :info
+                      ;; Insertion order intentionally differs from canonical
+                      ;; key order. The new OTel SDK pin must normalize this
+                      ;; before the direct exporter sees it.
+                      :body (array-map
+                             :z [:ready]
+                             :a {:state 'phase/joined
+                                 :empty any/empty-value
+                                 :bytes (any/bytes [0 255])
+                                 :array [any/empty-value
+                                         (any/bytes [1 2 3])]})
+                      :attributes
+                      {:empty any/empty-value
+                       :bytes (any/bytes [0 255])
+                       :structured {:empty any/empty-value}}})
+         (logs/emit! logger {:severity :info :body :ready})
+         (logs/emit! logger {:severity :info :body any/empty-value})
+         (logs/emit! logger {:severity :info
+                             :body (any/bytes [0 255])})
+         (logs/emit! logger {:severity :info :body {:a nil}})
+         (logs/emit! logger {:severity :info
+                             :body (inc any/max-int64)}))
+       (let [wires (mapv (fn [statement]
+                           (let [[_ payload]
+                                 (str/split statement
+                                            #" FORMAT JSONEachRow\n" 2)]
+                             (json/read-str (str/trim payload))))
+                         @captured)
+             body (get (first wires) "Body")]
+         (check! (= 6 (count @captured))
+                 "otel-exporter/direct-structured-body-count"
+                 "six SDK logs did not produce exactly six direct inserts" {})
+         (check! (= "{\"a\":{\"array\":[null,\"AQID\"],\"bytes\":\"AP8=\",\"empty\":null,\"state\":\"phase\\/joined\"},\"z\":[\"ready\"]}"
+                    body)
+                 "otel-exporter/direct-structured-body"
+                 "canonical SDK map body did not retain JSON text in Body String"
+                 {:actual body})
+         (check! (= "ready" (get (second wires) "Body"))
+                 "otel-exporter/direct-scalar-body"
+                 "canonical SDK keyword body retained its application syntax"
+                 {:actual (get (second wires) "Body")})
+         (check! (= ["" "AP8="]
+                    (mapv #(get % "Body") (take 2 (drop 2 wires))))
+                 "otel-exporter/direct-special-body"
+                 "empty and byte bodies differed from collector AsString semantics"
+                 {:actual (mapv #(get % "Body") (take 2 (drop 2 wires)))})
+         (check! (= {"bytes" "AP8="
+                     "empty" ""
+                     "structured" "{\"empty\":null}"}
+                    (get (first wires) "LogAttributes"))
+                 "otel-exporter/direct-special-attributes"
+                 "special attributes differed from collector AsString semantics"
+                 {:actual (get (first wires) "LogAttributes")})
+         (check! (= [(pr-str {:a nil}) (pr-str (inc any/max-int64))]
+                    (mapv #(get % "Body") (drop 4 wires)))
+                 "otel-exporter/direct-malformed-body-fallback"
+                 "unrepresentable direct bodies lost OTel's readable fallback"
+                 {:actual (mapv #(get % "Body") (drop 4 wires))}))))))
+
 (defn- metric-wire-property []
   (h/run-test!
    {:name "otel exporter canonical metric wire rows"
@@ -1024,6 +1102,8 @@
     :result (durable-itf-replay-property)}
    {:label "concurrent close history" :result (close-race-history-property)}
    {:label "terminal close failure history" :result (close-failure-history-property)}
+   {:label "direct structured log body"
+    :result (direct-structured-log-body-property)}
    {:label "JSON safety and correlation" :result (wire-json-property)}
    {:label "canonical metric wire rows" :result (metric-wire-property)}
    {:label "bounded metric series query grammar"
