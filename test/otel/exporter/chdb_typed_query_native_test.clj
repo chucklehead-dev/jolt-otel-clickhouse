@@ -21,6 +21,7 @@
 
 (def malicious-key "checkout.count') OR 1=1 --")
 (def empty-key "checkout.note")
+(def boolean-key "checkout.complete")
 (def unknown-key "checkout.dynamic")
 (def int64-exact-above-double 9007199254740993)
 (def int64-min -9223372036854775808)
@@ -35,6 +36,7 @@
               "(trace/set-attribute! span " (pr-str malicious-key)
               " (long value))\n"
               "(trace/set-attribute! span " (pr-str empty-key) " \"\")\n"
+              "(trace/set-attribute! span " (pr-str boolean-key) " false)\n"
               "(trace/set-attribute! span " (pr-str unknown-key)
               " dynamic-value)"))
         bundle
@@ -136,13 +138,16 @@
       ;; A capability-free export leaves additive status columns at their
       ;; status-0 defaults and exercises the historical generic fallback.
       (export! typed-exporter
-               [(span 1 {malicious-key int64-max empty-key ""})
-                (span 2 {malicious-key "not-an-int"})
+               [(span 1 {malicious-key int64-max empty-key ""
+                         boolean-key false})
+                (span 2 {malicious-key "not-an-int"
+                         boolean-key "not-a-bool"})
                 (span 3 {})
                 (span 5 {malicious-key int64-exact-above-double})
                 (span 7 {malicious-key int64-min})])
       (export! legacy-exporter
-               [(span 4 {malicious-key "legacy"})
+               [(span 4 {malicious-key "legacy" empty-key "legacy-note"
+                         boolean-key false})
                 (span 6 {malicious-key 7})])
       (let [actual
             (sort-by (juxt :attribute-key :typed-status :value)
@@ -170,11 +175,44 @@
                   :source :generic-fallback :typed-status 4
                   :value "not-an-int"}
                  {:attribute-key empty-key :count 1 :signal :spans
+                  :source :generic-fallback :typed-status 0
+                  :value "legacy-note"}
+                 {:attribute-key empty-key :count 1 :signal :spans
                   :source :typed :typed-status 2 :value ""}])
                actual)
         (check "status-1 absent rows are not published"
                false
                (boolean (some #(= 1 (:typed-status %)) actual))))
+
+      (let [base-filter
+            {:signal :spans
+             :start-unix-nano timestamp-base
+             :end-unix-nano (+ timestamp-base 1000)
+             :limit 20 :max-text-length 256}
+            boolean-result
+            (explorer/typed-span-filtered-traces
+             connection descriptor-set
+             (merge base-filter {:attribute-key boolean-key
+                                 :operator :eq :value false}))
+            empty-result
+            (explorer/typed-span-filtered-traces
+             connection descriptor-set
+             (merge base-filter {:attribute-key empty-key
+                                 :operator :eq :value ""}))]
+        (check "native Boolean false and present-empty string filters are typed"
+               [[false 3] ["" 2]]
+               [[(get-in boolean-result [:matches 0 :attribute-value])
+                 (get-in boolean-result [:matches 0 :typed-status])]
+                [(get-in empty-result [:matches 0 :attribute-value])
+                 (get-in empty-result [:matches 0 :typed-status])]])
+        (check "native coverage separates invalid, absent, and historical rows"
+               [{:absent 3 :historical-untyped-fallback 1
+                 :historical-untyped-unavailable 1 :invalid 1
+                 :present-empty 0 :total 7 :valid 1}
+                {:absent 4 :historical-untyped-fallback 1
+                 :historical-untyped-unavailable 1 :invalid 0
+                 :present-empty 1 :total 7 :valid 0}]
+               [(:coverage boolean-result) (:coverage empty-result)]))
 
       (let [base-request
             {:signal :spans :attribute-key malicious-key

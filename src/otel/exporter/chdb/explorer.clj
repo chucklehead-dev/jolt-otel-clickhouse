@@ -35,6 +35,9 @@
 (def ^:private typed-int64-aggregate-request-keys
   #{:aggregates :attribute-key :end-unix-nano :group-by :limit
     :max-text-length :predicate :signal :start-unix-nano})
+(def ^:private typed-span-filter-request-keys
+  #{:attribute-key :end-unix-nano :limit :max-text-length :operator
+    :signal :start-unix-nano :value})
 (def ^:private safe-typed-column
   (re-pattern
    (str "a[sv]_" (attribute-identity/target-code
@@ -49,12 +52,17 @@
 (def ^:private typed-int64-groups
   {:service-name {:expression "ServiceName" :alias "servicename"
                   :result-key :servicename :output-key :service-name}})
+(def ^:private typed-span-filter-operators
+  {:boolean [:eq]
+   :string [:eq :prefix :contains]})
 
 (def max-typed-int64-scan-rows 100000)
 (def max-typed-int64-scan-bytes 67108864)
 (def max-typed-int64-result-bytes 1048576)
 (def max-typed-int64-memory-bytes 134217728)
 (def max-typed-int64-query-seconds 5)
+
+(def max-typed-filter-value-length 256)
 
 (def max-counter-source-points
   "Largest raw cumulative-counter snapshot set accepted by one request."
@@ -169,6 +177,13 @@
    :predicate-keys [:gte :lt]
    :signals [:spans]
    :types [:int64]})
+
+(defn supported-typed-span-filters
+  "Return the closed typed predicate vocabulary for typed-span-filtered-traces."
+  []
+  {:operators typed-span-filter-operators
+   :signals [:spans]
+   :types [:boolean :string]})
 
 (defn supported-cumulative-counter-series
   "Return the closed choices accepted by cumulative-counter-series. The
@@ -482,6 +497,83 @@
      (validate-positive-cap! :max-text-length
                              (get options :max-text-length default-text-length)
                              max-text-length)}))
+
+(defn- validate-typed-span-filter-request!
+  [connection descriptor-set options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed span filters require the installed target connection"
+           {:connection connection}))
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "typed span filter request must be a map" {:request options}))
+  (when-let [unknown
+             (seq (remove typed-span-filter-request-keys (keys options)))]
+    (fail! ::unsupported-request-key
+           "typed span filter request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (when-not (= :spans (:signal options))
+    (fail! ::unsupported-typed-signal
+           "typed Boolean and string filters support spans only"
+           {:signal (:signal options) :supported-signals [:spans]}))
+  (let [attribute-key (:attribute-key options)
+        fields (attribute-projection/confirmed-span-fields
+                descriptor-set connection)
+        field (first (filter #(= attribute-key (:key %)) fields))
+        type (:type field)
+        operator (:operator options)
+        value (:value options)
+        start (validate-instant! :start-unix-nano
+                                 (:start-unix-nano options))
+        end (validate-instant! :end-unix-nano (:end-unix-nano options))]
+    (when-not (and (string? attribute-key)
+                   (<= 1 (count attribute-key) max-text-length)
+                   (not (str/blank? attribute-key)))
+      (fail! ::invalid-typed-key
+             "typed span filter key must be a bounded nonblank string"
+             {:maximum max-text-length}))
+    (when-not field
+      (fail! ::unknown-typed-key
+             "typed span filter key is not approved by this capability"
+             {:key attribute-key :approved-keys (mapv :key fields)}))
+    (when-not (contains? typed-span-filter-operators type)
+      (fail! ::unsupported-typed-filter-type
+             "typed span filtering supports approved Boolean and string fields"
+             {:key attribute-key :type type
+              :supported-types [:boolean :string]}))
+    (when-not (contains? (set (get typed-span-filter-operators type)) operator)
+      (fail! ::unsupported-typed-filter-operator
+             "typed span filter operator is unsupported for this field type"
+             {:key attribute-key :type type :operator operator
+              :supported-operators (get typed-span-filter-operators type)}))
+    (when-not
+     (case type
+       :boolean (boolean? value)
+       :string (and (string? value)
+                    (<= (count value) max-typed-filter-value-length)
+                    (or (= :eq operator) (not (empty? value)))))
+      (fail! ::invalid-typed-filter-value
+             "typed span filter value is invalid or exceeds its hard cap"
+             {:key attribute-key :type type :operator operator
+              :maximum max-typed-filter-value-length}))
+    (when-not (< start end)
+      (fail! ::invalid-time-window
+             "typed span filter window must be non-empty"
+             {:start-unix-nano start :end-unix-nano end}))
+    (when (> (- end start) max-time-range-nanos)
+      (fail! ::time-range-too-large
+             "typed span filter window exceeds the 24 hour hard cap"
+             {:actual (- end start) :maximum max-time-range-nanos}))
+    {:end end
+     :field field
+     :limit (validate-positive-cap! :limit (:limit options) max-result-limit)
+     :operator operator
+     :start start
+     :text-length
+     (validate-positive-cap! :max-text-length
+                             (get options :max-text-length default-text-length)
+                             max-text-length)
+     :value value}))
 
 (defn- metric-aggregate-map [metric-kind]
   (if (= :histogram metric-kind)
@@ -1500,6 +1592,202 @@
                 :typed-status typedstatus :value value})
              rows)))
         fields)))))
+
+(defn- typed-span-filter-columns
+  [{:keys [physical] :as field}]
+  (when-not (= attribute-identity/span-attribute-target
+               (attribute-identity/target-of field))
+    (fail! ::invalid-typed-column
+           "typed span filter capability contains an invalid table target"
+           {:target (select-keys field [:signal :table :location])}))
+  (let [value-column (checked-typed-column (:value-column physical))
+        status-column (checked-typed-column (:status-column physical))]
+    (when (= value-column status-column)
+      (fail! ::invalid-typed-column
+             "typed span filter value and status columns must be distinct" {}))
+    {:status-column status-column :value-column value-column}))
+
+(defn- typed-span-filter-predicate
+  [{:keys [field operator]} value-column]
+  (case (:type field)
+    :boolean (str value-column " = ?")
+    :string
+    (case operator
+      :eq (str value-column " = ?")
+      :prefix (str "startsWith(" value-column ", ?)")
+      :contains (str "positionUTF8(" value-column ", ?) > 0"))))
+
+(defn- typed-span-filter-query
+  [{:keys [field] :as request}]
+  (let [{:keys [status-column value-column]}
+        (typed-span-filter-columns field)
+        string-field? (= :string (:type field))
+        value-expression (if string-field?
+                           (str "leftUTF8(" value-column
+                                ", ?) AS attributevalue")
+                           (str value-column " AS attributevalue"))
+        status-guard (if string-field?
+                       (str status-column " IN (2, 3)")
+                       (str status-column " = 3"))]
+    (str "SELECT toUnixTimestamp64Nano(Timestamp) AS timestampunixnano,\n"
+         "       TraceId AS traceid, SpanId AS spanid,\n"
+         "       ParentSpanId AS parentspanid,\n"
+         "       leftUTF8(SpanName, ?) AS spanname,\n"
+         "       leftUTF8(ServiceName, ?) AS servicename,\n"
+         "       " value-expression ",\n"
+         "       " status-column " AS typedstatus\n"
+         "FROM " (:table field) "\n"
+         "WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
+         "  AND toUnixTimestamp64Nano(Timestamp) < ?\n"
+         "  AND " status-guard "\n"
+         "  AND " (typed-span-filter-predicate request value-column) "\n"
+         "ORDER BY Timestamp DESC, TraceId ASC, SpanId ASC\n"
+         "LIMIT ?\n"
+         "SETTINGS max_result_bytes = " max-typed-int64-result-bytes
+         ", max_rows_to_read = " max-typed-int64-scan-rows
+         ", max_bytes_to_read = " max-typed-int64-scan-bytes
+         ", max_memory_usage = " max-typed-int64-memory-bytes
+         ", max_execution_time = " max-typed-int64-query-seconds
+         ", max_threads = 1")))
+
+(defn- typed-span-filter-params
+  [{:keys [end field limit start text-length value]}]
+  (vec (concat (repeat (if (= :string (:type field)) 3 2) text-length)
+               [start end value limit])))
+
+(defn- typed-span-filter-coverage-query
+  [{:keys [field]}]
+  (let [{:keys [status-column]} (typed-span-filter-columns field)]
+    (str "SELECT countIf(typedstatus = 3) AS valid,\n"
+         "       countIf(typedstatus = 2) AS presentempty,\n"
+         "       countIf(typedstatus = 1) AS absent,\n"
+         "       countIf(typedstatus = 4) AS invalid,\n"
+         "       countIf(typedstatus = 0 AND hasfallback) AS historicalfallback,\n"
+         "       countIf(typedstatus = 0 AND NOT hasfallback) AS historicalunavailable,\n"
+         "       countIf(typedstatus NOT IN (0, 1, 2, 3, 4)) AS unknownstatus,\n"
+         "       count() AS total\n"
+         "FROM (\n"
+         "  SELECT " status-column " AS typedstatus,\n"
+         "         mapContains(SpanAttributes, ?) AS hasfallback\n"
+         "  FROM " (:table field) "\n"
+         "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
+         "    AND toUnixTimestamp64Nano(Timestamp) < ?\n"
+         ")\n"
+         "SETTINGS max_result_bytes = " max-typed-int64-result-bytes
+         ", max_rows_to_read = " max-typed-int64-scan-rows
+         ", max_bytes_to_read = " max-typed-int64-scan-bytes
+         ", max_memory_usage = " max-typed-int64-memory-bytes
+         ", max_execution_time = " max-typed-int64-query-seconds
+         ", max_threads = 1")))
+
+(def ^:private typed-filter-coverage-result-keys
+  #{:absent :historicalfallback :historicalunavailable :invalid
+    :presentempty :total :unknownstatus :valid})
+
+(defn- typed-span-filter-coverage!
+  [request rows]
+  (when-not (and (vector? rows) (= 1 (count rows))
+                 (= typed-filter-coverage-result-keys
+                    (set (keys (first rows)))))
+    (fail! ::invalid-typed-result
+           "typed span filter coverage has an invalid closed shape" {}))
+  (let [{:keys [absent historicalfallback historicalunavailable invalid
+                presentempty total unknownstatus valid]} (first rows)
+        counts [valid presentempty absent invalid historicalfallback
+                historicalunavailable unknownstatus]]
+    (when-not (and (every? #(and (integer? %) (not (neg? %))) counts)
+                   (integer? total) (<= 0 total max-typed-int64-scan-rows)
+                   (= total (reduce + 0 counts))
+                   (zero? unknownstatus))
+      (fail! ::invalid-typed-result
+             "typed span filter coverage contains invalid or unknown statuses"
+             {:attribute-key (get-in request [:field :key])}))
+    {:absent absent
+     :historical-untyped-fallback historicalfallback
+     :historical-untyped-unavailable historicalunavailable
+     :invalid invalid
+     :present-empty presentempty
+     :total total
+     :valid valid}))
+
+(def ^:private typed-filter-row-keys
+  #{:attributevalue :parentspanid :servicename :spanid :spanname
+    :timestampunixnano :traceid :typedstatus})
+
+(defn- typed-span-filter-row!
+  [{:keys [field text-length]} row]
+  (when-not (and (map? row) (= typed-filter-row-keys (set (keys row))))
+    (fail! ::invalid-typed-result
+           "typed span filter row has an invalid closed shape" {}))
+  (let [{:keys [attributevalue parentspanid servicename spanid spanname
+                timestampunixnano traceid typedstatus]} row
+        type (:type field)
+        valid-value?
+        (case type
+          :boolean (and (= 3 typedstatus) (boolean? attributevalue))
+          :string (and (contains? #{2 3} typedstatus)
+                       (string? attributevalue)
+                       (<= (count attributevalue) text-length)
+                       (= (= 2 typedstatus) (empty? attributevalue))))]
+    (when-not
+     (and (integer? timestampunixnano)
+          (<= 0 timestampunixnano 9223372036854775807)
+          (every? string? [traceid spanid parentspanid spanname servicename])
+          (<= (count spanname) text-length)
+          (<= (count servicename) text-length)
+          valid-value?)
+      (fail! ::invalid-typed-result
+             "typed span filter row contains an invalid value or status"
+             {:attribute-key (:key field) :typed-status typedstatus}))
+    {:attribute-key (:key field)
+     :attribute-type type
+     :attribute-value attributevalue
+     :field-id (:id field)
+     :manifest-version (get-in field [:identity :version])
+     :parent-span-id parentspanid
+     :service-name servicename
+     :signal :spans
+     :source :typed
+     :span-id spanid
+     :span-name spanname
+     :timestamp-unix-nano timestampunixnano
+     :trace-id traceid
+     :typed-status typedstatus}))
+
+(defn typed-span-filtered-traces
+  "Return bounded span matches and status coverage for one confirmed field.
+
+  Boolean fields accept exact :eq. String fields accept :eq, :prefix, or
+  :contains; an empty value is meaningful only with :eq. Predicates read only
+  status-valid typed columns. Coverage separately distinguishes valid,
+  present-empty, absent, invalid, historical rows with fallback text, and
+  historical rows whose value is unavailable. Historical map text never enters
+  a typed predicate because its original OTel type cannot be recovered."
+  [connection descriptor-set options]
+  (let [{:keys [end field limit start] :as request}
+        (validate-typed-span-filter-request! connection descriptor-set options)
+        coverage-sql [(typed-span-filter-coverage-query request)
+                      (:key field) start end]
+        match-sql (into [(typed-span-filter-query request)]
+                        (typed-span-filter-params request))]
+    (context/with-instrumentation-suppressed
+      (let [coverage
+            (typed-span-filter-coverage!
+             request (jdbc/fetch connection coverage-sql {:max-rows 1}))
+            rows (jdbc/fetch connection match-sql {:max-rows limit})]
+        (when-not (and (vector? rows) (<= (count rows) limit))
+          (fail! ::invalid-typed-result
+                 "typed span filter result exceeds its request bound"
+                 {:actual (when (vector? rows) (count rows))
+                  :maximum limit}))
+        {:attribute-key (:key field)
+         :attribute-type (:type field)
+         :coverage coverage
+         :field-id (:id field)
+         :filter {:operator (:operator request) :value (:value request)}
+         :manifest-version (get-in field [:identity :version])
+         :matches (mapv #(typed-span-filter-row! request %) rows)
+         :signal :spans}))))
 
 (defn- typed-int64-aggregate-expression [value-column aggregate]
   (case aggregate

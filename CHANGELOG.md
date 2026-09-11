@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add capability-bound Boolean and string filters for typed span attributes.
+  Boolean equality and exact/prefix/contains string predicates use only bound
+  values and status-valid physical columns. Results include bounded trace
+  summaries plus separate counts for valid, present-empty, absent, invalid,
+  historical fallback-present, and historical unavailable rows; lossy legacy
+  map text never enters a typed predicate.
 - Add read-only acquisition of persisted active typed-span descriptors for
   restart and fresh-process consumers. Acquisition freshly verifies the exact
   physical table, then fences publication on unchanged catalog ETag, revision,
