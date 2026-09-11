@@ -477,6 +477,14 @@ does not guarantee when a segment is delivered more than once:
 bench/segment-export/replicated-dedup.sh 60 50000
 ```
 
+A fourth runs two replicas of one shard, to measure what the second replica
+costs, what `insert_quorum=2` costs, and whether deduplication survives a
+redelivery that lands on a different replica or a different shard:
+
+```sh
+bench/segment-export/two-replica.sh 30 25000
+```
+
 Neither harness touches the repository; both write under `/tmp`. The recorded
 baseline, its limitations, and two corrections to earlier estimates are in
 [`docs/benchmarks/segment-export.md`](docs/benchmarks/segment-export.md). The

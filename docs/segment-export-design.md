@@ -208,7 +208,22 @@ ledger table for anything beyond it.
 `non_replicated_deduplication_window` and get identical token semantics with no
 Keeper. Where replication is wanted for its own sake, it costs about 5% per
 insert sequentially and nothing measurable at the 8-way concurrency this design
-already uses; the token adds a further ~6%.
+already uses; the token adds a further ~6%. A second replica adds nothing again
+on the insert path, because replication is asynchronous — measured, it trailed
+the writer by about 0.2 s. Requiring both copies before acknowledging the SQS
+message costs 29% per insert, and is a policy choice rather than a correctness
+one: the token makes redelivery safe either way.
+
+**The deduplication history is per shard, and the consumer must respect that.**
+It is shared by every replica of a shard, so a redelivery landing on a
+different consumer — and therefore a different replica — is still a no-op, even
+when the original and the retry race each other. That is the normal case for
+load-balanced consumers. It stops at the shard boundary: the same token
+accepted by two shards leaves two copies, and no setting prevents it. **Route
+each object key to a deterministic shard** — `cityHash64(key) % shards`, or an
+explicit per-key choice. A `Distributed` table with random or round-robin
+sharding will duplicate a redelivered segment, and this is the one failure in
+the whole fan-in path that the token cannot catch.
 
 Never key segments by UUID or upload time. Determinism is what makes this work.
 
@@ -285,9 +300,9 @@ their own store on a PVC.
 
 ## Open questions
 
-1. **A second replica.** The replicated measurements use one replica against a
-   single-node Keeper, so they cover the Keeper round trip on the insert path
-   but not replication traffic, part fetches, or replica lag.
+1. **Keeper at scale.** Every measurement uses a single Keeper node on the same
+   host as the servers, which understates consensus cost; three nodes across
+   availability zones is the real shape.
 2. **`PARTITION BY toStartOfHour(Timestamp)` on `otel_traces`** — worth 1.5x,
    costs a physical migration against a compatibility boundary.
 3. **Real object storage.** All measurements use local files. No S3 latency, no

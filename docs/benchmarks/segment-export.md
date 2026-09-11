@@ -202,6 +202,51 @@ one.
 can set `non_replicated_deduplication_window` and get the same token semantics
 with no Keeper at all.
 
+### Two replicas
+
+Same host, two replicas of one shard against the single Keeper, via
+`bench/segment-export/two-replica.sh`. 30 segments of 25,000 rows, 8-way
+parallel, inserted at replica 1.
+
+| mode | rows/s | ms/insert | replica 2 behind |
+| --- | ---: | ---: | ---: |
+| default (asynchronous replication) | 263,462 | 94.9 | 0.21 s after the last insert |
+| `insert_quorum=2` | 204,785 | 122.1 | already in sync at ack |
+
+A second replica costs nothing on the insert path — replication is
+asynchronous and the writer does not wait — and replica 2 trailed the writer by
+about a fifth of a second. Requiring both copies before acknowledging costs
+**29% per insert** (122.1 vs 94.9 ms). That is the price of acknowledging an
+SQS message only once the segment is durable on two nodes, and it is a policy
+choice rather than a correctness one: the token makes redelivery safe either
+way.
+
+Replica 2 fetched 62 parts and 67.22 MiB for 750,000 rows, or about 94 B/row —
+essentially the MergeTree on-disk size. So each additional replica adds roughly
+its own copy of the data in intra-cluster traffic: about 194 MB/s at 2,000,000
+spans/s.
+
+### Deduplication across replicas and shards
+
+| scenario | result |
+| --- | --- |
+| same token, replica 1 then replica 2 | deduplicated |
+| same token, both replicas **concurrently** | deduplicated |
+| same token, shard A and shard B | **not deduplicated — 2 copies** |
+
+Deduplication history lives in Keeper under the table's replica path, so it is
+shared by every replica of a shard: a redelivery that lands on a different
+consumer, and therefore a different replica, is still a no-op, even when the
+original and the retry race each other. That is the normal case for
+load-balanced consumers, not an edge case.
+
+It stops at the shard boundary. Two shards keep separate histories, so the same
+token accepted by both leaves two copies in the cluster. **A consumer must
+therefore route an object key to a deterministic shard** — `cityHash64(key) %
+shards`, or an explicit per-key shard choice. A `Distributed` table with random
+or round-robin sharding will duplicate a redelivered segment onto a second
+shard, and no setting prevents it.
+
 ### Deduplication window defaults
 
 Measured from `system.merge_tree_settings` on 26.9.1:
@@ -258,9 +303,8 @@ retry tractable.
 
 ## Not measured
 
-- A second replica. The replicated numbers above use a single replica against
-  a single-node Keeper, so they capture the Keeper round trip on the insert
-  path but not replication traffic, part fetches, or replica lag.
+- More than two replicas, and more than one Keeper node. Keeper here is a
+  single node on the same host, so its consensus cost is understated.
 - Real object storage. Both harnesses use local files; no S3 latency, no
   multipart upload, no `s3Cluster` fan-out.
 - Materialized views firing on insert at the centre.
@@ -275,6 +319,7 @@ jolt -M:segment-benchmark 100000 10000 512   # quick pass
 curl https://clickhouse.com/ | sh            # centre needs a clickhouse binary
 bench/segment-export/clickhouse-ingest.sh 60 50000
 bench/segment-export/replicated-dedup.sh 60 50000   # Keeper + replication + dedup
+bench/segment-export/two-replica.sh 30 25000       # two replicas, quorum, cross-shard
 ```
 
 Neither harness touches the repository; both write under `/tmp`.
