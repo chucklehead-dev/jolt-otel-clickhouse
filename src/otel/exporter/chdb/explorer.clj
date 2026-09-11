@@ -54,6 +54,7 @@
                   :result-key :servicename :output-key :service-name}})
 (def ^:private typed-span-filter-operators
   {:boolean [:eq]
+   :int64 [:eq :gte :lt]
    :string [:eq :prefix :contains]})
 
 (def max-typed-int64-scan-rows 100000)
@@ -183,7 +184,7 @@
   []
   {:operators typed-span-filter-operators
    :signals [:spans]
-   :types [:boolean :string]})
+   :types [:boolean :int64 :string]})
 
 (defn supported-cumulative-counter-series
   "Return the closed choices accepted by cumulative-counter-series. The
@@ -514,7 +515,7 @@
            {:keys (vec (sort-by str unknown))}))
   (when-not (= :spans (:signal options))
     (fail! ::unsupported-typed-signal
-           "typed Boolean and string filters support spans only"
+           "typed span filters support spans only"
            {:signal (:signal options) :supported-signals [:spans]}))
   (let [attribute-key (:attribute-key options)
         fields (attribute-projection/confirmed-span-fields
@@ -538,9 +539,9 @@
              {:key attribute-key :approved-keys (mapv :key fields)}))
     (when-not (contains? typed-span-filter-operators type)
       (fail! ::unsupported-typed-filter-type
-             "typed span filtering supports approved Boolean and string fields"
+             "typed span filtering supports approved Boolean, Int64, and string fields"
              {:key attribute-key :type type
-              :supported-types [:boolean :string]}))
+              :supported-types [:boolean :int64 :string]}))
     (when-not (contains? (set (get typed-span-filter-operators type)) operator)
       (fail! ::unsupported-typed-filter-operator
              "typed span filter operator is unsupported for this field type"
@@ -549,6 +550,7 @@
     (when-not
      (case type
        :boolean (boolean? value)
+       :int64 (int64? value)
        :string (and (string? value)
                     (<= (count value) max-typed-filter-value-length)
                     (or (= :eq operator) (not (empty? value)))))
@@ -1611,6 +1613,11 @@
   [{:keys [field operator]} value-column]
   (case (:type field)
     :boolean (str value-column " = ?")
+    :int64
+    (case operator
+      :eq (str value-column " = ?")
+      :gte (str value-column " >= ?")
+      :lt (str value-column " < ?"))
     :string
     (case operator
       :eq (str value-column " = ?")
@@ -1725,6 +1732,7 @@
         valid-value?
         (case type
           :boolean (and (= 3 typedstatus) (boolean? attributevalue))
+          :int64 (and (= 3 typedstatus) (int64? attributevalue))
           :string (and (contains? #{2 3} typedstatus)
                        (string? attributevalue)
                        (<= (count attributevalue) text-length)
@@ -1757,7 +1765,8 @@
 (defn typed-span-filtered-traces
   "Return bounded span matches and status coverage for one confirmed field.
 
-  Boolean fields accept exact :eq. String fields accept :eq, :prefix, or
+  Boolean fields accept exact :eq. Int64 fields accept exact :eq, :gte, or
+  :lt with signed 64-bit values. String fields accept :eq, :prefix, or
   :contains; an empty value is meaningful only with :eq. Predicates read only
   status-valid typed columns. Coverage separately distinguishes valid,
   present-empty, absent, invalid, historical rows with fallback text, and

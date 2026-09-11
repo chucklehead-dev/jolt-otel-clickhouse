@@ -198,7 +198,25 @@
             (explorer/typed-span-filtered-traces
              connection descriptor-set
              (merge base-filter {:attribute-key empty-key
-                                 :operator :eq :value ""}))]
+                                 :operator :eq :value ""}))
+            exact-int64-result
+            (explorer/typed-span-filtered-traces
+             connection descriptor-set
+             (merge base-filter {:attribute-key malicious-key
+                                 :operator :eq
+                                 :value int64-exact-above-double}))
+            lower-int64-result
+            (explorer/typed-span-filtered-traces
+             connection descriptor-set
+             (merge base-filter {:attribute-key malicious-key
+                                 :operator :gte
+                                 :value int64-exact-above-double}))
+            upper-int64-result
+            (explorer/typed-span-filtered-traces
+             connection descriptor-set
+             (merge base-filter {:attribute-key malicious-key
+                                 :operator :lt
+                                 :value (inc int64-min)}))]
         (check "native Boolean false and present-empty string filters are typed"
                [[false 3] ["" 2]]
                [[(get-in boolean-result [:matches 0 :attribute-value])
@@ -211,8 +229,23 @@
                  :present-empty 0 :total 7 :valid 1}
                 {:absent 4 :historical-untyped-fallback 1
                  :historical-untyped-unavailable 1 :invalid 0
-                 :present-empty 1 :total 7 :valid 0}]
-               [(:coverage boolean-result) (:coverage empty-result)]))
+                :present-empty 1 :total 7 :valid 0}]
+               [(:coverage boolean-result) (:coverage empty-result)])
+        (check "native Int64 equality remains exact above double precision"
+               [[int64-exact-above-double 3]]
+               (mapv (juxt :attribute-value :typed-status)
+                     (:matches exact-int64-result)))
+        (check "native Int64 lower bound excludes smaller valid and fallback rows"
+               [int64-exact-above-double int64-max]
+               (mapv :attribute-value (:matches lower-int64-result)))
+        (check "native Int64 upper bound retains the signed minimum"
+               [int64-min]
+               (mapv :attribute-value (:matches upper-int64-result)))
+        (check "native Int64 filter coverage remains honest"
+               {:absent 1 :historical-untyped-fallback 2
+                :historical-untyped-unavailable 0 :invalid 1
+                :present-empty 0 :total 7 :valid 3}
+               (:coverage exact-int64-result)))
 
       (let [base-request
             {:signal :spans :attribute-key malicious-key

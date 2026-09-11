@@ -453,10 +453,10 @@ keys such as `:table` or `:sql`, and cross-connection capabilities fail before
 JDBC execution. The original closed `top-values` API remains the generic-map
 path for its established semantic fields and needs no descriptor capability.
 
-### Filter confirmed Boolean and string span values
+### Filter confirmed Boolean, Int64, and string span values
 
-One approved Boolean or string field can select bounded trace summaries while
-also reporting how much of the requested window has usable typed data:
+One approved Boolean, Int64, or string field can select bounded trace summaries
+while also reporting how much of the requested window has usable typed data:
 
 ```clojure
 (explorer/typed-span-filtered-traces
@@ -474,11 +474,14 @@ also reporting how much of the requested window has usable typed data:
 Boolean fields accept only `:eq` with a Boolean value. String fields accept
 `:eq`, `:prefix`, or `:contains` with a string of at most 256 characters; an
 empty string is accepted only by `:eq`, where it matches the explicit
-present-empty status. The logical key, predicate value, display bounds, time
-window, and result limit are JDBC parameters. The table, columns, comparison
-operators, ordering, and resource settings are library-owned. Results preserve
-the field ID, manifest version, typed value, status, trace/span IDs, span name,
-service name, and nanosecond timestamp.
+present-empty status. Int64 fields accept `:eq`, `:gte`, or `:lt` with an exact
+signed 64-bit integer. Use the existing aggregate API below for half-open ranges
+and `:count`, `:min`, `:max`, or `:avg`; `:sum` remains deliberately excluded
+until its overflow/result contract is explicit. The logical key, predicate
+value, display bounds, time window, and result limit are JDBC parameters. The
+table, columns, comparison operators, ordering, and resource settings are
+library-owned. Results preserve the field ID, manifest version, typed value,
+status, trace/span IDs, span name, service name, and nanosecond timestamp.
 
 The accompanying `:coverage` map counts `:valid`, `:present-empty`, `:absent`,
 and `:invalid` rows. Status-zero rows are split into
@@ -535,9 +538,10 @@ No per-attribute sorting or skip index is generated.
 Only an installer-issued active descriptor capability is queryable.
 Direct-export versus OTLP-receiver typed-row equivalence is qualified for one
 canonical span fixture on the same process-local capability and connection.
-The first typed numeric query is intentionally limited to Int64 range
-aggregation; comparative map-conversion benchmarks, broader grouping and
-aggregate vocabularies, and other promoted types remain separate work. The
+Typed numeric queries are intentionally limited to exact Int64 `:eq`, `:gte`,
+and `:lt` trace filters plus range aggregation. Comparative map-conversion
+benchmarks, broader grouping and aggregate vocabularies, and other promoted
+types remain separate work. The
 installer, direct span export, generic compatibility map, and explorer path
 have an in-memory native chDB round-trip gate covering
 historical, absent, present-empty, valid, and invalid statuses, including an
