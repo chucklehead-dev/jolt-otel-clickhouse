@@ -453,6 +453,44 @@ keys such as `:table` or `:sql`, and cross-connection capabilities fail before
 JDBC execution. The original closed `top-values` API remains the generic-map
 path for its established semantic fields and needs no descriptor capability.
 
+### Filter confirmed Boolean and string span values
+
+One approved Boolean or string field can select bounded trace summaries while
+also reporting how much of the requested window has usable typed data:
+
+```clojure
+(explorer/typed-span-filtered-traces
+ connection
+ (:descriptor-set installation)
+ {:signal :spans
+  :attribute-key "checkout.complete"
+  :operator :eq
+  :value false
+  :start-unix-nano window-start
+  :end-unix-nano window-end
+  :limit 20})
+```
+
+Boolean fields accept only `:eq` with a Boolean value. String fields accept
+`:eq`, `:prefix`, or `:contains` with a string of at most 256 characters; an
+empty string is accepted only by `:eq`, where it matches the explicit
+present-empty status. The logical key, predicate value, display bounds, time
+window, and result limit are JDBC parameters. The table, columns, comparison
+operators, ordering, and resource settings are library-owned. Results preserve
+the field ID, manifest version, typed value, status, trace/span IDs, span name,
+service name, and nanosecond timestamp.
+
+The accompanying `:coverage` map counts `:valid`, `:present-empty`, `:absent`,
+and `:invalid` rows. Status-zero rows are split into
+`:historical-untyped-fallback` when `SpanAttributes` still contains text and
+`:historical-untyped-unavailable` when it does not. This is the strongest claim
+the compatible schema permits: the text map cannot prove whether a historical
+`"false"` or `"42"` originated as a string, Boolean, or number. Historical and
+invalid fallback text is therefore visible in coverage but never admitted to a
+typed predicate. Coverage and matching rows are evaluated by two bounded live
+queries; concurrent ingestion can therefore advance one view between them.
+Unknown persisted status values fail the query closed.
+
 ### Aggregate confirmed Int64 span values
 
 One approved Int64 span attribute can be filtered and aggregated without

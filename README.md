@@ -21,9 +21,10 @@ Restarted or read-only consumers can reacquire the process-local descriptor
 capability from an operator-selected active record after fresh schema and
 catalog-freshness checks, without DDL or a catalog write. That capability can
 enable typed span columns on the existing exporter, bounded value
-distributions, and exact Int64 range aggregates while retaining its generic
-`SpanAttributes` map. Numeric aggregate queries use only status-valid typed
-values and never reinterpret fallback text.
+distributions, exact Int64 range aggregates, and typed Boolean/string trace
+filters with explicit availability coverage while retaining its generic
+`SpanAttributes` map. Typed predicates use only status-valid physical values
+and never reinterpret fallback text.
 See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
 example, including the fail-closed v1-to-v2 manifest migration boundary.
