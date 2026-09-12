@@ -494,6 +494,33 @@ typed predicate. Coverage and matching rows are evaluated by two bounded live
 queries; concurrent ingestion can therefore advance one view between them.
 Unknown persisted status values fail the query closed.
 
+### Query typed span coverage without trace retrieval
+
+Aggregate and summary consumers can request the same coverage independently,
+without running or discarding the filtered trace query:
+
+```clojure
+(explorer/typed-span-coverage
+ connection
+ (:descriptor-set installation)
+ {:signal :spans
+  :attribute-key "checkout.remaining_items"
+  :schema-binding selected-binding
+  :start-unix-nano window-start
+  :end-unix-nano window-end})
+```
+
+`selected-binding` is the exact four-key logical identity saved by the
+consumer: `:attribute-key`, `:attribute-type`, `:field-id`, and
+`:manifest-version`. It must equal the field in the confirmed descriptor
+capability. A malformed or stale binding fails before JDBC execution instead
+of silently following a newer field with the same logical key. The operation
+executes one bounded, library-owned coverage query and returns those binding
+fields, `:signal :spans`, and the closed `:coverage` map with six status counts
+plus their conserved `:total`. It does not select trace or span identifiers and
+has no result-limit option. An aggregate and coverage call are separate live
+queries, so concurrent ingestion can advance between them.
+
 ### Aggregate confirmed Int64 span values
 
 One approved Int64 span attribute can be filtered and aggregated without

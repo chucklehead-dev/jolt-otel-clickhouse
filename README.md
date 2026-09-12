@@ -22,8 +22,8 @@ capability from an operator-selected active record after fresh schema and
 catalog-freshness checks, without DDL or a catalog write. That capability can
 enable typed span columns on the existing exporter, bounded value
 distributions, exact Int64 range aggregates and trace filters, and typed
-Boolean/string trace filters with explicit availability coverage while
-retaining its generic `SpanAttributes` map. Typed predicates use only
+Boolean/string trace filters plus coverage-only queries while retaining its
+generic `SpanAttributes` map. Typed predicates use only
 status-valid physical values and never reinterpret fallback text.
 See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an

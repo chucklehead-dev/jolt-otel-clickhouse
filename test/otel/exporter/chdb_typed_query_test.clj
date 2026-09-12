@@ -5,6 +5,7 @@
             [jdbc.core :as jdbc]
             [otel.context :as context]
             [otel.exporter.chdb.attribute-manifest :as manifest]
+            [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.explorer :as explorer]))
@@ -32,15 +33,17 @@
               :location :span-attributes
               :key malicious-string-key :type :string}]}]})
         columns (registry/expected-columns (registry/prepare compiled))
+        object-backend (backend/memory-backend)
         observed (atom {})
         next-column (atom 0)
         target (atom :query-target)
+        observe-columns #(vector {:columns (into {} @observed)
+                                  :signal :spans :table "otel_traces"})
         installation
         (installer/install-approved!
-         (backend/memory-backend) compiled
+         object-backend compiled
          {:target target
-          :observe-columns #(vector {:columns (into {} @observed)
-                                     :signal :spans :table "otel_traces"})
+          :observe-columns observe-columns
           :execute-ddl!
           (fn [_]
             (let [{:keys [name type]} (nth columns @next-column)]
@@ -48,7 +51,12 @@
               (swap! observed assoc name type)))})]
     {:descriptor-set (:descriptor-set installation)
      :descriptors (:descriptors installation)
-     :installation installation :target target}))
+     :installation installation
+     :object-backend object-backend
+     :observe-columns observe-columns
+     :selector {:dataset-id "telemetry-prod" :application-id "checkout"
+                :lineage "checkout-v1" :version 1}
+     :target target}))
 
 (defn- request
   ([keys] (request keys {}))
@@ -82,6 +90,24 @@
            :limit 7 :max-text-length 42}
           overrides)))
 
+(defn- schema-binding [installation attribute-key]
+  (let [field (first (filter #(= attribute-key (:key %))
+                             (get-in installation [:record :manifest :fields])))]
+    {:attribute-key (:key field)
+     :attribute-type (:type field)
+     :field-id (:id field)
+     :manifest-version (get-in field [:identity :version])}))
+
+(defn- coverage-request
+  ([installation attribute-key]
+   (coverage-request installation attribute-key {}))
+  ([installation attribute-key overrides]
+   (merge {:signal :spans :attribute-key attribute-key
+           :schema-binding (schema-binding installation attribute-key)
+           :start-unix-nano 1700000000000000000
+           :end-unix-nano 1700000001000000000}
+          overrides)))
+
 (def ^:private coverage-row
   {:valid 2 :presentempty 1 :absent 3 :invalid 4
    :historicalfallback 5 :historicalunavailable 6
@@ -106,8 +132,112 @@
           :signals [:spans]
           :types [:boolean :int64 :string]}
          (explorer/supported-typed-span-filters))
-  (let [{:keys [descriptor-set descriptors installation target]} (installed)
+  (let [{:keys [descriptor-set descriptors installation object-backend
+                observe-columns selector target]} (installed)
         calls (atom [])]
+    (let [keys ["checkout.complete" malicious-string-key malicious-key]
+          coverage-calls (atom [])
+          standalone
+          (with-redefs
+            [jdbc/fetch
+             (fn [connection sqlvec options]
+               (swap! coverage-calls conj
+                      [connection sqlvec options
+                       (context/instrumentation-suppressed?)])
+               [coverage-row])]
+            (mapv #(explorer/typed-span-coverage
+                    target descriptor-set (coverage-request installation %))
+                  keys))]
+      (check "standalone coverage preserves exact Boolean, string, and Int64 bindings"
+             (mapv #(merge (schema-binding installation %)
+                           {:coverage
+                            {:absent 3
+                             :historical-untyped-fallback 5
+                             :historical-untyped-unavailable 6
+                             :invalid 4 :present-empty 1 :total 21 :valid 2}
+                            :signal :spans})
+                   keys)
+             standalone)
+      (check "standalone coverage executes exactly one coverage-only query per field"
+             [3 [true true true]
+              [{:max-rows 1} {:max-rows 1} {:max-rows 1}]
+              ["checkout.complete" malicious-string-key malicious-key]
+              true]
+             [(count @coverage-calls)
+              (mapv #(nth % 3) @coverage-calls)
+              (mapv #(nth % 2) @coverage-calls)
+              (mapv #(get-in % [1 1]) @coverage-calls)
+              (every?
+               (fn [[_ [sql] _ _]]
+                 (and (str/includes? sql "countIf(typedstatus = 3)")
+                      (str/includes? sql "mapContains(SpanAttributes, ?)")
+                      (str/includes? sql "max_rows_to_read = 100000")
+                      (not (str/includes? sql "TraceId AS traceid"))
+                      (not (str/includes? sql malicious-key))
+                      (not (str/includes? sql malicious-string-key))))
+               @coverage-calls)])
+      (let [combined
+            (with-redefs
+              [jdbc/fetch
+               (fn [_ sqlvec _]
+                 (if (str/includes? (first sqlvec)
+                                    "countIf(typedstatus = 3)")
+                   [coverage-row]
+                   []))]
+              [(explorer/typed-span-filtered-traces
+                target descriptor-set
+                (filter-request "checkout.complete" :eq false))
+               (explorer/typed-span-filtered-traces
+                target descriptor-set
+                (filter-request malicious-string-key :eq ""))
+               (explorer/typed-span-filtered-traces
+                target descriptor-set
+                (filter-request malicious-key :eq 0))])]
+        (check "standalone and filtered operations share six-way coverage"
+               (mapv :coverage standalone)
+               (mapv :coverage combined)))
+      (let [reacquired
+            (:descriptor-set
+             (installer/acquire-active!
+              object-backend selector
+              {:target target :observe-columns observe-columns}))
+            before-and-after
+            (with-redefs [jdbc/fetch (fn [& _] [coverage-row])]
+              [(explorer/typed-span-coverage
+                target descriptor-set
+                (coverage-request installation malicious-key))
+               (explorer/typed-span-coverage
+                target reacquired
+                (coverage-request installation malicious-key))])]
+        (check "acquire-only restart preserves schema identity and coverage"
+               (first before-and-after) (second before-and-after)))
+      (let [consumer-calls (atom [])]
+        (with-redefs
+          [jdbc/fetch
+           (fn [_ sqlvec _]
+             (swap! consumer-calls conj sqlvec)
+             (if (str/includes? (first sqlvec)
+                                "countIf(typedstatus = 3)")
+               [coverage-row]
+               [{:servicename "api" :count 2 :min -3 :max 19 :avg 8.0}]))]
+          (explorer/typed-span-int64-aggregates
+           target descriptor-set (aggregate-request malicious-key))
+          (explorer/typed-span-coverage
+           target descriptor-set
+           (coverage-request installation malicious-key)))
+        (check "aggregate plus coverage executes no discarded trace retrieval"
+               [2 1 1 true]
+               [(count @consumer-calls)
+                (count (filter #(str/includes? (first %)
+                                               "countIf(typedstatus = 3)")
+                               @consumer-calls))
+                (count (filter #(str/includes? (first %)
+                                               "min(`av_tr_sp_")
+                               @consumer-calls))
+                (every? #(not (str/includes? (first %)
+                                              "TraceId AS traceid"))
+                        @consumer-calls)])))
+
     (with-redefs
       [jdbc/fetch
        (fn [connection sqlvec options]
@@ -475,6 +605,144 @@
                #(explorer/typed-span-filtered-traces
                  target descriptor-set
                  (filter-request malicious-string-key :eq "ready"))))))
+
+    (let [queries (atom 0)
+          base (coverage-request installation malicious-key)
+          current-field-id (get-in base [:schema-binding :field-id])
+          stale-field-id (if (= current-field-id
+                                "attribute_00000000000000000000")
+                           "attribute_11111111111111111111"
+                           "attribute_00000000000000000000")
+          invalid
+          [[(dissoc base :schema-binding)
+            :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
+           [(assoc-in base [:schema-binding :unexpected] true)
+            :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
+           [(assoc-in base [:schema-binding :attribute-type] :string)
+            :otel.exporter.chdb.explorer/stale-typed-schema-binding]
+           [(assoc-in base [:schema-binding :field-id] stale-field-id)
+            :otel.exporter.chdb.explorer/stale-typed-schema-binding]
+           [(update-in base [:schema-binding :manifest-version] inc)
+            :otel.exporter.chdb.explorer/stale-typed-schema-binding]
+           [(assoc-in base [:schema-binding :attribute-key] "   ")
+            :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
+           [(assoc-in base [:schema-binding :attribute-key]
+                      (apply str (repeat 257 "x")))
+            :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
+           [(assoc-in base [:schema-binding :manifest-version]
+                      9223372036854775808)
+            :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
+           [(assoc base :attribute-key "unknown.key")
+            :otel.exporter.chdb.explorer/unknown-typed-key]
+           [(assoc base :signal :logs)
+            :otel.exporter.chdb.explorer/unsupported-typed-signal]
+           [(assoc base :limit 7)
+            :otel.exporter.chdb.explorer/unsupported-request-key]
+           [(assoc base :sql "SELECT * FROM system.tables")
+            :otel.exporter.chdb.explorer/unsupported-request-key]
+           [(assoc base :end-unix-nano (:start-unix-nano base))
+            :otel.exporter.chdb.explorer/invalid-time-window]
+           [(assoc base :end-unix-nano
+                   (+ (:start-unix-nano base)
+                      explorer/max-time-range-nanos 1))
+            :otel.exporter.chdb.explorer/time-range-too-large]]]
+      (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage-row])]
+        (doseq [[bad expected-type] invalid]
+          (check "invalid coverage key, binding, option, signal, or window fails before JDBC"
+                 expected-type
+                 (:type
+                  (thrown-data
+                   #(explorer/typed-span-coverage
+                     target descriptor-set bad)))))
+        (check "invalid typed coverage requests execute no query" 0 @queries))
+      (let [stale
+            (thrown-data
+             #(explorer/typed-span-coverage
+               target descriptor-set
+               (assoc-in base [:schema-binding :field-id] stale-field-id)))]
+        (check "stale schema diagnostics identify fields without echoing caller bindings"
+               [[:field-id] false]
+               [(:mismatched-fields stale) (contains? stale :actual)])))
+
+    (let [queries (atom 0)]
+      (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage-row])]
+        (check "nil typed coverage connection fails before JDBC"
+               :otel.exporter.chdb.explorer/invalid-connection
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-coverage
+                   nil descriptor-set
+                   (coverage-request installation malicious-key)))))
+        (check "nil typed coverage connection executes no query" 0 @queries)))
+
+    (check "bare descriptor vectors have no typed coverage authority"
+           :otel.exporter.chdb.attribute-registry-installer/unconfirmed-descriptors
+           (:type
+            (thrown-data
+             #(explorer/typed-span-coverage
+               target descriptors
+               (coverage-request installation malicious-key)))))
+    (check "typed coverage capability cannot cross connection identity"
+           :otel.exporter.chdb.attribute-projection/target-mismatch
+           (:type
+            (thrown-data
+             #(explorer/typed-span-coverage
+               (atom :other-target) descriptor-set
+               (coverage-request installation malicious-key)))))
+
+    (let [field (first (filter #(= malicious-key (:key %))
+                               (get-in installation [:record :manifest :fields])))
+          queries (atom 0)]
+      (with-redefs
+        [attribute-projection/confirmed-span-fields
+         (fn [& _] [(assoc field :type :double)])
+         jdbc/fetch (fn [& _] (swap! queries inc) [coverage-row])]
+        (check "unsupported promoted coverage types fail before JDBC"
+               :otel.exporter.chdb.explorer/unsupported-typed-coverage-type
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-coverage
+                   target descriptor-set
+                   (coverage-request installation malicious-key))))))
+      (with-redefs
+        [attribute-projection/confirmed-span-fields
+         (fn [& _]
+           [(assoc-in field [:physical :status-column]
+                      "as_tr_sp_x` FROM system.tables --")])
+         jdbc/fetch (fn [& _] (swap! queries inc) [coverage-row])]
+        (check "physical identifier injection fails before JDBC"
+               :otel.exporter.chdb.explorer/invalid-typed-column
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-coverage
+                   target descriptor-set
+                   (coverage-request installation malicious-key))))))
+      (check "invalid type and physical identifiers execute no query" 0 @queries))
+
+    (doseq [[rows label]
+            [[[] "missing coverage row fails closed"]
+             [[["not" "a" "row"]]
+              "non-map coverage row fails closed"]
+             [[coverage-row coverage-row]
+              "duplicate coverage rows fail closed"]
+             [[(dissoc coverage-row :absent)]
+              "malformed coverage shape fails closed"]
+             [[(assoc coverage-row :unexpected 0)]
+              "unknown coverage result category fails closed"]
+             [[(assoc coverage-row :valid -1 :total 18)]
+              "negative coverage count fails closed"]
+             [[(assoc coverage-row :total 22)]
+              "non-conserving coverage total fails closed"]
+             [[(assoc coverage-row :unknownstatus 1 :total 22)]
+              "unknown physical status fails closed"]]]
+      (with-redefs [jdbc/fetch (fn [& _] rows)]
+        (check label
+               :otel.exporter.chdb.explorer/invalid-typed-result
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-coverage
+                   target descriptor-set
+                   (coverage-request installation malicious-key)))))))
 
     (let [queries (atom 0)
           invalid
