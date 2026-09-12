@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Expose capability-bound typed span coverage independently of filtered trace
+  retrieval. The coverage-only operation requires the exact logical schema
+  binding, runs one bounded library-owned query, and returns conserved counts
+  for valid, present-empty, absent, invalid, historical fallback-present, and
+  historical unavailable rows without retrieving or materializing traces.
+
 - Pin the merged OTel log-body and independent-pipeline contracts. Direct SDK
   scalar and structured bodies are canonical AnyValues before export; maps and
   arrays retain JSON text in ClickStack's existing `Body String` column, byte

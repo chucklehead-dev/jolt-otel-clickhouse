@@ -116,17 +116,39 @@
   (first (filter #(= key (:key %))
                  (get-in installation [:record :manifest :fields]))))
 
+(defn- schema-binding [installation key]
+  (let [field (manifest-field installation key)]
+    {:attribute-key (:key field)
+     :attribute-type (:type field)
+     :field-id (:id field)
+     :manifest-version (get-in field [:identity :version])}))
+
+(defn- coverage-request [installation key]
+  {:signal :spans :attribute-key key
+   :schema-binding (schema-binding installation key)
+   :start-unix-nano timestamp-base
+   :end-unix-nano (+ timestamp-base 1000)})
+
 (defn run [check]
   (println "native capability-bound typed span round trip")
   (with-open [connection (jdbc/connection "chdb::memory:")]
     (schema/ensure-schema! connection)
-    (let [installation
+    (let [object-backend (backend/memory-backend)
+          installation
           (installer/install-approved!
-           (backend/memory-backend) (compiled-manifest)
+           object-backend (compiled-manifest)
            {:target connection
             :observe-columns #(observe-columns connection)
             :execute-ddl! #(jdbc/execute! connection %)})
           descriptor-set (:descriptor-set installation)
+          reacquired-descriptor-set
+          (:descriptor-set
+           (installer/acquire-active!
+            object-backend
+            {:dataset-id "telemetry-prod" :application-id "checkout"
+             :lineage "checkout-v1" :version 1}
+            {:target connection
+             :observe-columns #(observe-columns connection)}))
           typed-exporter
           (chdb-export/exporter
            {:connection connection :create-schema? false :signals #{:spans}
@@ -216,7 +238,23 @@
              connection descriptor-set
              (merge base-filter {:attribute-key malicious-key
                                  :operator :lt
-                                 :value (inc int64-min)}))]
+                                 :value (inc int64-min)}))
+            standalone-boolean
+            (explorer/typed-span-coverage
+             connection descriptor-set
+             (coverage-request installation boolean-key))
+            standalone-string
+            (explorer/typed-span-coverage
+             connection descriptor-set
+             (coverage-request installation empty-key))
+            standalone-int64
+            (explorer/typed-span-coverage
+             connection descriptor-set
+             (coverage-request installation malicious-key))
+            reacquired-int64
+            (explorer/typed-span-coverage
+             connection reacquired-descriptor-set
+             (coverage-request installation malicious-key))]
         (check "native Boolean false and present-empty string filters are typed"
                [[false 3] ["" 2]]
                [[(get-in boolean-result [:matches 0 :attribute-value])
@@ -245,7 +283,22 @@
                {:absent 1 :historical-untyped-fallback 2
                 :historical-untyped-unavailable 0 :invalid 1
                 :present-empty 0 :total 7 :valid 3}
-               (:coverage exact-int64-result)))
+               (:coverage exact-int64-result))
+        (check "standalone native Boolean, string, and Int64 coverage equals filtered coverage"
+               [(:coverage boolean-result)
+                (:coverage empty-result)
+                (:coverage exact-int64-result)]
+               (mapv :coverage
+                     [standalone-boolean standalone-string standalone-int64]))
+        (check "standalone native coverage returns each exact schema binding"
+               [(schema-binding installation boolean-key)
+                (schema-binding installation empty-key)
+                (schema-binding installation malicious-key)]
+               (mapv #(select-keys % [:attribute-key :attribute-type
+                                      :field-id :manifest-version])
+                     [standalone-boolean standalone-string standalone-int64]))
+        (check "acquire-only native coverage preserves identity and counts"
+               standalone-int64 reacquired-int64))
 
       (let [base-request
             {:signal :spans :attribute-key malicious-key

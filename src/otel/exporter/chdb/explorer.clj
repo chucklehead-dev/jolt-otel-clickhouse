@@ -38,6 +38,11 @@
 (def ^:private typed-span-filter-request-keys
   #{:attribute-key :end-unix-nano :limit :max-text-length :operator
     :signal :start-unix-nano :value})
+(def ^:private typed-span-coverage-request-keys
+  #{:attribute-key :end-unix-nano :schema-binding :signal :start-unix-nano})
+(def ^:private typed-span-schema-binding-keys
+  #{:attribute-key :attribute-type :field-id :manifest-version})
+(def ^:private safe-typed-field-id #"attribute_[0-9a-f]{20}")
 (def ^:private safe-typed-column
   (re-pattern
    (str "a[sv]_" (attribute-identity/target-code
@@ -411,6 +416,96 @@
 (defn- int64? [value]
   (and (integer? value) (<= int64-min value int64-max)))
 
+(defn- typed-span-schema-binding [field]
+  {:attribute-key (:key field)
+   :attribute-type (:type field)
+   :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- validate-typed-span-field-window!
+  [connection descriptor-set options]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed span queries require the installed target connection"
+           {:connection connection}))
+  (when-not (= :spans (:signal options))
+    (fail! ::unsupported-typed-signal
+           "typed span queries support spans only"
+           {:signal (:signal options) :supported-signals [:spans]}))
+  (let [attribute-key (:attribute-key options)
+        fields (attribute-projection/confirmed-span-fields
+                descriptor-set connection)
+        field (first (filter #(= attribute-key (:key %)) fields))
+        start (validate-instant! :start-unix-nano
+                                 (:start-unix-nano options))
+        end (validate-instant! :end-unix-nano (:end-unix-nano options))]
+    (when-not (and (string? attribute-key)
+                   (<= 1 (count attribute-key) max-text-length)
+                   (not (str/blank? attribute-key)))
+      (fail! ::invalid-typed-key
+             "typed span key must be a bounded nonblank string"
+             {:maximum max-text-length}))
+    (when-not field
+      (fail! ::unknown-typed-key
+             "typed span key is not approved by this capability"
+             {:key attribute-key :approved-keys (mapv :key fields)}))
+    (when-not (< start end)
+      (fail! ::invalid-time-window
+             "typed span query window must be non-empty"
+             {:start-unix-nano start :end-unix-nano end}))
+    (when (> (- end start) max-time-range-nanos)
+      (fail! ::time-range-too-large
+             "typed span query window exceeds the 24 hour hard cap"
+             {:actual (- end start) :maximum max-time-range-nanos}))
+    {:end end :field field :start start}))
+
+(defn- validate-typed-span-schema-binding! [field binding]
+  (when-not
+   (and (map? binding)
+        (= typed-span-schema-binding-keys (set (keys binding)))
+        (string? (:field-id binding))
+        (boolean (re-matches safe-typed-field-id (:field-id binding)))
+        (string? (:attribute-key binding))
+        (<= 1 (count (:attribute-key binding)) max-text-length)
+        (not (str/blank? (:attribute-key binding)))
+        (contains? typed-span-filter-operators (:attribute-type binding))
+        (integer? (:manifest-version binding))
+        (pos? (:manifest-version binding))
+        (<= (:manifest-version binding) int64-max))
+    (fail! ::invalid-typed-schema-binding
+           "typed span coverage requires a closed schema binding" {}))
+  (let [expected (typed-span-schema-binding field)]
+    (when-not (= expected binding)
+      (fail! ::stale-typed-schema-binding
+             "typed span coverage schema binding does not match the capability"
+             {:expected expected
+              :mismatched-fields
+              (->> typed-span-schema-binding-keys
+                   (filter #(not= (get expected %) (get binding %)))
+                   (sort-by str)
+                   vec)})))
+  binding)
+
+(defn- validate-typed-span-coverage-request!
+  [connection descriptor-set options]
+  (when-not (map? options)
+    (fail! ::invalid-request
+           "typed span coverage request must be a map" {:request options}))
+  (when-let [unknown
+             (seq (remove typed-span-coverage-request-keys (keys options)))]
+    (fail! ::unsupported-request-key
+           "typed span coverage request contains unsupported keys"
+           {:keys (vec (sort-by str unknown))}))
+  (let [{:keys [field] :as request}
+        (validate-typed-span-field-window! connection descriptor-set options)]
+    (when-not (contains? typed-span-filter-operators (:type field))
+      (fail! ::unsupported-typed-coverage-type
+             "typed span coverage supports Boolean, Int64, and string fields"
+             {:key (:key field) :type (:type field)
+              :supported-types [:boolean :int64 :string]}))
+    (validate-typed-span-schema-binding! field (:schema-binding options))
+    request))
+
 (defn- validate-typed-int64-predicate! [predicate]
   (when-not (and (map? predicate)
                  (seq predicate)
@@ -501,10 +596,6 @@
 
 (defn- validate-typed-span-filter-request!
   [connection descriptor-set options]
-  (when (nil? connection)
-    (fail! ::invalid-connection
-           "typed span filters require the installed target connection"
-           {:connection connection}))
   (when-not (map? options)
     (fail! ::invalid-request
            "typed span filter request must be a map" {:request options}))
@@ -513,30 +604,12 @@
     (fail! ::unsupported-request-key
            "typed span filter request contains unsupported keys"
            {:keys (vec (sort-by str unknown))}))
-  (when-not (= :spans (:signal options))
-    (fail! ::unsupported-typed-signal
-           "typed span filters support spans only"
-           {:signal (:signal options) :supported-signals [:spans]}))
-  (let [attribute-key (:attribute-key options)
-        fields (attribute-projection/confirmed-span-fields
-                descriptor-set connection)
-        field (first (filter #(= attribute-key (:key %)) fields))
+  (let [{:keys [end field start]}
+        (validate-typed-span-field-window! connection descriptor-set options)
+        attribute-key (:attribute-key options)
         type (:type field)
         operator (:operator options)
-        value (:value options)
-        start (validate-instant! :start-unix-nano
-                                 (:start-unix-nano options))
-        end (validate-instant! :end-unix-nano (:end-unix-nano options))]
-    (when-not (and (string? attribute-key)
-                   (<= 1 (count attribute-key) max-text-length)
-                   (not (str/blank? attribute-key)))
-      (fail! ::invalid-typed-key
-             "typed span filter key must be a bounded nonblank string"
-             {:maximum max-text-length}))
-    (when-not field
-      (fail! ::unknown-typed-key
-             "typed span filter key is not approved by this capability"
-             {:key attribute-key :approved-keys (mapv :key fields)}))
+        value (:value options)]
     (when-not (contains? typed-span-filter-operators type)
       (fail! ::unsupported-typed-filter-type
              "typed span filtering supports approved Boolean, Int64, and string fields"
@@ -558,14 +631,6 @@
              "typed span filter value is invalid or exceeds its hard cap"
              {:key attribute-key :type type :operator operator
               :maximum max-typed-filter-value-length}))
-    (when-not (< start end)
-      (fail! ::invalid-time-window
-             "typed span filter window must be non-empty"
-             {:start-unix-nano start :end-unix-nano end}))
-    (when (> (- end start) max-time-range-nanos)
-      (fail! ::time-range-too-large
-             "typed span filter window exceeds the 24 hour hard cap"
-             {:actual (- end start) :maximum max-time-range-nanos}))
     {:end end
      :field field
      :limit (validate-positive-cap! :limit (:limit options) max-result-limit)
@@ -1662,7 +1727,7 @@
   (vec (concat (repeat (if (= :string (:type field)) 3 2) text-length)
                [start end value limit])))
 
-(defn- typed-span-filter-coverage-query
+(defn- typed-span-coverage-query
   [{:keys [field]}]
   (let [{:keys [status-column]} (typed-span-filter-columns field)]
     (str "SELECT countIf(typedstatus = 3) AS valid,\n"
@@ -1687,17 +1752,18 @@
          ", max_execution_time = " max-typed-int64-query-seconds
          ", max_threads = 1")))
 
-(def ^:private typed-filter-coverage-result-keys
+(def ^:private typed-span-coverage-result-keys
   #{:absent :historicalfallback :historicalunavailable :invalid
     :presentempty :total :unknownstatus :valid})
 
-(defn- typed-span-filter-coverage!
+(defn- typed-span-coverage-row!
   [request rows]
   (when-not (and (vector? rows) (= 1 (count rows))
-                 (= typed-filter-coverage-result-keys
+                 (map? (first rows))
+                 (= typed-span-coverage-result-keys
                     (set (keys (first rows)))))
     (fail! ::invalid-typed-result
-           "typed span filter coverage has an invalid closed shape" {}))
+           "typed span coverage has an invalid closed shape" {}))
   (let [{:keys [absent historicalfallback historicalunavailable invalid
                 presentempty total unknownstatus valid]} (first rows)
         counts [valid presentempty absent invalid historicalfallback
@@ -1707,7 +1773,7 @@
                    (= total (reduce + 0 counts))
                    (zero? unknownstatus))
       (fail! ::invalid-typed-result
-             "typed span filter coverage contains invalid or unknown statuses"
+             "typed span coverage contains invalid or unknown statuses"
              {:attribute-key (get-in request [:field :key])}))
     {:absent absent
      :historical-untyped-fallback historicalfallback
@@ -1716,6 +1782,38 @@
      :present-empty presentempty
      :total total
      :valid valid}))
+
+(defn- execute-typed-span-coverage! [connection request]
+  (typed-span-coverage-row!
+   request
+   (jdbc/fetch connection
+               [(typed-span-coverage-query request)
+                (get-in request [:field :key])
+                (:start request)
+                (:end request)]
+               {:max-rows 1})))
+
+(defn typed-span-coverage
+  "Return six-way availability coverage for one exact typed span binding.
+
+  The installer- or acquisition-issued descriptor capability must belong to
+  `connection`. The request requires :signal :spans, a logical
+  :attribute-key, its exact closed :schema-binding, and a half-open time window
+  no larger than 24 hours. Physical identifiers stay inside library-owned SQL;
+  the result contains no trace rows.
+
+  Coverage distinguishes valid, present-empty, absent, invalid, historical
+  fallback-present, and historical unavailable rows. Counts are nonnegative
+  and conserve :total. This operation is one bounded query; a separate
+  aggregate or filter call is not snapshot-isolated from concurrent ingestion."
+  [connection descriptor-set options]
+  (let [{:keys [field] :as request}
+        (validate-typed-span-coverage-request!
+         connection descriptor-set options)]
+    (context/with-instrumentation-suppressed
+      (merge (typed-span-schema-binding field)
+             {:coverage (execute-typed-span-coverage! connection request)
+              :signal :spans}))))
 
 (def ^:private typed-filter-row-keys
   #{:attributevalue :parentspanid :servicename :spanid :spanname
@@ -1773,16 +1871,13 @@
   historical rows whose value is unavailable. Historical map text never enters
   a typed predicate because its original OTel type cannot be recovered."
   [connection descriptor-set options]
-  (let [{:keys [end field limit start] :as request}
+  (let [{:keys [field limit] :as request}
         (validate-typed-span-filter-request! connection descriptor-set options)
-        coverage-sql [(typed-span-filter-coverage-query request)
-                      (:key field) start end]
         match-sql (into [(typed-span-filter-query request)]
                         (typed-span-filter-params request))]
     (context/with-instrumentation-suppressed
       (let [coverage
-            (typed-span-filter-coverage!
-             request (jdbc/fetch connection coverage-sql {:max-rows 1}))
+            (execute-typed-span-coverage! connection request)
             rows (jdbc/fetch connection match-sql {:max-rows limit})]
         (when-not (and (vector? rows) (<= (count rows) limit))
           (fail! ::invalid-typed-result
