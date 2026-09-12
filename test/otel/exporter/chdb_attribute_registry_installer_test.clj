@@ -138,6 +138,26 @@
            (set (map (juxt :signal :table)
                      (filter #(= :schema-observed (:event %)) @events))))
 
+    (let [{:keys [backend events manifest runtime]} (fixture)
+          commit-record! store/commit-record!
+          failure
+          (with-redefs
+            [store/commit-record!
+             (fn [backend snapshot record]
+               (let [result (commit-record! backend snapshot record)]
+                 (if (= :active (:state record))
+                   ;; A causal negative control for mint-time evidence: the
+                   ;; selected active record is present, but the captured
+                   ;; catalog is no longer a valid canonical authority.
+                   (update-in result [:snapshot :catalog :records]
+                              conj record)
+                   result)))]
+            (thrown-data
+             #(installer/install-approved! backend manifest runtime)))]
+      (check "tampered catalog evidence cannot mint or publish a capability"
+             [:otel.exporter.chdb.attribute-registry/duplicate-record false]
+             [(:type failure) (published? @events)]))
+
     (reset! events [])
     (let [loaded-active-crash
           (thrown-data

@@ -147,7 +147,25 @@
               :record record :snapshot snapshot :status status))
 
 (defn- confirmed-result [target record snapshot]
-  (let [descriptors (registry/expected-columns record)]
+  ;; Do the complete immutable-evidence check once, before the private
+  ;; capability is minted. Query and projection hot paths subsequently need
+  ;; only issuer and process-local target identity checks: revalidating this
+  ;; captured persistent data cannot make it fresher.
+  (let [record (registry/validate-record record)
+        catalog (store/validate-catalog (:catalog snapshot))
+        persisted (first (filter #(= (registry/record-key record)
+                                     (registry/record-key %))
+                                 (:records catalog)))
+        descriptors (registry/expected-columns record)
+        span-fields (get-in record [:manifest :fields])]
+    (when-not (and (= :active (:state record))
+                   (= record persisted)
+                   (= descriptors (registry/expected-columns persisted))
+                   (every? #(= identity/span-attribute-target
+                               (identity/target-of %))
+                           span-fields))
+      (fail! "typed descriptor capability has inconsistent active evidence"
+             ::invalid-confirmed-evidence {}))
     (result :active record snapshot descriptors
             (ConfirmedActiveDescriptorSet.
              descriptor-issuer target record snapshot descriptors))))
@@ -201,13 +219,13 @@
                   :actual-revision confirmed-revision})
 
           :else
-          (do
+          (let [confirmation (confirmed-result target latest-record confirmed)]
             (emit-event! emit! {:event :snapshot-confirmed
                                 :generation (:generation latest-record)
                                 :revision confirmed-revision})
             (emit-event! emit! {:event :descriptors-published
                                 :generation (:generation latest-record)})
-            (confirmed-result target latest-record confirmed)))))))
+            confirmation))))))
 
 (defn install-approved!
   "Install one deployment-approved span manifest through crash-safe cuts.
@@ -268,8 +286,9 @@
                           :generation (:generation persisted-final)
                           :state state})
       (if (= :active state)
-        (do
+        (let [confirmation
+              (confirmed-result target persisted-final final-snapshot)]
           (emit-event! emit! {:event :descriptors-published
                               :generation (:generation persisted-final)})
-          (confirmed-result target persisted-final final-snapshot))
+          confirmation)
         (result state persisted-final final-snapshot [] nil)))))
