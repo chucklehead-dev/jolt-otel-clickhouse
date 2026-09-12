@@ -9,6 +9,7 @@
             [otel.exporter.chdb.attribute-projection :as projection]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
+            [otel.exporter.chdb.attribute-registry-store :as store]
             [otel.sdk.export :as export]))
 
 (defn- compiled []
@@ -145,6 +146,30 @@
              :otel.exporter.chdb.attribute-registry-installer/unconfirmed-descriptors
              (:type (thrown-data
                      #(projection/span-projector forged target)))))
+
+    (let [record-validations (atom 0)
+          catalog-validations (atom 0)
+          validate-record registry/validate-record
+          validate-catalog store/validate-catalog
+          field-counts
+          (with-redefs [registry/validate-record
+                        (fn [record]
+                          (swap! record-validations inc)
+                          (validate-record record))
+                        store/validate-catalog
+                        (fn [catalog]
+                          (swap! catalog-validations inc)
+                          (validate-catalog catalog))]
+            (mapv (fn [_]
+                    (count (projection/confirmed-span-fields
+                            descriptor-set target)))
+                  (range 3)))]
+      (check "an immutable capability reuses its mint-time validation"
+             [3 3 3]
+             field-counts)
+      (check "query-time field access does not revalidate the captured record"
+             [0 0]
+             [@record-validations @catalog-validations]))
 
     (check "an honest capability cannot cross exporter connection identity"
            :otel.exporter.chdb.attribute-projection/target-mismatch

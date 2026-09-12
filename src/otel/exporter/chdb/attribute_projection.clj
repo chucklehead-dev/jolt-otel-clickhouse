@@ -1,9 +1,7 @@
 (ns otel.exporter.chdb.attribute-projection
   "Pure span-row projection from installer-confirmed typed descriptors."
   (:require [otel.exporter.chdb.attribute-registry :as registry]
-            [otel.exporter.chdb.attribute-identity :as identity]
-            [otel.exporter.chdb.attribute-registry-installer :as installer]
-            [otel.exporter.chdb.attribute-registry-store :as store]))
+            [otel.exporter.chdb.attribute-registry-installer :as installer]))
 
 (def ^:private int64-min -9223372036854775808)
 (def ^:private int64-max 9223372036854775807)
@@ -17,24 +15,14 @@
         (keyword? key) (subs (str key) 1)
         :else (str key)))
 
-(defn- confirmed-record [descriptor-set actual-target]
-  (let [{:keys [descriptors record snapshot] :as evidence}
+(defn- confirmed-fields [descriptor-set actual-target]
+  (let [{:keys [record] :as evidence}
         (installer/descriptor-set-data descriptor-set)
-        issued-target (:target evidence)
-        record (registry/validate-record record)
-        catalog (store/validate-catalog (:catalog snapshot))
-        persisted (first (filter #(= (registry/record-key record)
-                                     (registry/record-key %))
-                                 (:records catalog)))]
+        issued-target (:target evidence)]
     (when-not (identical? actual-target issued-target)
       (fail! "typed descriptor capability belongs to another export target"
              ::target-mismatch {}))
-    (when-not (and (= :active (:state record))
-                   (= record persisted)
-                   (= descriptors (registry/expected-columns record)))
-      (fail! "typed descriptor capability has inconsistent active evidence"
-             ::invalid-descriptor-set {}))
-    record))
+    (get-in record [:manifest :fields])))
 
 (defn- default-value [type]
   (case type :string "" :boolean false :int64 0))
@@ -60,14 +48,7 @@
 (defn confirmed-span-fields
   "Return manifest fields only after issuer and target identity confirmation."
   [descriptor-set target]
-  (let [fields (get-in (confirmed-record descriptor-set target)
-                       [:manifest :fields])]
-    (when-not (every? #(= identity/span-attribute-target
-                          (identity/target-of %))
-                      fields)
-      (fail! "typed span capability contains a non-span target"
-             ::invalid-descriptor-set {}))
-    fields))
+  (confirmed-fields descriptor-set target))
 
 (defn span-projector
   "Compile an installer-confirmed descriptor capability into a row projector.

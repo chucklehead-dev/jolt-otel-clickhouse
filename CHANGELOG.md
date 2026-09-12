@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Validate immutable typed descriptor evidence once when its private,
+  connection-bound capability is minted. Typed query and projection hot paths
+  retain issuer and exact target checks without repeatedly walking the captured
+  registry catalog and manifest.
+
 - Expose capability-bound typed span coverage independently of filtered trace
   retrieval. The coverage-only operation requires the exact logical schema
   binding, runs one bounded library-owned query, and returns conserved counts
