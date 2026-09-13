@@ -9,7 +9,7 @@ The first publication pins only remotely reachable immutable dependencies:
   `58f090caa31445bcf9403a15bdd01b1901a4e860` at
   `https://github.com/chucklehead-dev/jolt-chdb.git`.
 - `io.github.casselc/otel` is pinned to the remotely reachable commit
-  `fc95971fdb6041cee303717a9dacc4ed04de9b16` at
+  `87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0` at
   `https://github.com/casselc/otel.git`. Its older compatibility-fork crypto
   declaration is excluded.
 - `jolt-lang/jolt-crypto` is selected directly from canonical upstream commit

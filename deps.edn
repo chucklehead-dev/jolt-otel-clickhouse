@@ -5,7 +5,7 @@
          :git/sha "58f090caa31445bcf9403a15bdd01b1901a4e860"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "f24368825e72a7c5dce6bfd176ec424fcfd2eb2f"
+         :git/sha "87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0"
          ;; OTel now names the canonical crypto provider at this same reviewed
          ;; revision. Keep its subtree declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
