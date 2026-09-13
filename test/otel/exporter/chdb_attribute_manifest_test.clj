@@ -165,6 +165,28 @@
              [(count (:fields targeted))
               (count (set (map :id (:fields targeted))))
               (count (set (map :physical (:fields targeted))))]))
+    (let [same-key "shared.trace.attribute"
+          entries
+          (mapv (fn [location]
+                  {:signal :spans :table "otel_traces" :location location
+                   :key same-key :type :string})
+                [:resource-attributes :scope-attributes :span-attributes])
+          compile-locations
+          (fn [entries]
+            (manifest/compile-manifest
+             (assoc binding :fragments
+                    [{:schema manifest/reviewed-fragment-schema
+                      :authority :advice :source "advice/trace-locations.edn"
+                      :entries entries}])))
+          forward (compile-locations entries)
+          reverse-order (compile-locations (vec (reverse entries)))]
+      (check "equal trace keys at three locations have stable disjoint wire identities"
+             [(manifest/render forward)
+              3 3 3]
+             [(manifest/render reverse-order)
+              (count (:fields forward))
+              (count (set (map :id (:fields forward))))
+              (count (set (map :physical (:fields forward))))]))
     (let [cross-signal
           (manifest/compile-manifest
            (assoc binding :fragments

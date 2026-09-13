@@ -31,23 +31,26 @@
 (def default-text-length 128)
 
 (def ^:private typed-span-request-keys
-  #{:end-unix-nano :keys :limit :max-text-length :signal :start-unix-nano})
+  #{:end-unix-nano :fields :keys :limit :max-text-length :signal
+    :start-unix-nano})
 (def ^:private typed-int64-aggregate-request-keys
-  #{:aggregates :attribute-key :end-unix-nano :group-by :limit
+  #{:aggregates :attribute-key :attribute-location :end-unix-nano :group-by :limit
     :max-text-length :predicate :signal :start-unix-nano})
 (def ^:private typed-span-filter-request-keys
-  #{:attribute-key :end-unix-nano :limit :max-text-length :operator
+  #{:attribute-key :attribute-location :end-unix-nano :limit :max-text-length :operator
     :signal :start-unix-nano :value})
 (def ^:private typed-span-coverage-request-keys
-  #{:attribute-key :end-unix-nano :schema-binding :signal :start-unix-nano})
+  #{:attribute-key :attribute-location :end-unix-nano :schema-binding :signal
+    :start-unix-nano})
 (def ^:private typed-span-schema-binding-keys
+  #{:attribute-key :attribute-location :attribute-type :field-id
+    :manifest-version})
+(def ^:private legacy-typed-span-schema-binding-keys
   #{:attribute-key :attribute-type :field-id :manifest-version})
 (def ^:private safe-typed-field-id #"attribute_[0-9a-f]{20}")
 (def ^:private safe-typed-column
   (re-pattern
-   (str "a[sv]_" (attribute-identity/target-code
-                   attribute-identity/span-attribute-target)
-        "_[a-z0-9_]+_[0-9a-f]{16}")))
+   "a[sv]_tr_(rs|sc|sp)_[a-z0-9_]+_[0-9a-f]{16}"))
 
 (def ^:private int64-min -9223372036854775808)
 (def ^:private int64-max 9223372036854775807)
@@ -326,6 +329,56 @@
            {:parameter parameter :value value :minimum 1 :maximum maximum}))
   value)
 
+(def ^:private trace-attribute-locations
+  #{:resource-attributes :scope-attributes :span-attributes})
+
+(defn- valid-typed-key? [value]
+  (and (string? value) (<= 1 (count value) max-text-length)
+       (not (str/blank? value))))
+
+(defn- resolve-trace-field!
+  [fields attribute-key attribute-location legacy-span-only?]
+  (when-not (valid-typed-key? attribute-key)
+    (fail! ::invalid-typed-key
+           "typed trace key must be a bounded nonblank string"
+           {:maximum max-text-length}))
+  (when (and (some? attribute-location)
+             (not (contains? trace-attribute-locations attribute-location)))
+    (fail! ::invalid-typed-location
+           "typed trace location is not supported"
+           {:location attribute-location
+            :supported-locations (vec (sort-by str trace-attribute-locations))}))
+  (let [matches (filterv #(and (= attribute-key (:key %))
+                               (or (nil? attribute-location)
+                                   (= attribute-location (:location %))))
+                         fields)]
+    (cond
+      (empty? matches)
+      (fail! ::unknown-typed-key
+             "typed trace field is not approved by this capability"
+             {:key attribute-key :location attribute-location
+              :approved-fields (mapv #(select-keys % [:key :location]) fields)})
+
+      (> (count matches) 1)
+      (fail! ::ambiguous-typed-key
+             "typed trace key requires an explicit attribute location"
+             {:key attribute-key
+              :locations (mapv :location matches)})
+
+      (and (nil? attribute-location) legacy-span-only?
+           (not= :span-attributes (:location (first matches))))
+      (fail! ::typed-location-required
+             "locationless compatibility selection is limited to span attributes"
+             {:key attribute-key :location (:location (first matches))})
+
+      :else (first matches))))
+
+(defn- typed-field-reference? [value]
+  (and (map? value)
+       (= #{:attribute-key :attribute-location} (set (keys value)))
+       (valid-typed-key? (:attribute-key value))
+       (contains? trace-attribute-locations (:attribute-location value))))
+
 (defn- validate-typed-span-request! [connection descriptor-set options]
   (when (nil? connection)
     (fail! ::invalid-connection
@@ -342,26 +395,27 @@
     (fail! ::unsupported-typed-signal
            "typed attribute query selection supports spans only"
            {:signal (:signal options) :supported-signals [:spans]}))
-  (let [requested (:keys options)
+  (let [legacy? (contains? options :keys)
+        qualified? (contains? options :fields)
+        requested (if legacy? (:keys options) (:fields options))
         fields (attribute-projection/confirmed-span-fields
-                descriptor-set connection)
-        by-key (into {} (map (juxt :key identity) fields))]
+                descriptor-set connection)]
+    (when (= legacy? qualified?)
+      (fail! ::invalid-typed-keys
+             "typed trace values require exactly one of :keys or :fields"
+             {:maximum max-field-count}))
     (when-not (and (vector? requested)
                    (<= 1 (count requested) max-field-count)
-                   (every? #(and (string? %) (<= 1 (count %) max-text-length)
-                                 (not (str/blank? %)))
-                           requested))
+                   (if legacy?
+                     (every? valid-typed-key? requested)
+                     (every? typed-field-reference? requested)))
       (fail! ::invalid-typed-keys
-             "typed span keys must be a bounded non-empty string vector"
-             {:keys requested :maximum max-field-count}))
+             "typed trace fields must be a bounded non-empty vector"
+             {:fields requested :maximum max-field-count}))
     (when-not (= (count requested) (count (set requested)))
       (fail! ::duplicate-typed-keys
-             "typed span keys must not contain duplicates" {:keys requested}))
-    (doseq [key requested]
-      (when-not (contains? by-key key)
-        (fail! ::unknown-typed-key
-               "typed span key is not approved by this descriptor capability"
-               {:key key :approved-keys (mapv :key fields)})))
+             "typed trace field selections must not contain duplicates"
+             {:fields requested}))
     (let [start (validate-instant! :start-unix-nano
                                    (:start-unix-nano options))
           end (validate-instant! :end-unix-nano (:end-unix-nano options))]
@@ -373,7 +427,13 @@
         (fail! ::time-range-too-large
                "typed span values time window exceeds the 24 hour hard cap"
                {:actual (- end start) :maximum max-time-range-nanos}))
-      {:fields (mapv by-key requested)
+      {:fields (mapv (fn [selection]
+                       (if legacy?
+                         (resolve-trace-field! fields selection nil true)
+                         (resolve-trace-field!
+                          fields (:attribute-key selection)
+                          (:attribute-location selection) false)))
+                     requested)
        :start start :end end
        :limit (validate-positive-cap! :limit (:limit options) max-result-limit)
        :text-length
@@ -418,6 +478,7 @@
 
 (defn- typed-span-schema-binding [field]
   {:attribute-key (:key field)
+   :attribute-location (:location field)
    :attribute-type (:type field)
    :field-id (:id field)
    :manifest-version (get-in field [:identity :version])})
@@ -433,22 +494,13 @@
            "typed span queries support spans only"
            {:signal (:signal options) :supported-signals [:spans]}))
   (let [attribute-key (:attribute-key options)
+        attribute-location (:attribute-location options)
         fields (attribute-projection/confirmed-span-fields
                 descriptor-set connection)
-        field (first (filter #(= attribute-key (:key %)) fields))
+        field (resolve-trace-field! fields attribute-key attribute-location true)
         start (validate-instant! :start-unix-nano
                                  (:start-unix-nano options))
         end (validate-instant! :end-unix-nano (:end-unix-nano options))]
-    (when-not (and (string? attribute-key)
-                   (<= 1 (count attribute-key) max-text-length)
-                   (not (str/blank? attribute-key)))
-      (fail! ::invalid-typed-key
-             "typed span key must be a bounded nonblank string"
-             {:maximum max-text-length}))
-    (when-not field
-      (fail! ::unknown-typed-key
-             "typed span key is not approved by this capability"
-             {:key attribute-key :approved-keys (mapv :key fields)}))
     (when-not (< start end)
       (fail! ::invalid-time-window
              "typed span query window must be non-empty"
@@ -457,34 +509,55 @@
       (fail! ::time-range-too-large
              "typed span query window exceeds the 24 hour hard cap"
              {:actual (- end start) :maximum max-time-range-nanos}))
-    {:end end :field field :start start}))
+    {:end end :field field :fields fields :start start}))
 
-(defn- validate-typed-span-schema-binding! [field binding]
-  (when-not
-   (and (map? binding)
-        (= typed-span-schema-binding-keys (set (keys binding)))
-        (string? (:field-id binding))
-        (boolean (re-matches safe-typed-field-id (:field-id binding)))
-        (string? (:attribute-key binding))
-        (<= 1 (count (:attribute-key binding)) max-text-length)
-        (not (str/blank? (:attribute-key binding)))
-        (contains? typed-span-filter-operators (:attribute-type binding))
-        (integer? (:manifest-version binding))
-        (pos? (:manifest-version binding))
-        (<= (:manifest-version binding) int64-max))
-    (fail! ::invalid-typed-schema-binding
-           "typed span coverage requires a closed schema binding" {}))
-  (let [expected (typed-span-schema-binding field)]
-    (when-not (= expected binding)
-      (fail! ::stale-typed-schema-binding
-             "typed span coverage schema binding does not match the capability"
-             {:expected expected
-              :mismatched-fields
-              (->> typed-span-schema-binding-keys
-                   (filter #(not= (get expected %) (get binding %)))
-                   (sort-by str)
-                   vec)})))
-  binding)
+(defn- validate-typed-span-schema-binding! [fields field binding]
+  (let [legacy? (and (map? binding)
+                     (= legacy-typed-span-schema-binding-keys
+                        (set (keys binding))))
+        manifest-version (:manifest-version binding)
+        valid-version? (and (integer? manifest-version)
+                            (pos? manifest-version)
+                            (<= manifest-version int64-max))]
+    (when-not
+     (and (map? binding)
+          (contains? #{typed-span-schema-binding-keys
+                       legacy-typed-span-schema-binding-keys}
+                     (set (keys binding)))
+          (string? (:field-id binding))
+          (boolean (re-matches safe-typed-field-id (:field-id binding)))
+          (string? (:attribute-key binding))
+          (<= 1 (count (:attribute-key binding)) max-text-length)
+          (not (str/blank? (:attribute-key binding)))
+          (contains? typed-span-filter-operators (:attribute-type binding))
+          (or legacy?
+              (contains? trace-attribute-locations
+                         (:attribute-location binding)))
+          (true? valid-version?))
+      (fail! ::invalid-typed-schema-binding
+             "typed span coverage requires a closed schema binding" {}))
+    (let [expected (typed-span-schema-binding field)
+          canonical (if legacy?
+                      (do
+                        (when-not
+                         (and (= :span-attributes (:location field))
+                              (= 1 (count (filter #(= (:key field) (:key %))
+                                                  fields))))
+                          (fail! ::typed-location-required
+                                 "legacy binding is not an unambiguous span field"
+                                 {:key (:key field)}))
+                        (assoc binding :attribute-location :span-attributes))
+                      binding)]
+      (when-not (= expected canonical)
+        (fail! ::stale-typed-schema-binding
+               "typed span coverage schema binding does not match the capability"
+               {:expected expected
+                :mismatched-fields
+                (->> typed-span-schema-binding-keys
+                     (filter #(not= (get expected %) (get canonical %)))
+                     (sort-by str)
+                     vec)}))
+      canonical)))
 
 (defn- validate-typed-span-coverage-request!
   [connection descriptor-set options]
@@ -496,15 +569,16 @@
     (fail! ::unsupported-request-key
            "typed span coverage request contains unsupported keys"
            {:keys (vec (sort-by str unknown))}))
-  (let [{:keys [field] :as request}
+  (let [{:keys [field fields] :as request}
         (validate-typed-span-field-window! connection descriptor-set options)]
     (when-not (contains? typed-span-filter-operators (:type field))
       (fail! ::unsupported-typed-coverage-type
              "typed span coverage supports Boolean, Int64, and string fields"
              {:key (:key field) :type (:type field)
               :supported-types [:boolean :int64 :string]}))
-    (validate-typed-span-schema-binding! field (:schema-binding options))
-    request))
+    (assoc request :schema-binding
+           (validate-typed-span-schema-binding!
+            fields field (:schema-binding options)))))
 
 (defn- validate-typed-int64-predicate! [predicate]
   (when-not (and (map? predicate)
@@ -541,25 +615,16 @@
            "typed Int64 aggregates support spans only"
            {:signal (:signal options) :supported-signals [:spans]}))
   (let [attribute-key (:attribute-key options)
+        attribute-location (:attribute-location options)
         group-by (get options :group-by [])
         aggregates (get options :aggregates [:count])
         predicate (validate-typed-int64-predicate! (:predicate options))
         fields (attribute-projection/confirmed-span-fields
                 descriptor-set connection)
-        field (first (filter #(= attribute-key (:key %)) fields))
+        field (resolve-trace-field! fields attribute-key attribute-location true)
         start (validate-instant! :start-unix-nano
                                  (:start-unix-nano options))
         end (validate-instant! :end-unix-nano (:end-unix-nano options))]
-    (when-not (and (string? attribute-key)
-                   (<= 1 (count attribute-key) max-text-length)
-                   (not (str/blank? attribute-key)))
-      (fail! ::invalid-typed-key
-             "typed Int64 aggregate key must be a bounded nonblank string"
-             {:maximum max-text-length}))
-    (when-not field
-      (fail! ::unknown-typed-key
-             "typed Int64 aggregate key is not approved by this capability"
-             {:key attribute-key :approved-keys (mapv :key fields)}))
     (when-not (= :int64 (:type field))
       (fail! ::unsupported-typed-aggregate-type
              "typed numeric aggregates require an approved Int64 field"
@@ -1594,14 +1659,27 @@
            {:column column}))
   (str "`" column "`"))
 
+(defn- trace-fallback-column [field]
+  (case (:location field)
+    :resource-attributes "ResourceAttributes"
+    :span-attributes "SpanAttributes"
+    :scope-attributes nil))
+
+(defn- assert-trace-field! [field]
+  (when-not (attribute-identity/trace-attribute-target? field)
+    (fail! ::invalid-typed-column
+           "typed trace capability contains an invalid table target"
+           {:target (select-keys field [:signal :table :location])}))
+  field)
+
 (defn- typed-span-values-query [{:keys [physical table] :as field}]
   (let [value-column (checked-typed-column (:value-column physical))
         status-column (checked-typed-column (:status-column physical))
-        expected-target attribute-identity/span-attribute-target]
-    (when-not (= expected-target (attribute-identity/target-of field))
-      (fail! ::invalid-typed-column
-             "typed span capability contains an invalid table target"
-             {:target (select-keys field [:signal :table :location])}))
+        fallback-column (trace-fallback-column field)
+        fallback-expression (if fallback-column
+                              (str fallback-column "[?]")
+                              "''")]
+    (assert-trace-field! field)
     (when (= value-column status-column)
       (fail! ::invalid-typed-column
              "typed value and status columns must be distinct" {}))
@@ -1610,7 +1688,7 @@
          "  SELECT leftUTF8(multiIf(" status-column " IN (2, 3),\n"
          "                              toString(" value-column "),\n"
          "                              " status-column " IN (0, 4),\n"
-         "                              SpanAttributes[?], ''), ?) AS value,\n"
+         "                              " fallback-expression ", ''), ?) AS value,\n"
          "         " status-column " AS typedstatus\n"
          "  FROM " table "\n"
          "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
@@ -1637,8 +1715,9 @@
         (fn [{:keys [key] :as field}]
           (let [rows (jdbc/fetch
                       connection
-                      [(typed-span-values-query field)
-                       key text-length start end limit]
+                      (into [(typed-span-values-query field)]
+                            (concat (when (trace-fallback-column field) [key])
+                                    [text-length start end limit]))
                       {:max-rows limit})]
             (when-not (and (vector? rows) (<= (count rows) limit))
               (fail! ::invalid-typed-result
@@ -1653,7 +1732,8 @@
                  (fail! ::invalid-typed-result
                         "typed span value row has invalid status or shape"
                         {:key key :typed-status typedstatus}))
-               {:attribute-key key :count count :signal :spans
+               {:attribute-key key :attribute-location (:location field)
+                :count count :signal :spans
                 :source (if (contains? #{2 3} typedstatus)
                           :typed :generic-fallback)
                 :typed-status typedstatus :value value})
@@ -1662,11 +1742,7 @@
 
 (defn- typed-span-filter-columns
   [{:keys [physical] :as field}]
-  (when-not (= attribute-identity/span-attribute-target
-               (attribute-identity/target-of field))
-    (fail! ::invalid-typed-column
-           "typed span filter capability contains an invalid table target"
-           {:target (select-keys field [:signal :table :location])}))
+  (assert-trace-field! field)
   (let [value-column (checked-typed-column (:value-column physical))
         status-column (checked-typed-column (:status-column physical))]
     (when (= value-column status-column)
@@ -1729,7 +1805,11 @@
 
 (defn- typed-span-coverage-query
   [{:keys [field]}]
-  (let [{:keys [status-column]} (typed-span-filter-columns field)]
+  (let [{:keys [status-column]} (typed-span-filter-columns field)
+        fallback-column (trace-fallback-column field)
+        has-fallback (if fallback-column
+                       (str "mapContains(" fallback-column ", ?)")
+                       "false")]
     (str "SELECT countIf(typedstatus = 3) AS valid,\n"
          "       countIf(typedstatus = 2) AS presentempty,\n"
          "       countIf(typedstatus = 1) AS absent,\n"
@@ -1740,7 +1820,7 @@
          "       count() AS total\n"
          "FROM (\n"
          "  SELECT " status-column " AS typedstatus,\n"
-         "         mapContains(SpanAttributes, ?) AS hasfallback\n"
+         "         " has-fallback " AS hasfallback\n"
          "  FROM " (:table field) "\n"
          "  WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
          "    AND toUnixTimestamp64Nano(Timestamp) < ?\n"
@@ -1787,10 +1867,11 @@
   (typed-span-coverage-row!
    request
    (jdbc/fetch connection
-               [(typed-span-coverage-query request)
-                (get-in request [:field :key])
-                (:start request)
-                (:end request)]
+               (into [(typed-span-coverage-query request)]
+                     (concat
+                      (when (trace-fallback-column (:field request))
+                        [(get-in request [:field :key])])
+                      [(:start request) (:end request)]))
                {:max-rows 1})))
 
 (defn typed-span-coverage
@@ -1846,6 +1927,7 @@
              "typed span filter row contains an invalid value or status"
              {:attribute-key (:key field) :typed-status typedstatus}))
     {:attribute-key (:key field)
+     :attribute-location (:location field)
      :attribute-type type
      :attribute-value attributevalue
      :field-id (:id field)
@@ -1885,6 +1967,7 @@
                  {:actual (when (vector? rows) (count rows))
                   :maximum limit}))
         {:attribute-key (:key field)
+         :attribute-location (:location field)
          :attribute-type (:type field)
          :coverage coverage
          :field-id (:id field)
@@ -1906,7 +1989,6 @@
                       (get-in field [:physical :value-column]))
         status-column (checked-typed-column
                        (get-in field [:physical :status-column]))
-        expected-target attribute-identity/span-attribute-target
         group-selects
         (mapv (fn [group]
                 (let [{:keys [expression alias]} (get typed-int64-groups group)]
@@ -1916,10 +1998,7 @@
         (mapv #(typed-int64-aggregate-expression value-column %) aggregates)
         selects (concat group-selects aggregate-selects)
         group-aliases (mapv (comp :alias typed-int64-groups) group-by)]
-    (when-not (= expected-target (attribute-identity/target-of field))
-      (fail! ::invalid-typed-column
-             "typed Int64 capability contains an invalid table target"
-             {:target (select-keys field [:signal :table :location])}))
+    (assert-trace-field! field)
     (when (= value-column status-column)
       (fail! ::invalid-typed-column
              "typed Int64 value and status columns must be distinct" {}))
@@ -1983,6 +2062,7 @@
                  {:aggregate aggregate}))))
     (merge
      {:attribute-key (:key field)
+      :attribute-location (:location field)
       :field-id (:id field)
       :manifest-version (get-in field [:identity :version])
       :signal :spans

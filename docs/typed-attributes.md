@@ -7,7 +7,7 @@ queried attributes can eventually be copied into dedicated typed columns while
 the existing text entry remains available.
 
 The manifest format is storage-independent and the current installer/exporter
-path supports span attributes on `otel_traces`. Every reviewed declaration now
+path supports resource, scope, and span attributes on `otel_traces`. Every reviewed declaration now
 names a closed signal, physical table, and attribute location before it can
 influence a checksum, field identifier, registry plan, or capability consumer.
 
@@ -20,8 +20,8 @@ flowchart LR
     D --> F[Checksummed v3 typed manifest]
     F --> G[Persistence-ready registry record]
     G --> H[Deterministic column plan]
-    H --> I[Authorized span installer]
-    I --> J[Capability-bound span export and query]
+    H --> I[Authorized trace-table installer]
+    I --> J[Capability-bound trace export and query]
     H -. unsupported targets stay data only .-> K[Later signal-specific slices]
 ```
 
@@ -278,7 +278,7 @@ record. A crash at any cut restarts from the persisted catalog and the observed
 schema. The store never renders SQL and telemetry never supplies an authority
 or lifecycle state.
 
-The span-only installer owns that sequence. Calling `install-approved!` is an
+The trace-table installer owns that sequence. Calling `install-approved!` is an
 operator/deployment action: do not expose it to telemetry input. Its runtime is
 a closed map of explicit effects, which keeps authorization and database access
 at the application boundary:
@@ -343,10 +343,13 @@ in that attempt. A fair-retry liveness property should show convergence after
 any crash when additive execution eventually succeeds and no competing writer
 wins forever. This slice deliberately defers changing or running that joined
 model to the subsequent model/trace issue. Its executable bridge assumption is
-now explicit: one install attempt has exactly one manifest-owned target, a
+now explicit: one install attempt has exactly one manifest-owned physical
+signal/table target, which may contain several attribute locations, a
 schema-observed event names that target, and reconciliation requires a fresh
 envelope for that exact table. Pure reconciliation tests exercise all five
-closed tables; only the span target reaches DDL. Running the future model is
+closed tables; only resource, scope, and span attributes on the trace target
+reach DDL. The joined catalog/DDL/publication model remains tracked by issue #8.
+Running that future model is
 intentionally deferred while the existing exhaustive Durable check owns machine
 resources.
 
@@ -355,11 +358,12 @@ historical-untyped, absent, present-empty, valid, and invalid. The current span
 exporter writes those statuses; reserving them in the shared plan prevents later
 signal-specific ingestion from inventing an ambiguous nullable contract.
 
-The manifest now carries the prerequisite signal/table identity, but this first
-physical registry seam still accepts only the exact target
-`{:signal :spans, :table "otel_traces", :location :span-attributes}`. Other
-valid targets compile into storage-independent plans and distinct field IDs,
-then fail with
+The manifest carries the prerequisite signal/table/location identity. This
+physical registry seam accepts the three exact trace targets whose signal and
+table are `:spans` and `otel_traces`, with location `:resource-attributes`,
+`:scope-attributes`, or `:span-attributes`. They share one physical table
+authority while retaining disjoint field IDs and columns. Other valid targets
+compile into storage-independent plans and distinct field IDs, then fail with
 `:unsupported-target` if passed to `registry/prepare`. Later ingestion/query
 slices must implement their signal-specific row and table semantics before that
 allowlist expands.
@@ -382,7 +386,8 @@ telemetry payload cannot substitute for current confirmation.
     :typed-span-descriptors (:descriptor-set installation)}))
 ```
 
-For each declared span attribute, export writes the library-owned value column
+For each declared trace resource, scope, or span attribute, export writes the
+library-owned value column
 and its `UInt8` status. Exact strings, booleans, and signed 64-bit integers use
 status `3` (`:valid`). Missing values use the ClickHouse type's default with
 status `1` (`:absent`); an empty string uses status `2` (`:present-empty`); and
@@ -391,9 +396,12 @@ default with status `4` (`:invalid`). Rows exported without a capability omit
 the additive columns, whose ClickHouse default status `0` means
 `:historical-untyped`.
 
-The original `SpanAttributes Map(String,String)` is always populated as before.
-This preserves ClickStack compatibility, undeclared attributes, and a readable
-fallback for invalid promoted values. Typed projection does not read the
+The original `ResourceAttributes` and `SpanAttributes` maps are always
+populated as before. This preserves ClickStack compatibility, undeclared
+attributes, and a readable fallback for invalid promoted resource and span
+values. The current ClickStack trace table has no generic scope-attribute map,
+so historical or invalid scope fallback is reported as unavailable rather than
+borrowed from another location. Typed projection does not read the
 catalog, observe schema, or execute DDL during export; it can only use the
 capability minted after `install-approved!` completed. The capability represents
 one confirmed startup generation. If another process changes the catalog or
@@ -430,18 +438,24 @@ bounded top-values query:
  connection
  (:descriptor-set installation)
  {:signal :spans
-  :keys ["checkout.count" "checkout.complete"]
+  :fields [{:attribute-key "service.version"
+            :attribute-location :resource-attributes}
+           {:attribute-key "checkout.complete"
+            :attribute-location :span-attributes}]
   :start-unix-nano window-start
   :end-unix-nano window-end
   :limit 20})
 ```
 
-Every requested key must be unique and approved by the capability. The query
+Every requested location-qualified field must be unique and approved by the
+capability. The legacy `:keys` form remains accepted only when each key names
+one unambiguous span-attribute field. The query
 uses only `otel_traces` and the manifest-derived physical value/status columns;
 the logical key, text bound, time window, and limit remain JDBC parameters.
 Statuses `2` and `3` read the typed value. Historical-untyped (`0`) and invalid
-(`4`) rows fall back to `SpanAttributes[key]`, preserving useful results across
-migration and malformed values. A status-`2` empty string remains an explicit
+(`4`) rows fall back to the matching `ResourceAttributes` or `SpanAttributes`
+map when that map exists. Scope fallback is unavailable because the compatible
+trace table has no `ScopeAttributes` map. A status-`2` empty string remains an explicit
 group rather than disappearing under the normal nonempty-value filter. Absent
 (`1`) and unknown statuses contribute no value. Results retain `:typed-status`
 and identify `:typed` versus
@@ -464,6 +478,7 @@ while also reporting how much of the requested window has usable typed data:
  (:descriptor-set installation)
  {:signal :spans
   :attribute-key "checkout.complete"
+  :attribute-location :span-attributes
   :operator :eq
   :value false
   :start-unix-nano window-start
@@ -485,7 +500,8 @@ status, trace/span IDs, span name, service name, and nanosecond timestamp.
 
 The accompanying `:coverage` map counts `:valid`, `:present-empty`, `:absent`,
 and `:invalid` rows. Status-zero rows are split into
-`:historical-untyped-fallback` when `SpanAttributes` still contains text and
+`:historical-untyped-fallback` when the matching compatible attribute map still
+contains text and
 `:historical-untyped-unavailable` when it does not. This is the strongest claim
 the compatible schema permits: the text map cannot prove whether a historical
 `"false"` or `"42"` originated as a string, Boolean, or number. Historical and
@@ -505,16 +521,19 @@ without running or discarding the filtered trace query:
  (:descriptor-set installation)
  {:signal :spans
   :attribute-key "checkout.remaining_items"
+  :attribute-location :span-attributes
   :schema-binding selected-binding
   :start-unix-nano window-start
   :end-unix-nano window-end})
 ```
 
-`selected-binding` is the exact four-key logical identity saved by the
-consumer: `:attribute-key`, `:attribute-type`, `:field-id`, and
+`selected-binding` is the exact five-key logical identity saved by the
+consumer: `:attribute-key`, `:attribute-location`, `:attribute-type`, `:field-id`, and
 `:manifest-version`. It must equal the field in the confirmed descriptor
 capability. A malformed or stale binding fails before JDBC execution instead
-of silently following a newer field with the same logical key. The operation
+of silently following a newer field with the same logical key. A legacy
+four-key binding is canonicalized only when it names one unambiguous
+span-attribute field. The operation
 executes one bounded, library-owned coverage query and returns those binding
 fields, `:signal :spans`, and the closed `:coverage` map with six status counts
 plus their conserved `:total`. It does not select trace or span identifiers and
@@ -532,6 +551,7 @@ converting its fallback map text:
  (:descriptor-set installation)
  {:signal :spans
   :attribute-key "checkout.remaining_items"
+  :attribute-location :span-attributes
   :predicate {:gte 1 :lt 100}
   :group-by [:service-name]
   :aggregates [:count :min :max :avg]
@@ -563,8 +583,10 @@ No per-attribute sorting or skip index is generated.
 ## What remains
 
 Only an installer-issued active descriptor capability is queryable.
-Direct-export versus OTLP-receiver typed-row equivalence is qualified for one
-canonical span fixture on the same process-local capability and connection.
+Direct-export versus OTLP-receiver typed-row equivalence is qualified on the
+same process-local capability and connection. Resource, scope, and span fields
+are location-qualified; the same logical key may appear independently at all
+three locations.
 Typed numeric queries are intentionally limited to exact Int64 `:eq`, `:gte`,
 and `:lt` trace filters plus range aggregation. Comparative map-conversion
 benchmarks, broader grouping and aggregate vocabularies, and other promoted

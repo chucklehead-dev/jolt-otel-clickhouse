@@ -1,5 +1,5 @@
 (ns otel.exporter.chdb.attribute-projection
-  "Pure span-row projection from installer-confirmed typed descriptors."
+  "Pure trace-row projection from installer-confirmed typed descriptors."
   (:require [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]))
 
@@ -46,28 +46,57 @@
       :else [fallback (:invalid codes)])))
 
 (defn confirmed-span-fields
-  "Return manifest fields only after issuer and target identity confirmation."
+  "Return trace manifest fields after issuer and target identity confirmation."
   [descriptor-set target]
   (confirmed-fields descriptor-set target))
 
-(defn span-projector
-  "Compile an installer-confirmed descriptor capability into a row projector.
+(defn- attributes-at [span location]
+  (case location
+    :resource-attributes (get-in span [:resource :attributes])
+    :scope-attributes (get-in span [:scope :attributes])
+    :span-attributes (:attributes span)
+    nil))
 
-  The returned function accepts raw span attributes and returns only the
-  library-owned physical value/status columns."
+(defn- values-by-key [attributes]
+  (reduce (fn [values [key value]]
+            (update values (key-string key) (fnil conj []) value))
+          {}
+          (or attributes {})))
+
+(defn- project-fields [fields attributes-for]
+  (let [location-values
+        (into {} (map (fn [location]
+                        [location (values-by-key (attributes-for location))]))
+              (distinct (map :location fields)))]
+    (reduce
+     (fn [row {:keys [key location physical type]}]
+       (let [values (get-in location-values [location key] [])
+             [value status] (projected-value type values)]
+         (assoc row (:value-column physical) value
+                (:status-column physical) status)))
+     (sorted-map)
+     fields)))
+
+(defn trace-projector
+  "Compile one confirmed trace capability into a complete span-row projector.
+
+  Resource, instrumentation-scope, and span maps are selected by each field's
+  declared location. Equal keys at different locations remain independent."
   [descriptor-set target]
   (let [fields (confirmed-span-fields descriptor-set target)]
+    (fn [span]
+      (project-fields fields #(attributes-at span %)))))
+
+(defn span-projector
+  "Compile a legacy span-attribute-only capability into an attribute projector.
+
+  This compatibility entry point preserves the pre-location API. Mixed trace
+  capabilities must use `trace-projector` so resource and scope values cannot
+  be mistaken for span values."
+  [descriptor-set target]
+  (let [fields (confirmed-span-fields descriptor-set target)]
+    (when-not (every? #(= :span-attributes (:location %)) fields)
+      (fail! "legacy span projector cannot consume a mixed trace capability"
+             ::location-required {}))
     (fn [attributes]
-      (let [values-by-key
-            (reduce (fn [values [key value]]
-                      (update values (key-string key) (fnil conj []) value))
-                    {}
-                    (or attributes {}))]
-        (reduce
-         (fn [row {:keys [key physical type]}]
-           (let [values (get values-by-key key [])
-                 [value status] (projected-value type values)]
-             (assoc row (:value-column physical) value
-                    (:status-column physical) status)))
-         (sorted-map)
-         fields)))))
+      (project-fields fields #(when (= :span-attributes %) attributes)))))

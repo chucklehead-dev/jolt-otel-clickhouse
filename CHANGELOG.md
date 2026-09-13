@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Treat resource, scope, and span attributes as location-qualified fields under
+  one confirmed `otel_traces` schema authority. The same logical key may be
+  promoted independently at all three locations; export, direct/OTLP ingestion,
+  saved bindings, discovery, filters, aggregates, and coverage retain the
+  location. Existing `ResourceAttributes` and `SpanAttributes` maps remain
+  unchanged, while scope history is reported unavailable because ClickStack's
+  trace table has no generic scope-attribute map.
+
 - Pin the merged OTel closed-exporter configuration and background-export
   failure retention fixes, with a resolved-classpath guard for the reviewed
   dependency revision.
