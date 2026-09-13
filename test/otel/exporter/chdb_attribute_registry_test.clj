@@ -322,14 +322,17 @@
            registry/status-codes))
 
   (doseq [location [:resource-attributes :scope-attributes]]
-    (let [ambiguous-manifest
+    (let [location-manifest
           (compile-app "checkout" 1
                        [{:location location
-                         :key "deployment.environment" :type :string}])]
-      (check (str "signal-ambiguous " (name location)
-                  " fail this span-only seam")
-             :otel.exporter.chdb.attribute-registry/unsupported-target
-             (:type (thrown-data #(registry/prepare ambiguous-manifest))))))
+                         :key "deployment.environment" :type :string}])
+          prepared (registry/prepare location-manifest)]
+      (check (str "trace " (name location)
+                  " receives a location-qualified owned projection")
+             [location #{"otel_traces"} 2]
+             [(get-in prepared [:manifest :fields 0 :location])
+              (set (map :table (registry/expected-columns prepared)))
+              (count (registry/expected-columns prepared))])))
   (check "telemetry cannot inject a registry lifecycle state"
          :otel.exporter.chdb.attribute-manifest/invalid-input
          (:type

@@ -1,5 +1,5 @@
 (ns otel.exporter.chdb.attribute-registry-installer
-  "Authorized, span-only installation of persisted typed-attribute columns.
+  "Authorized trace-table installation of persisted typed-attribute columns.
 
   Invocation is the deployment authorization boundary. Telemetry never enters
   this API. Database execution and observation are explicit injected effects."
@@ -109,11 +109,11 @@
 
 (defn- record-target [record]
   (let [targets (->> (get-in record [:manifest :fields])
-                     (map identity/target-of)
+                     (map identity/physical-target-of)
                      distinct
                      vec)]
     (when-not (= 1 (count targets))
-      (fail! "typed attribute record must name exactly one canonical target"
+      (fail! "typed attribute record must name exactly one physical authority"
              ::invalid-record-target {:targets targets}))
     (first targets)))
 
@@ -157,13 +157,11 @@
                                      (registry/record-key %))
                                  (:records catalog)))
         descriptors (registry/expected-columns record)
-        span-fields (get-in record [:manifest :fields])]
+        trace-fields (get-in record [:manifest :fields])]
     (when-not (and (= :active (:state record))
                    (= record persisted)
                    (= descriptors (registry/expected-columns persisted))
-                   (every? #(= identity/span-attribute-target
-                               (identity/target-of %))
-                           span-fields))
+                   (every? identity/trace-attribute-target? trace-fields))
       (fail! "typed descriptor capability has inconsistent active evidence"
              ::invalid-confirmed-evidence {}))
     (result :active record snapshot descriptors

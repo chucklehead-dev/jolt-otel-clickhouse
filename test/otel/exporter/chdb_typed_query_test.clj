@@ -94,6 +94,7 @@
   (let [field (first (filter #(= attribute-key (:key %))
                              (get-in installation [:record :manifest :fields])))]
     {:attribute-key (:key field)
+     :attribute-location (:location field)
      :attribute-type (:type field)
      :field-id (:id field)
      :manifest-version (get-in field [:identity :version])}))
@@ -116,8 +117,171 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
+(defn- installed-locations []
+  (let [key "shared.location"
+        compiled
+        (manifest/compile-manifest
+         {:dataset-id "telemetry-prod" :application-id "trace-locations"
+          :lineage "trace-locations-v1" :version 1
+          :fragments
+          [{:schema manifest/reviewed-fragment-schema
+            :authority :advice :source "advice/trace-locations.edn"
+            :entries
+            (mapv (fn [location]
+                    {:signal :spans :table "otel_traces" :location location
+                     :key key :type :string})
+                  [:resource-attributes :scope-attributes
+                   :span-attributes])}]})
+        columns (registry/expected-columns (registry/prepare compiled))
+        object-backend (backend/memory-backend)
+        observed (atom {})
+        next-column (atom 0)
+        ddl-count (atom 0)
+        target (atom :location-query-target)
+        observe-columns #(vector {:columns (into {} @observed)
+                                  :signal :spans :table "otel_traces"})
+        installation
+        (installer/install-approved!
+         object-backend compiled
+         {:target target
+          :observe-columns observe-columns
+          :execute-ddl!
+          (fn [_]
+            (swap! ddl-count inc)
+            (let [{:keys [name type]} (nth columns @next-column)]
+              (swap! next-column inc)
+              (swap! observed assoc name type)))})]
+    {:columns columns :compiled compiled :ddl-count ddl-count
+     :descriptor-set (:descriptor-set installation)
+     :installation installation :key key :object-backend object-backend
+     :observe-columns observe-columns
+     :selector {:dataset-id "telemetry-prod" :application-id "trace-locations"
+                :lineage "trace-locations-v1" :version 1}
+     :target target}))
+
+(defn- location-field [installation location key]
+  (first (filter #(and (= location (:location %)) (= key (:key %)))
+                 (get-in installation [:record :manifest :fields]))))
+
+(defn- qualified-binding [field]
+  {:attribute-key (:key field)
+   :attribute-location (:location field)
+   :attribute-type (:type field)
+   :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- run-location-tests [check]
+  (let [{:keys [columns compiled ddl-count descriptor-set installation key
+                object-backend observe-columns selector target]}
+        (installed-locations)
+        locations [:resource-attributes :scope-attributes :span-attributes]
+        fields (mapv #(location-field installation % key) locations)]
+    (check "one trace-table install owns all location-qualified columns"
+           [6 6 3 3]
+           [(count columns)
+            (count (:descriptors installation))
+            (count (set (map :id fields)))
+            (count (set (map :physical fields)))])
+    (let [repeat-install
+          (installer/install-approved!
+           object-backend compiled
+           {:target target :observe-columns observe-columns
+            :execute-ddl! (fn [_] (swap! ddl-count inc))})
+          acquired
+          (installer/acquire-active!
+           object-backend selector
+           {:target target :observe-columns observe-columns})]
+      (check "mixed-location reinstall and read-only acquisition preserve one active authority"
+             [:active 6 6 6]
+             [(:status repeat-install)
+              @ddl-count
+              (count (:descriptors repeat-install))
+              (count (:descriptors acquired))])
+      (check "mixed-location restart preserves the exact confirmed descriptor data"
+             (installer/descriptor-set-data (:descriptor-set repeat-install))
+             (installer/descriptor-set-data (:descriptor-set acquired))))
+    (let [calls (atom [])
+          rows
+          (with-redefs
+            [jdbc/fetch
+             (fn [_ [sql & params] _]
+               (swap! calls conj [sql params])
+               [{:value (cond
+                          (str/includes? sql "_tr_rs_") "resource"
+                          (str/includes? sql "_tr_sc_") "scope"
+                          :else "span")
+                 :typedstatus 3 :count 1}])]
+            (explorer/typed-span-values
+             target descriptor-set
+             {:signal :spans
+              :fields (mapv (fn [location]
+                              {:attribute-key key
+                               :attribute-location location})
+                            locations)
+              :start-unix-nano 1700000000000000000
+              :end-unix-nano 1700000001000000000
+              :limit 7}))]
+      (check "qualified value discovery keeps equal keys at three locations distinct"
+             (mapv vector locations ["resource" "scope" "span"])
+             (mapv (juxt :attribute-location :value) rows))
+      (check "fallback SQL follows ClickStack's two actual trace maps"
+             [true true false true true]
+             [(str/includes? (ffirst @calls) "ResourceAttributes[?]")
+              (= key (first (second (first @calls))))
+              (str/includes? (first (second @calls)) "Attributes[?")
+              (str/includes? (first (nth @calls 2)) "SpanAttributes[?]")
+              (= [5 4 5] (mapv (comp count second) @calls))]))
+    (let [queries (atom 0)]
+      (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [])]
+        (check "locationless equal-key value selection fails before SQL"
+               :otel.exporter.chdb.explorer/ambiguous-typed-key
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-values
+                   target descriptor-set (request [key])))))
+        (check "locationless equal-key filters fail before SQL"
+               :otel.exporter.chdb.explorer/ambiguous-typed-key
+               (:type
+                (thrown-data
+                 #(explorer/typed-span-filtered-traces
+                   target descriptor-set
+                   (filter-request key :eq "scope")))))
+        (check "ambiguous locationless requests execute no SQL" 0 @queries)))
+    (let [resource-field (first fields)
+          resource-request
+          {:signal :spans :attribute-key key
+           :attribute-location :resource-attributes
+           :schema-binding (qualified-binding resource-field)
+           :start-unix-nano 1700000000000000000
+           :end-unix-nano 1700000001000000000}
+          calls (atom [])]
+      (with-redefs [jdbc/fetch
+                    (fn [_ [sql & params] _]
+                      (swap! calls conj [sql params]) [coverage-row])]
+        (let [result (explorer/typed-span-coverage
+                      target descriptor-set resource-request)]
+          (check "qualified coverage returns the complete saved binding"
+                 (qualified-binding resource-field)
+                 (select-keys result
+                              [:attribute-key :attribute-location
+                               :attribute-type :field-id :manifest-version])))
+        (check "resource coverage binds only its logical map key and window"
+               [true [key 1700000000000000000 1700000001000000000]]
+               [(str/includes? (ffirst @calls)
+                               "mapContains(ResourceAttributes, ?)")
+                (second (first @calls))]))
+      (check "deleting location from a non-span binding fails closed"
+             :otel.exporter.chdb.explorer/typed-location-required
+             (:type
+              (thrown-data
+               #(explorer/typed-span-coverage
+                 target descriptor-set
+                 (update resource-request :schema-binding
+                         dissoc :attribute-location))))))))
+
 (defn run [check]
   (println "capability-bound typed span queries")
+  (run-location-tests check)
   (check "explorer publishes the closed typed Int64 aggregate vocabulary"
          {:aggregates [:count :min :max :avg]
           :group-by [:service-name]
@@ -176,6 +340,15 @@
                       (not (str/includes? sql malicious-key))
                       (not (str/includes? sql malicious-string-key))))
                @coverage-calls)])
+      (let [legacy-request
+            (update (coverage-request installation "checkout.complete")
+                    :schema-binding dissoc :attribute-location)
+            canonicalized
+            (with-redefs [jdbc/fetch (fn [& _] [coverage-row])]
+              (explorer/typed-span-coverage
+               target descriptor-set legacy-request))]
+        (check "an unambiguous legacy span binding canonicalizes its location"
+               (first standalone) canonicalized))
       (let [combined
             (with-redefs
               [jdbc/fetch
@@ -248,8 +421,10 @@
            [{:value "not-bool" :typedstatus 4 :count 2}]))]
       (check "approved keys query typed and generic-fallback distributions"
              [{:attribute-key malicious-key :count 4 :signal :spans
+               :attribute-location :span-attributes
                :source :typed :typed-status 3 :value "7"}
               {:attribute-key "checkout.complete" :count 2 :signal :spans
+               :attribute-location :span-attributes
                :source :generic-fallback :typed-status 4
                :value "not-bool"}]
              (explorer/typed-span-values
@@ -287,6 +462,7 @@
            [{:servicename "api" :count 2 :min -3 :max 19 :avg 8.0}])]
         (check "approved Int64 range aggregates preserve field version evidence"
                [{:attribute-key malicious-key
+                 :attribute-location :span-attributes
                  :field-id (:id field)
                  :manifest-version 1
                  :service-name "api"
@@ -619,6 +795,9 @@
            [(assoc-in base [:schema-binding :unexpected] true)
             :otel.exporter.chdb.explorer/invalid-typed-schema-binding]
            [(assoc-in base [:schema-binding :attribute-type] :string)
+            :otel.exporter.chdb.explorer/stale-typed-schema-binding]
+           [(assoc-in base [:schema-binding :attribute-location]
+                      :resource-attributes)
             :otel.exporter.chdb.explorer/stale-typed-schema-binding]
            [(assoc-in base [:schema-binding :field-id] stale-field-id)
             :otel.exporter.chdb.explorer/stale-typed-schema-binding]

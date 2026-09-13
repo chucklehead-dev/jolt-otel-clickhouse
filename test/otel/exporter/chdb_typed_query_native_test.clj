@@ -23,6 +23,7 @@
 (def empty-key "checkout.note")
 (def boolean-key "checkout.complete")
 (def unknown-key "checkout.dynamic")
+(def location-key "shared.trace.location")
 (def int64-exact-above-double 9007199254740993)
 (def int64-min -9223372036854775808)
 (def int64-max 9223372036854775807)
@@ -50,7 +51,16 @@
            :fragment fragment}])]
     (manifest/compile-bundle-manifest
      {:dataset-id "telemetry-prod" :application-id "checkout"
-      :lineage "checkout-v1" :version 1 :bundle bundle})))
+      :lineage "checkout-v1" :version 1 :bundle bundle
+      :reviewed-fragments
+      [{:schema manifest/reviewed-fragment-schema
+        :authority :advice :source "advice/trace-locations.edn"
+        :entries
+        (mapv (fn [location]
+                {:signal :spans :table "otel_traces" :location location
+                 :key location-key :type :string})
+              [:resource-attributes :scope-attributes
+               :span-attributes])}]})))
 
 (defn- observe-columns [connection]
   [{:columns (into {}
@@ -78,16 +88,18 @@
   (let [memory-exporter (memory/exporter)
         provider
         (sdk-tracer/tracer-provider
-         {:resource (resource/resource {"service.name" "typed-receiver"})
+         {:resource (resource/resource {"service.name" "typed-receiver"
+                                        location-key "resource"})
           :processors [(export/simple-processor memory-exporter)]})
         tracer (sdk-tracer/get-tracer
                 provider
                 {:name "typed-receiver-test" :version "1"
-                 :attributes {"scope.attribute" true}})
+                 :attributes {"scope.attribute" true location-key "scope"}})
         current
         (trace/start-span
          tracer "typed-direct-receiver-equivalence"
          {:attributes {malicious-key int64-max empty-key ""
+                       location-key "span"
                        unknown-key "fallback-only"}
           :start-timestamp (+ timestamp-base 2000)})
         linked
@@ -112,13 +124,18 @@
   (jdbc/fetch connection
               ["select * from otel_traces where TraceId=?" trace-id]))
 
-(defn- manifest-field [installation key]
-  (first (filter #(= key (:key %))
-                 (get-in installation [:record :manifest :fields]))))
+(defn- manifest-field
+  ([installation key]
+   (first (filter #(= key (:key %))
+                  (get-in installation [:record :manifest :fields]))))
+  ([installation location key]
+   (first (filter #(and (= key (:key %)) (= location (:location %)))
+                  (get-in installation [:record :manifest :fields])))))
 
 (defn- schema-binding [installation key]
   (let [field (manifest-field installation key)]
     {:attribute-key (:key field)
+     :attribute-location (:location field)
      :attribute-type (:type field)
      :field-id (:id field)
      :manifest-version (get-in field [:identity :version])}))
@@ -182,6 +199,7 @@
         (check "real DDL, JSON inserts, Map lookup, and typed query round trip"
                (sort-by
                 (juxt :attribute-key :typed-status :value)
+                (mapv #(assoc % :attribute-location :span-attributes)
                 [{:attribute-key malicious-key :count 1 :signal :spans
                   :source :generic-fallback :typed-status 0 :value "7"}
                  {:attribute-key malicious-key :count 1 :signal :spans
@@ -200,7 +218,7 @@
                   :source :generic-fallback :typed-status 0
                   :value "legacy-note"}
                  {:attribute-key empty-key :count 1 :signal :spans
-                  :source :typed :typed-status 2 :value ""}])
+                  :source :typed :typed-status 2 :value ""}]))
                actual)
         (check "status-1 absent rows are not published"
                false
@@ -294,7 +312,8 @@
                [(schema-binding installation boolean-key)
                 (schema-binding installation empty-key)
                 (schema-binding installation malicious-key)]
-               (mapv #(select-keys % [:attribute-key :attribute-type
+               (mapv #(select-keys % [:attribute-key :attribute-location
+                                      :attribute-type
                                       :field-id :manifest-version])
                      [standalone-boolean standalone-string standalone-int64]))
         (check "acquire-only native coverage preserves identity and counts"
@@ -381,6 +400,9 @@
             received-rows (rows-for-trace connection trace-id)
             int-field (manifest-field installation malicious-key)
             empty-field (manifest-field installation empty-key)
+            location-fields
+            (mapv #(manifest-field installation % location-key)
+                  [:resource-attributes :scope-attributes :span-attributes])
             physical-key #(keyword (get-in % [:physical %2]))]
         (check "direct typed export succeeds before receiver ingestion"
                [true 1] [(boolean direct-ok) (count direct-rows)])
@@ -396,10 +418,20 @@
                 (get direct-row (physical-key int-field :status-column))
                 (get direct-row (physical-key empty-field :value-column))
                 (get direct-row (physical-key empty-field :status-column))])
+        (check "equal keys at all trace locations retain independent typed values"
+               [["resource" 3] ["scope" 3] ["span" 3]]
+               (mapv (fn [field]
+                       [(get direct-row (physical-key field :value-column))
+                        (get direct-row (physical-key field :status-column))])
+                     location-fields))
         (check "generic attribute compatibility survives both ingestion paths"
                {malicious-key (str int64-max) empty-key ""
+                location-key "span"
                 unknown-key "fallback-only"}
                (:spanattributes direct-row))
+        (check "resource compatibility remains separate from the typed locations"
+               {"service.name" "typed-receiver" location-key "resource"}
+               (:resourceattributes direct-row))
         (check "causal nested values begin and remain free of synthetic zero counts"
                [false false false false]
                [(contains? (first (:events source)) :dropped-attributes-count)

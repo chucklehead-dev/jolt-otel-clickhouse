@@ -27,8 +27,10 @@
        {:signal :spans :table "otel_traces"
         :location :span-attributes :key "checkout.count" :type :int64}]}]}))
 
-(defn- installed []
-  (let [manifest (compiled)
+(defn- installed
+  ([] (installed (compiled)))
+  ([approved-manifest]
+  (let [manifest approved-manifest
         columns (registry/expected-columns (registry/prepare manifest))
         observed (atom {})
         next-column (atom 0)
@@ -44,11 +46,28 @@
          (let [{:keys [name type]} (nth columns @next-column)]
            (swap! next-column inc)
            (swap! observed assoc name type)))})
-     ::target target)))
+     ::target target))))
 
-(defn- field [installation key]
-  (first (filter #(= key (:key %))
-                 (get-in installation [:record :manifest :fields]))))
+(defn- mixed-compiled []
+  (manifest/compile-manifest
+   {:dataset-id "telemetry-prod" :application-id "checkout-locations"
+    :lineage "checkout-locations-v1" :version 1
+    :fragments
+    [{:schema manifest/reviewed-fragment-schema
+      :authority :advice :source "advice/checkout-locations.edn"
+      :entries
+      (mapv (fn [location]
+              {:signal :spans :table "otel_traces" :location location
+               :key "shared.location" :type :string})
+            [:resource-attributes :scope-attributes :span-attributes])}]}))
+
+(defn- field
+  ([installation key]
+   (first (filter #(= key (:key %))
+                  (get-in installation [:record :manifest :fields]))))
+  ([installation location key]
+   (first (filter #(and (= location (:location %)) (= key (:key %)))
+                  (get-in installation [:record :manifest :fields])))))
 
 (defn- projected-pair [row installation key]
   (let [physical (:physical (field installation key))]
@@ -187,4 +206,28 @@
              #(chdb-export/exporter
                {:db-spec "chdb::memory:" :create-schema? false
                 :signals #{:spans}
-                :typed-span-descriptors descriptor-set}))))))
+                :typed-span-descriptors descriptor-set})))))
+
+  (let [installation (installed (mixed-compiled))
+        descriptor-set (:descriptor-set installation)
+        target (::target installation)
+        projector (projection/trace-projector descriptor-set target)
+        source (assoc (span {"shared.location" "span"})
+                      :resource {:attributes {"shared.location" "resource"}}
+                      :scope {:name "typed-test"
+                              :attributes {"shared.location" ""}})
+        row (projector source)
+        pairs (mapv (fn [location]
+                      (let [physical (:physical
+                                      (field installation location
+                                             "shared.location"))]
+                        [(get row (:value-column physical))
+                         (get row (:status-column physical))]))
+                    [:resource-attributes :scope-attributes :span-attributes])]
+    (check "one capability projects equal keys independently at all trace locations"
+           [["resource" 3] ["" 2] ["span" 3]]
+           pairs)
+    (check "mixed trace capability cannot enter the legacy span-only projector"
+           :otel.exporter.chdb.attribute-projection/location-required
+           (:type (thrown-data
+                   #(projection/span-projector descriptor-set target))))))

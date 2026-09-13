@@ -44,10 +44,6 @@
               :signal :spans
               :table "otel_traces"))
 
-(def physically-supported-targets
-  "Target tuples with complete installer/export/query support today."
-  #{span-attribute-target})
-
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
   [signal table location]
@@ -58,6 +54,28 @@
 
 (defn target-of [value]
   (target (:signal value) (:table value) (:location value)))
+
+(def trace-attribute-targets
+  "The closed location-qualified logical targets owned by the trace table."
+  (set (map #(target :spans "otel_traces" %)
+            [:resource-attributes :scope-attributes :span-attributes])))
+
+(def trace-table-target
+  "The one physical authority shared by all location-qualified trace fields."
+  (sorted-map :signal :spans :table "otel_traces"))
+
+(def physically-supported-targets
+  "Target tuples with complete installer/export/query support today."
+  trace-attribute-targets)
+
+(defn trace-attribute-target? [value]
+  (contains? trace-attribute-targets (target-of value)))
+
+(defn physical-target-of
+  "Return the closed signal/table authority for a valid logical target."
+  [value]
+  (when-let [{:keys [signal table]} (target-of value)]
+    (sorted-map :signal signal :table table)))
 
 (defn physically-supported? [value]
   (contains? physically-supported-targets (target-of value)))

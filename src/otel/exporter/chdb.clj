@@ -133,7 +133,7 @@
      (event-columns events)
      (link-columns links)
      (if typed-projector
-       (typed-projector (:attributes span))
+       (typed-projector span)
        {}))))
 
 (defn- log-row [record]
@@ -401,7 +401,9 @@
   :persistence-barrier supplies the same post-batch contract for another
   persistence implementation and is mutually exclusive with :durable?.
   :typed-span-descriptors accepts only the opaque capability returned in an
-  active `install-approved!` result; the generic SpanAttributes map remains."
+  active `install-approved!` result. It may project resource, scope, and span
+  attributes while the ClickStack ResourceAttributes and SpanAttributes maps
+  remain unchanged."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors]
@@ -419,7 +421,7 @@
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))
          typed-projector (when typed-span-descriptors
-                           (attribute-projection/span-projector
+                           (attribute-projection/trace-projector
                             typed-span-descriptors conn))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
