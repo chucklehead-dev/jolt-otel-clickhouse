@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Pin the merged OTel closed-exporter configuration and background-export
+  failure retention fixes, with a resolved-classpath guard for the reviewed
+  dependency revision.
+
 - Validate immutable typed descriptor evidence once when its private,
   connection-bound capability is minted. Typed query and projection hot paths
   retain issuer and exact target checks without repeatedly walking the captured

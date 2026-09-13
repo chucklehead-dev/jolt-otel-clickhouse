@@ -1,10 +1,13 @@
 (ns otel.exporter.chdb-dependency-test
-  "Checks the resolved crypto implementation rather than rereading deps.edn."
+  "Checks resolved dependency implementations rather than rereading deps.edn."
   (:require [clojure.string :as str]
             [jolt.process :as process]))
 
 (def ^:private canonical-root
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
+
+(def ^:private otel-root
+  "https___github.com_casselc_otel.git/87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0/")
 
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
@@ -12,15 +15,20 @@
 (def ^:private wrong-root
   "https___github.com_casselc_jolt-crypto.git/8bd234142d56dd75d36d58065a311f29fa08611e/src")
 
-(defn- crypto-roots [classpath]
+(defn- dependency-roots [classpath dependency]
   (->> (str/split (str classpath) #":")
-       (filter #(str/includes? % "jolt-crypto"))
+       (filter #(str/includes? % dependency))
        vec))
 
-(defn- exact-resolution? [classpath expected-root]
-  (let [roots (crypto-roots classpath)]
+(defn- exact-resolution? [classpath dependency expected-root]
+  (let [roots (dependency-roots classpath dependency)]
     (and (= 1 (count roots))
          (str/includes? (first roots) expected-root))))
+
+(defn- exact-coordinate? [classpath dependency expected-root]
+  (let [roots (dependency-roots classpath dependency)]
+    (and (seq roots)
+         (every? #(str/includes? % expected-root) roots))))
 
 (defn- dependency-report [extra-args]
   (let [child (process/process (into ["jolt" "-Srepro"]
@@ -44,7 +52,10 @@
       (let [classpath (:out result)]
         (check "crypto resolves once from canonical upstream at the full SHA"
                true
-               (exact-resolution? classpath canonical-root))))
+               (exact-resolution? classpath "jolt-crypto" canonical-root))
+        (check "OTel resolves once from casselc/otel at the reviewed full SHA"
+               true
+               (exact-coordinate? classpath "casselc_otel.git" otel-root))))
     (let [wrong (dependency-report ["-Sdeps" wrong-coordinate])]
       (check "wrong-coordinate dependency report completes"
              true
@@ -52,7 +63,7 @@
       (when (map? wrong)
         (check "mutation resolves exactly from the wrong repository and SHA"
                true
-               (exact-resolution? (:out wrong) wrong-root))
+               (exact-resolution? (:out wrong) "jolt-crypto" wrong-root))
         (check "canonical oracle rejects the real wrong-coordinate resolution"
                false
-               (exact-resolution? (:out wrong) canonical-root))))))
+               (exact-resolution? (:out wrong) "jolt-crypto" canonical-root))))))
