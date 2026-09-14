@@ -30,6 +30,9 @@
              {:git/url "https://github.com/casselc/jolt-http.git"
               :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}}
             :main-opts ["-m" "otel.exporter.chdb-typed-log-socket-native-test"]}
+           :typed-log-explorer-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-explorer-runner"]}
            :test {:extra-paths ["test" "bench"]
                   :extra-deps
                   {io.github.casselc/jolt-http
