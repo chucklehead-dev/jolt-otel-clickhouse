@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Promote explicitly approved log-record attributes into typed columns on
+  `otel_logs` while retaining `LogAttributes`. A native gate compares direct
+  export with the same canonical record sent through a real loopback OTLP/HTTP
+  socket and proves exact signed-Int64 readback plus capability-free status.
+
 - Treat resource, scope, and span attributes as location-qualified fields under
   one confirmed `otel_traces` schema authority. The same logical key may be
   promoted independently at all three locations; export, direct/OTLP ingestion,

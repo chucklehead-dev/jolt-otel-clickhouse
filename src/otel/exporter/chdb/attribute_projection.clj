@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb.attribute-projection
-  "Pure trace-row projection from installer-confirmed typed descriptors."
-  (:require [otel.exporter.chdb.attribute-registry :as registry]
+  "Pure row projection from installer-confirmed typed descriptors."
+  (:require [otel.exporter.chdb.attribute-identity :as identity]
+            [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]))
 
 (def ^:private int64-min -9223372036854775808)
@@ -48,7 +49,22 @@
 (defn confirmed-span-fields
   "Return trace manifest fields after issuer and target identity confirmation."
   [descriptor-set target]
-  (confirmed-fields descriptor-set target))
+  (let [fields (confirmed-fields descriptor-set target)]
+    (when-not (every? identity/trace-attribute-target? fields)
+      (fail! "typed trace projection requires a trace-table capability"
+             ::signal-mismatch {}))
+    fields))
+
+(defn confirmed-log-fields
+  "Return log-record manifest fields after capability and target confirmation."
+  [descriptor-set target]
+  (let [fields (confirmed-fields descriptor-set target)]
+    (when-not (every? #(= identity/log-attribute-target
+                          (identity/target-of %))
+                      fields)
+      (fail! "typed log projection requires a log-attribute capability"
+             ::signal-mismatch {}))
+    fields))
 
 (defn- attributes-at [span location]
   (case location
@@ -86,6 +102,13 @@
   (let [fields (confirmed-span-fields descriptor-set target)]
     (fn [span]
       (project-fields fields #(attributes-at span %)))))
+
+(defn log-projector
+  "Compile one confirmed log-attribute capability into a log-row projector."
+  [descriptor-set target]
+  (let [fields (confirmed-log-fields descriptor-set target)]
+    (fn [record]
+      (project-fields fields #(when (= :log-attributes %) (:attributes record))))))
 
 (defn span-projector
   "Compile a legacy span-attribute-only capability into an attribute projector.

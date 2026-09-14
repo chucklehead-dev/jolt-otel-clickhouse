@@ -1,5 +1,5 @@
 (ns otel.exporter.chdb.attribute-registry-installer
-  "Authorized trace-table installation of persisted typed-attribute columns.
+  "Authorized installation of persisted typed-attribute columns.
 
   Invocation is the deployment authorization boundary. Telemetry never enters
   this API. Database execution and observation are explicit injected effects."
@@ -157,11 +157,11 @@
                                      (registry/record-key %))
                                  (:records catalog)))
         descriptors (registry/expected-columns record)
-        trace-fields (get-in record [:manifest :fields])]
+        fields (get-in record [:manifest :fields])]
     (when-not (and (= :active (:state record))
                    (= record persisted)
                    (= descriptors (registry/expected-columns persisted))
-                   (every? identity/trace-attribute-target? trace-fields))
+                   (every? identity/physically-supported? fields))
       (fail! "typed descriptor capability has inconsistent active evidence"
              ::invalid-confirmed-evidence {}))
     (result :active record snapshot descriptors
@@ -226,7 +226,7 @@
             confirmation))))))
 
 (defn install-approved!
-  "Install one deployment-approved span manifest through crash-safe cuts.
+  "Install one deployment-approved single-table manifest through crash-safe cuts.
 
   The sequence is persist preparing, freshly observe, apply only missing
   idempotent additive DDL, freshly observe again, then CAS-persist the resulting

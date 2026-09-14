@@ -20,9 +20,22 @@
          :git/sha "932444043c0c06f9e295ba4963419b2481e9dd07"}}
  :aliases {:benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
+           :typed-log-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-test"]}
+           :typed-log-socket-test
+           {:extra-paths ["test"]
+            :extra-deps
+            {io.github.casselc/jolt-http
+             {:git/url "https://github.com/casselc/jolt-http.git"
+              :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}}
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-socket-native-test"]}
            :test {:extra-paths ["test" "bench"]
                   :extra-deps
-                  {io.github.chucklehead-dev/jolt-hegel
+                  {io.github.casselc/jolt-http
+                   {:git/url "https://github.com/casselc/jolt-http.git"
+                    :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}
+                   io.github.chucklehead-dev/jolt-hegel
                    {:git/url "https://github.com/chucklehead-dev/jolt-hegel.git"
                     :git/sha "b214f769983211431c74e427f0f35553cfba7b34"}}
                   :main-opts ["-m" "otel.exporter.chdb-test"]}}

@@ -14,6 +14,8 @@
             [otel.exporter.chdb-attribute-registry-store-test :as registry-store-test]
             [otel.exporter.chdb-typed-query-test :as typed-query-test]
             [otel.exporter.chdb-typed-query-native-test :as typed-query-native-test]
+            [otel.exporter.chdb-typed-log-test :as typed-log-test]
+            [otel.exporter.chdb-typed-log-socket-native-test :as typed-log-socket-test]
             [otel.exporter.chdb-benchmark :as benchmark]
             [otel.exporter.chdb-dependency-test :as dependency-test]
             [otel.exporter.chdb-explorer-test :as explorer-test]
@@ -555,7 +557,9 @@
   (registry-store-test/run check)
   (registry-installer-test/run check)
   (typed-query-test/run check)
+  (typed-log-test/run check)
   (typed-query-native-test/run check)
+  (typed-log-socket-test/-main)
   (run-clean-source-load-check)
   (run-backend-benchmark-gate)
   (run-migration-checks)

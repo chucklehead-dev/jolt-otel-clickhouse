@@ -136,32 +136,40 @@
        (typed-projector span)
        {}))))
 
-(defn- log-row [record]
+(defn- log-row [record typed-projector]
   (let [scope (:scope record)
         resource (:resource record)]
-    {"Timestamp" (timestamp (log-timestamp-nanos record))
-     "TraceId" (or (:trace-id record) "")
-     "SpanId" (or (:span-id record) "")
-     "TraceFlags" (uint8 (:trace-flags record))
-     "SeverityText" (or (:severity-text record) "")
-     "SeverityNumber" (uint8 (:severity-number record))
-     ;; The pinned collector's GetServiceName uses an empty missing-value
-     ;; fallback, unlike the embedded span/metric compatibility default.
-     "ServiceName" (service-name resource "")
-     "Body" (value-string (:body record))
-     "ResourceSchemaUrl" (or (:schema-url resource) "")
-     "ResourceAttributes" (attrs (:attributes resource))
-     "ScopeSchemaUrl" (or (:schema-url scope) "")
-     "ScopeName" (or (:name scope) "")
-     "ScopeVersion" (or (:version scope) "")
-     "ScopeAttributes" (attrs (:attributes scope))
-     "LogAttributes" (attrs (:attributes record))
-     "EventName" (or (:event-name record) "")}))
+    (merge
+     {"Timestamp" (timestamp (log-timestamp-nanos record))
+      "TraceId" (or (:trace-id record) "")
+      "SpanId" (or (:span-id record) "")
+      "TraceFlags" (uint8 (:trace-flags record))
+      "SeverityText" (or (:severity-text record) "")
+      "SeverityNumber" (uint8 (:severity-number record))
+      ;; The pinned collector's GetServiceName uses an empty missing-value
+      ;; fallback, unlike the embedded span/metric compatibility default.
+      "ServiceName" (service-name resource "")
+      "Body" (value-string (:body record))
+      "ResourceSchemaUrl" (or (:schema-url resource) "")
+      "ResourceAttributes" (attrs (:attributes resource))
+      "ScopeSchemaUrl" (or (:schema-url scope) "")
+      "ScopeName" (or (:name scope) "")
+      "ScopeVersion" (or (:version scope) "")
+      "ScopeAttributes" (attrs (:attributes scope))
+      "LogAttributes" (attrs (:attributes record))
+      "EventName" (or (:event-name record) "")}
+     (if typed-projector (typed-projector record) {}))))
 
 (def ^:private log-insert-query
   (str "insert into otel_logs ("
        (str/join ", " schema/clickstack-log-insert-columns)
        ")"))
+
+(defn- selected-log-insert-query [typed-projector]
+  ;; A confirmed typed projection adds installer-owned columns beyond the
+  ;; pinned compatibility list. The unqualified table insert lets JSONEachRow
+  ;; name those additive fields; omitted unrelated table columns keep defaults.
+  (if typed-projector "insert into otel_logs" log-insert-query))
 
 (defn- chunks [rows]
   (map #(str (json/write-str %) "\n") rows))
@@ -376,8 +384,10 @@
       false
       (try
         (when (seq records)
-          (insert-json-rows! connection log-insert-query
-                             (map log-row records)))
+          (let [typed-projector (:typed-log-projector @state)]
+            (insert-json-rows! connection
+                               (selected-log-insert-query typed-projector)
+                               (map #(log-row % typed-projector) records))))
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -400,13 +410,13 @@
   signal batch returns true only after its WAL flush commits or reconciles.
   :persistence-barrier supplies the same post-batch contract for another
   persistence implementation and is mutually exclusive with :durable?.
-  :typed-span-descriptors accepts only the opaque capability returned in an
-  active `install-approved!` result. It may project resource, scope, and span
-  attributes while the ClickStack ResourceAttributes and SpanAttributes maps
-  remain unchanged."
+  :typed-span-descriptors and :typed-log-descriptors accept only opaque
+  capabilities returned in active `install-approved!` results. They project
+  their respective attributes while the compatible generic maps remain
+  unchanged."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
-            persistence-barrier typed-span-descriptors]
+            persistence-barrier typed-span-descriptors typed-log-descriptors]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -415,14 +425,18 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
-   (when (and typed-span-descriptors (nil? connection))
-     (throw (ex-info "Typed span descriptors require their explicit install connection"
+   (when (and (or typed-span-descriptors typed-log-descriptors)
+              (nil? connection))
+     (throw (ex-info "Typed descriptors require their explicit install connection"
                      {:type ::typed-descriptors-require-connection})))
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))
-         typed-projector (when typed-span-descriptors
-                           (attribute-projection/trace-projector
-                            typed-span-descriptors conn))
+         typed-span-projector (when typed-span-descriptors
+                                (attribute-projection/trace-projector
+                                 typed-span-descriptors conn))
+         typed-log-projector (when typed-log-descriptors
+                               (attribute-projection/log-projector
+                                typed-log-descriptors conn))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (when durable?
@@ -446,7 +460,8 @@
                               :connection-close-status :open
                               :connection-closed? false
                               :persistence-barrier barrier
-                              :typed-span-projector typed-projector
+                              :typed-span-projector typed-span-projector
+                              :typed-log-projector typed-log-projector
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t
