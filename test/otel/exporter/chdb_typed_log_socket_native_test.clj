@@ -179,7 +179,10 @@
             (try
               (check! "control log without the capability still exports" true
                       (sdk-logs/export-logs!
-                       legacy [(record "typed.log.without-capability")]))
+                       legacy
+                       [(record "typed.log.without-capability")
+                        (assoc (record "typed.log.without-promoted-keys")
+                               :attributes {"fallback" "retained"})]))
               (let [control (first (rows connection
                                          "typed.log.without-capability"))]
                 (check! "removing the capability causally leaves typed status historical"
@@ -197,11 +200,13 @@
                           connection descriptor-set
                           (filter-request query-field operator value))]
               (check! (str "native typed log filter and coverage: " key)
-                      [4 2 2 2 expected]
+                      [5 2 2 1 2 expected]
                       [(get-in result [:coverage :total])
                        (get-in result [:coverage :valid])
                        (get-in result [:coverage
                                        :historical-untyped-fallback])
+                       (get-in result [:coverage
+                                       :historical-untyped-unavailable])
                        (count (:matches result))
                        (:attribute-value (first (:matches result)))])))
           (let [stale-field (first fields)
