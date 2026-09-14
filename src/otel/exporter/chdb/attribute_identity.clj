@@ -44,6 +44,11 @@
               :signal :spans
               :table "otel_traces"))
 
+(def log-attribute-target
+  (sorted-map :location :log-attributes
+              :signal :logs
+              :table "otel_logs"))
+
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
   [signal table location]
@@ -65,8 +70,8 @@
   (sorted-map :signal :spans :table "otel_traces"))
 
 (def physically-supported-targets
-  "Target tuples with complete installer/export/query support today."
-  trace-attribute-targets)
+  "Target tuples with complete installer and exporter support today."
+  (conj trace-attribute-targets log-attribute-target))
 
 (defn trace-attribute-target? [value]
   (contains? trace-attribute-targets (target-of value)))

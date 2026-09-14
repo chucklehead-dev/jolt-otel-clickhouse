@@ -7,8 +7,9 @@ queried attributes can eventually be copied into dedicated typed columns while
 the existing text entry remains available.
 
 The manifest format is storage-independent and the current installer/exporter
-path supports resource, scope, and span attributes on `otel_traces`. Every reviewed declaration now
-names a closed signal, physical table, and attribute location before it can
+path supports resource, scope, and span attributes on `otel_traces`, plus
+log-record attributes on `otel_logs`. Every reviewed declaration names a closed
+signal, physical table, and attribute location before it can
 influence a checksum, field identifier, registry plan, or capability consumer.
 
 ```mermaid
@@ -20,8 +21,8 @@ flowchart LR
     D --> F[Checksummed v3 typed manifest]
     F --> G[Persistence-ready registry record]
     G --> H[Deterministic column plan]
-    H --> I[Authorized trace-table installer]
-    I --> J[Capability-bound trace export and query]
+    H --> I[Authorized table installer]
+    I --> J[Capability-bound signal export and query]
     H -. unsupported targets stay data only .-> K[Later signal-specific slices]
 ```
 
@@ -347,15 +348,16 @@ now explicit: one install attempt has exactly one manifest-owned physical
 signal/table target, which may contain several attribute locations, a
 schema-observed event names that target, and reconciliation requires a fresh
 envelope for that exact table. Pure reconciliation tests exercise all five
-closed tables; only resource, scope, and span attributes on the trace target
-reach DDL. The joined catalog/DDL/publication model remains tracked by issue #8.
+closed tables; only resource, scope, and span attributes on the trace target and
+log-record attributes on the log target reach DDL. The joined
+catalog/DDL/publication model remains tracked by issue #8.
 Running that future model is
 intentionally deferred while the existing exhaustive Durable check owns machine
 resources.
 
 Each value column reserves a `UInt8` status column with stable meanings for
-historical-untyped, absent, present-empty, valid, and invalid. The current span
-exporter writes those statuses; reserving them in the shared plan prevents later
+historical-untyped, absent, present-empty, valid, and invalid. The trace and log
+exporters write those statuses; reserving them in the shared plan prevents later
 signal-specific ingestion from inventing an ambiguous nullable contract.
 
 The manifest carries the prerequisite signal/table/location identity. This
@@ -363,7 +365,9 @@ physical registry seam accepts the three exact trace targets whose signal and
 table are `:spans` and `otel_traces`, with location `:resource-attributes`,
 `:scope-attributes`, or `:span-attributes`. They share one physical table
 authority while retaining disjoint field IDs and columns. Other valid targets
-compile into storage-independent plans and distinct field IDs, then fail with
+are rejected except for the exact log target `{:signal :logs, :table
+"otel_logs", :location :log-attributes}`. Log resource/scope and every metric
+target compile into storage-independent plans and distinct field IDs, then fail with
 `:unsupported-target` if passed to `registry/prepare`. Later ingestion/query
 slices must implement their signal-specific row and table semantics before that
 allowlist expands.
@@ -418,6 +422,34 @@ The complete stored physical rows, including promoted values/statuses, generic
 attributes, events, links, resource, and scope metadata, must be identical. The
 receiver is a Ring boundary rather than a socket server; network transport and
 authentication remain host-owned and outside this equivalence claim.
+
+### Export confirmed typed log-record values
+
+A separate log-table manifest can authorize exactly `:log-attributes` on
+`otel_logs`. Pass its confirmed capability on the same explicit connection:
+
+```clojure
+(otel.exporter.chdb/exporter
+ {:connection connection
+  :signals #{:logs}
+  :typed-log-descriptors (:descriptor-set log-installation)})
+```
+
+Projection uses the same value/status meanings as traces and leaves the
+compatible `LogAttributes Map(String,String)` entry unchanged. A capability
+for another signal, a bare descriptor vector, or a capability installed on a
+different connection fails before insertion. Typed log export uses the fixed
+`otel_logs` table and only installer-owned physical columns; the legacy path
+without a capability retains the pinned 16-column compatibility insert.
+
+The log qualification gate goes beyond the transport-neutral trace fixture. It
+starts a test-only `jolt-http` listener on an ephemeral loopback port, sends a
+canonical SDK log through the pinned OTLP log exporter, and compares the native
+chDB row with direct export on the same confirmed capability and connection.
+Readback must retain an exact Int64 above double precision, status `3`, and the
+unchanged fallback map. Removing the capability leaves the typed status at the
+historical default `0`. The server library is test-only; this storage exporter
+does not own an HTTP listener in production.
 
 The descriptor-set class necessarily has a host-visible constructor, but its
 value also carries a private identity issuer checked on every consumption.
@@ -586,7 +618,9 @@ Only an installer-issued active descriptor capability is queryable.
 Direct-export versus OTLP-receiver typed-row equivalence is qualified on the
 same process-local capability and connection. Resource, scope, and span fields
 are location-qualified; the same logical key may appear independently at all
-three locations.
+three locations. Log-record attributes are also qualified through a real
+loopback socket and native readback. Log resource/scope attributes, typed log
+queries, and all metric targets remain unsupported.
 Typed numeric queries are intentionally limited to exact Int64 `:eq`, `:gte`,
 and `:lt` trace filters plus range aggregation. Comparative map-conversion
 benchmarks, broader grouping and aggregate vocabularies, and other promoted

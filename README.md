@@ -21,11 +21,12 @@ Restarted or read-only consumers can reacquire the process-local descriptor
 capability from an operator-selected active record after fresh schema and
 catalog-freshness checks, without DDL or a catalog write. That capability can
 enable location-qualified typed resource, scope, and span columns on the
-existing trace exporter, bounded value
+existing trace exporter and typed log-record columns on `otel_logs`, while
+retaining the compatible attribute maps. It also enables bounded value
 distributions, exact Int64 range aggregates and trace filters, and typed
 Boolean/string trace filters plus coverage-only queries while retaining the
-generic `ResourceAttributes` and `SpanAttributes` maps. Typed predicates use only
-status-valid physical values and never reinterpret fallback text.
+generic trace maps. Typed predicates use only status-valid physical values and
+never reinterpret fallback text.
 See
 [`docs/typed-attributes.md`](docs/typed-attributes.md) for the boundary and an
 example, including the fail-closed v1-to-v2 manifest migration boundary.
