@@ -180,9 +180,13 @@
          "  AND " status (if string? " IN (2, 3)\n" " = 3\n")
          "  AND " (predicate request value) "\n"
          "ORDER BY Timestamp DESC, TraceId ASC, SpanId ASC\n"
-         "LIMIT ?\nSETTINGS max_result_bytes = 1048576, max_rows_to_read = 100000, "
-         "max_bytes_to_read = 67108864, max_memory_usage = 134217728, "
-         "max_execution_time = 5, max_threads = 1")))
+         "LIMIT ?\nSETTINGS max_result_bytes = "
+         explorer/max-typed-int64-result-bytes
+         ", max_rows_to_read = " explorer/max-typed-int64-scan-rows
+         ", max_bytes_to_read = " explorer/max-typed-int64-scan-bytes
+         ", max_memory_usage = " explorer/max-typed-int64-memory-bytes
+         ", max_execution_time = " explorer/max-typed-int64-query-seconds
+         ", max_threads = 1")))
 
 (defn- match-params [{:keys [end field limit start text-length value]}]
   (vec (concat (repeat (if (= :string (:type field)) 4 3) text-length)
@@ -200,9 +204,12 @@
          "FROM (SELECT " status " AS typedstatus, mapContains(LogAttributes, ?) AS hasfallback\n"
          " FROM otel_logs WHERE toUnixTimestamp64Nano(Timestamp) >= ?\n"
          " AND toUnixTimestamp64Nano(Timestamp) < ?)\n"
-         "SETTINGS max_result_bytes = 1048576, max_rows_to_read = 100000, "
-         "max_bytes_to_read = 67108864, max_memory_usage = 134217728, "
-         "max_execution_time = 5, max_threads = 1")))
+         "SETTINGS max_result_bytes = " explorer/max-typed-int64-result-bytes
+         ", max_rows_to_read = " explorer/max-typed-int64-scan-rows
+         ", max_bytes_to_read = " explorer/max-typed-int64-scan-bytes
+         ", max_memory_usage = " explorer/max-typed-int64-memory-bytes
+         ", max_execution_time = " explorer/max-typed-int64-query-seconds
+         ", max_threads = 1")))
 
 (defn- coverage! [connection {:keys [field start end]}]
   (let [rows (jdbc/fetch connection
@@ -216,7 +223,8 @@
           counts [valid presentempty absent invalid historicalfallback
                   historicalunavailable unknownstatus]]
       (when-not (and (every? #(and (integer? %) (not (neg? %))) counts)
-                     (integer? total) (<= 0 total 100000)
+                     (integer? total)
+                     (<= 0 total explorer/max-typed-int64-scan-rows)
                      (= total (reduce + 0 counts)) (zero? unknownstatus))
         (fail! ::invalid-result "typed log coverage contains invalid statuses" {}))
       {:valid valid :present-empty presentempty :absent absent :invalid invalid
