@@ -426,6 +426,19 @@ one query thread. Both histogram timestamps have the pinned table's whole-second
 precision. `supported-cumulative-histogram-series` returns the closed recipe
 vocabulary.
 
+### Typed log-record queries
+
+`otel.exporter.chdb.typed-log-explorer` provides schema-bound filters and
+six-way availability coverage for approved `otel_logs` record attributes.
+The current promotion manifest supports Boolean, signed Int64, and String;
+the filter capability exposes only equality for Boolean, equality/range for
+Int64, and equality/prefix/contains for String. Every request carries the
+complete field id, key, type, location, and manifest version returned by the
+confirmed catalog. Physical columns and SQL remain library-owned, and results
+are capped at 100 rows, 24 hours, and 256 characters. Historical generic map
+values contribute only to fallback/unavailable coverage because their original
+OTel scalar type cannot be recovered safely.
+
 ## Development and releases
 
 Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run

@@ -10,6 +10,7 @@
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
+            [otel.exporter.chdb.typed-log-explorer :as log-explorer]
             [otel.exporter.otlp :as otlp-export]
             [otel.otlp.http-receiver :as receiver]
             [otel.resource :as resource]
@@ -49,6 +50,10 @@
       :authority :advice :source "advice/log-socket.edn"
       :entries
       [{:signal :logs :table "otel_logs" :location :log-attributes
+        :key "job.name" :type :string}
+       {:signal :logs :table "otel_logs" :location :log-attributes
+        :key "job.complete" :type :boolean}
+       {:signal :logs :table "otel_logs" :location :log-attributes
         :key "job.attempt" :type :int64}]}]}))
 
 (defn- observe-columns [connection]
@@ -65,7 +70,20 @@
    :body {"job" "archive"} :event-name event-name
    :resource (resource/resource {:service.name "log-socket"})
    :scope {:name "typed-log-socket" :version "1"}
-   :attributes {"job.attempt" exact-int64 "fallback" "retained"}})
+   :attributes {"job.name" "archive" "job.complete" false
+                "job.attempt" exact-int64 "fallback" "retained"}})
+
+(defn- schema-binding [field]
+  {:attribute-key (:key field) :attribute-location (:location field)
+   :attribute-type (:type field) :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- filter-request [field operator value]
+  {:attribute-key (:key field) :attribute-location :log-attributes
+   :schema-binding (schema-binding field) :signal :logs
+   :start-unix-nano 1699999999999999999
+   :end-unix-nano 1700000000000000001
+   :operator operator :value value :limit 10 :max-text-length 64})
 
 (defn- rows [connection event-name]
   (jdbc/fetch connection
@@ -91,7 +109,8 @@
             :observe-columns #(observe-columns connection)
             :execute-ddl! #(jdbc/execute! connection %)})
           descriptor-set (:descriptor-set installation)
-          field (first (get-in installation [:record :manifest :fields]))
+          fields (get-in installation [:record :manifest :fields])
+          field (first (filter #(= "job.attempt" (:key %)) fields))
           value-key (keyword (get-in field [:physical :value-column]))
           status-key (keyword (get-in field [:physical :status-column]))
           receiving
@@ -125,7 +144,8 @@
                     [(count stored) (every? #(= first-row %) stored)])
             (check! "native readback retains exact Int64 status and fallback"
                     [exact-int64 3
-                     {"job.attempt" (str exact-int64) "fallback" "retained"}]
+                     {"job.name" "archive" "job.complete" "false"
+                      "job.attempt" (str exact-int64) "fallback" "retained"}]
                     [(get first-row value-key) (get first-row status-key)
                      (:logattributes first-row)]))
           (let [captured (atom nil)
@@ -159,14 +179,45 @@
             (try
               (check! "control log without the capability still exports" true
                       (sdk-logs/export-logs!
-                       legacy [(record "typed.log.without-capability")]))
+                       legacy
+                       [(record "typed.log.without-capability")
+                        (assoc (record "typed.log.without-promoted-keys")
+                               :attributes {"fallback" "retained"})]))
               (let [control (first (rows connection
                                          "typed.log.without-capability"))]
                 (check! "removing the capability causally leaves typed status historical"
-                        [0 {"job.attempt" (str exact-int64)
+                        [0 {"job.name" "archive" "job.complete" "false"
+                            "job.attempt" (str exact-int64)
                             "fallback" "retained"}]
                         [(get control status-key) (:logattributes control)]))
               (finally (sdk-logs/shutdown-log-exporter! legacy)))))
+          (doseq [[key operator value expected]
+                  [["job.name" :prefix "arch" "archive"]
+                   ["job.complete" :eq false false]
+                   ["job.attempt" :gte exact-int64 exact-int64]]]
+            (let [query-field (first (filter #(= key (:key %)) fields))
+                  result (log-explorer/typed-log-filtered-records
+                          connection descriptor-set
+                          (filter-request query-field operator value))]
+              (check! (str "native typed log filter and coverage: " key)
+                      [5 2 2 1 2 expected]
+                      [(get-in result [:coverage :total])
+                       (get-in result [:coverage :valid])
+                       (get-in result [:coverage
+                                       :historical-untyped-fallback])
+                       (get-in result [:coverage
+                                       :historical-untyped-unavailable])
+                       (count (:matches result))
+                       (:attribute-value (first (:matches result)))])))
+          (let [stale-field (first fields)
+                stale (assoc-in (filter-request stale-field :eq "archive")
+                                [:schema-binding :manifest-version] 2)]
+            (check! "wrong typed log schema binding fails before SQL"
+                    :otel.exporter.chdb.typed-log-explorer/stale-binding
+                    (:type (ex-data
+                            (caught
+                             #(log-explorer/typed-log-filtered-records
+                               connection descriptor-set stale))))))
         (finally
           (when-let [outbound @client]
             (sdk-logs/shutdown-log-exporter! outbound))

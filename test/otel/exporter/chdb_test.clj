@@ -15,6 +15,7 @@
             [otel.exporter.chdb-typed-query-test :as typed-query-test]
             [otel.exporter.chdb-typed-query-native-test :as typed-query-native-test]
             [otel.exporter.chdb-typed-log-test :as typed-log-test]
+            [otel.exporter.chdb-typed-log-explorer-test :as typed-log-explorer-test]
             [otel.exporter.chdb-typed-log-socket-native-test :as typed-log-socket-test]
             [otel.exporter.chdb-benchmark :as benchmark]
             [otel.exporter.chdb-dependency-test :as dependency-test]
@@ -53,7 +54,8 @@
                      'otel.exporter.chdb.attribute-registry-installer
                      'otel.exporter.chdb.attribute-registry-store
                      'otel.exporter.chdb.schema
-                     'otel.exporter.chdb.explorer]]
+                     'otel.exporter.chdb.explorer
+                     'otel.exporter.chdb.typed-log-explorer]]
     (let [expression (str "(require '" source-ns ")"
                           "(println :clean-source-load '" source-ns ")")
           child (process/process
@@ -558,6 +560,7 @@
   (registry-installer-test/run check)
   (typed-query-test/run check)
   (typed-log-test/run check)
+  (typed-log-explorer-test/run check)
   (typed-query-native-test/run check)
   (typed-log-socket-test/-main)
   (run-clean-source-load-check)

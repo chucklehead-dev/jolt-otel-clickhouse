@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add capability-bound typed log-record filters and six-way availability
+  coverage for every scalar type supported by the current promotion manifest.
+  Exact schema bindings and the installed connection authorize library-owned,
+  bounded SQL; historical generic values remain visible only in coverage and
+  never satisfy typed predicates. Refs #41, #8.
+
 - Promote explicitly approved log-record attributes into typed columns on
   `otel_logs` while retaining `LogAttributes`. A native gate compares direct
   export with the same canonical record sent through a real loopback OTLP/HTTP
