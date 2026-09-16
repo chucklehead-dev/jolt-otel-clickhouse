@@ -120,6 +120,32 @@ manifest. If insertion or the persistence barrier fails, export returns
 `false` and `last-error` retains the cause. Span force-flush reaches the same
 barrier.
 
+For a local-only Linux native integration check, run the following from this
+repository, replacing every placeholder with independently qualified paths
+and SHA-256 checksums:
+
+```sh
+env JOLT_BIN=/path/to/qualified/jolt \
+  JOLT_WRAPPER=/path/to/chez-10.4.1-wrapper \
+  JOLT_EXPECTED_BINARY_SHA256='<binary-sha256>' \
+  JOLT_EXPECTED_WRAPPER_SHA256='<wrapper-sha256>' \
+  JOLT_CHDB_LIB=/path/to/native-pair/libchdb.so \
+  JOLT_CHDB_HEADER=/path/to/native-pair/chdb.h \
+  JOLT_CHDB_EXPECTED_LIBRARY_SHA256='<library-sha256>' \
+  JOLT_CHDB_EXPECTED_HEADER_SHA256='<header-sha256>' \
+  JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb \
+  timeout --signal=TERM --kill-after=5s 210s \
+  bash scripts/qualify-durable-typed-native.sh
+```
+
+The clean local driver override is required until the dependency pin includes
+the merged row API; it does not qualify an unmerged dependency for publication.
+The gate verifies typed spans/logs and timestamps through fresh-reader WAL
+replay while the writer remains alive, rather than a shutdown checkpoint.
+Child environments strip credentials; evidence is retained without retries.
+An unconfirmed surviving process reports incomplete cleanup without signaling
+an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.
+
 This is an at-least-once boundary: a failed or ambiguous attempt can have made
 local progress, so an SDK retry may produce duplicates. Durable's flush only
 returns successfully after its manifest transition is committed or reconciled.

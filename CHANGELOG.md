@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an opt-in, local-only Linux native gate for typed Durable span/log
+  exports and fresh-reader WAL recovery, preserving canonical tests and
+  requiring explicit runtime/library provenance. Refs #27.
+
 - Fail closed before exporter schema writes unless the actual loaded chDB
   package reports the qualified 26.7.3 timestamp wire. Compatible library
   overrides and Durable connections receive the same check; no bypass option
