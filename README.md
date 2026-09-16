@@ -475,6 +475,26 @@ Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run
 which the test workflow passed; consumers should continue to pin that commit
 SHA even when also recording the tag.
 
+### Ordinary transport comparison
+
+The opt-in Linux developer lane `bash scripts/qualify-ordinary-transport-benchmark.sh`
+compares the current shared row projection over legacy SQL and ordinary row-data
+transport in A/B/B/A order. Each arm uses 512-row batches, five warmups and
+20 measurements for serialization-inclusive and pre-encoded regions. A fresh
+reader reconciles all 25,600 rows as 1,024 complete groups, including exact
+timestamps and promoted Boolean/Int64 values and statuses; payload digests and
+ordered columns must agree across arms.
+
+Set the same explicit Jolt/mandatory Chez wrapper, native library/header and
+four checksum variables shown for the Durable developer gate above, plus a
+clean `JOLT_CHDB_SOURCE_ROOT` and its full `JOLT_EXPECTED_DRIVER_REV`. The
+local override is required until the merged row API is pinned; it does not
+make an unmerged dependency publishable. The launcher enforces a 360-second
+outer deadline and 60 seconds per child, strips child credentials and retains
+task-owned stores and aggregate evidence without retries. Both routes use the
+current encoder/projector: this is a transport comparison, not a historical
+before/after baseline, p99/allocation qualification, or a Durable/S3 target claim.
+
 ### Backend benchmark
 
 The opt-in benchmark drives deterministic span, log, gauge, sum, and histogram

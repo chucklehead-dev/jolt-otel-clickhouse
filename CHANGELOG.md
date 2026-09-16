@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add an opt-in ordinary transport ABBA benchmark with explicit provenance,
+  bounded child processes and complete fresh-reader reconciliation. Refs #27.
+
 - Add an opt-in, local-only Linux native gate for typed Durable span/log
   exports and fresh-reader WAL recovery, preserving canonical tests and
   requiring explicit runtime/library provenance. Refs #27.
