@@ -7,6 +7,9 @@
             [jolt.process :as process]
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-test-support :as test-support]
+            [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
+            [otel.exporter.chdb-ordinary-typed-rows-test :as ordinary-typed-rows-test]
             [otel.exporter.chdb-attribute-manifest-test :as manifest-test]
             [otel.exporter.chdb-attribute-projection-test :as attribute-projection-test]
             [otel.exporter.chdb-attribute-registry-test :as registry-test]
@@ -42,6 +45,26 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
+(defn- child-test-executable []
+  ;; Local qualification supplies an absolute, checksum-guarded command:
+  ;; the mandatory Chez wrapper prepends ~/.local/bin to PATH.
+  (let [selected (System/getenv "JOLT_TEST_CHILD_EXECUTABLE")]
+    (if (nil? selected)
+      "jolt"
+      (do
+        (when-not (and (not (str/blank? selected))
+                       (.isAbsolute (java.io.File. selected)))
+          (throw (ex-info "Invalid child test executable"
+                          {:type ::invalid-child-test-executable})))
+        selected))))
+
+(defn- isolated-memory-db-spec [scenario]
+  ;; Separate query contexts select separate logical databases while respecting
+  ;; the immutable native process-lifetime physical :memory: anchor.
+  {:vendor "chdb" :name ":memory:"
+   :database (str "exporter_" scenario "_"
+                  (str/replace (str (java.util.UUID/randomUUID)) "-" "_"))})
+
 (defn- run-clean-source-load-check []
   ;; This cannot be an in-process require-order check: this test runner has
   ;; already loaded db.jdbc for its native integration tests. Disable the child
@@ -59,7 +82,7 @@
     (let [expression (str "(require '" source-ns ")"
                           "(println :clean-source-load '" source-ns ")")
           child (process/process
-                 ["jolt" "-e" expression]
+                 [(child-test-executable) "-e" expression]
                  {:out :string :err :string
                   :extra-env {"JOLT_AOT_CACHE" "0"}})
           result (deref child 60000 ::timeout)]
@@ -164,9 +187,85 @@
              expected
              (mapv (fn [column] [column (get actual column)]) columns)))))
 
+(defn run-persistent-migration-child!
+  "One native physical path in a fresh process; no anchor reset or alternate pins."
+  []
+  (reset! failures 0)
+  (let [observed (atom 0)
+        original-check check]
+   (with-redefs [check (fn [& arguments]
+                        (swap! observed inc)
+                        (apply original-check arguments))]
+  (let [path (System/getenv "JOLT_PERSISTENT_MIGRATION_PATH")
+        db-spec (str "chdb:" path)]
+    (when-not (and (string? path) (not (str/blank? path)))
+      (throw (ex-info "Persistent migration child path missing" {})))
+      (with-open [conn (jdbc/connection db-spec)]
+        (schema/migrate! conn))
+      (with-open [conn (jdbc/connection db-spec)]
+        (schema/migrate! conn)
+        (check "persistent database reopen keeps all migration records" 4
+               (:n (jdbc/fetch-one conn
+                                    "select count() as n from otel_schema_migrations"))))))
+  (let [failure-count @failures
+        qualified? (and (= 1 @observed) (zero? failure-count))]
+    (println :persistent-migration-child-result
+             :assertions @observed :failures failure-count)
+    (when qualified?
+      (println :persistent-migration-child-confirmed))
+    (System/exit (if qualified? 0 1)))))
+
+(defn- run-persistent-migration-process-check []
+  ;; Use the same explicit child executable contract as clean-source checks.
+  ;; :test supplies this namespace; no root pin or production override is added.
+  (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
+        path (.getAbsolutePath placeholder)
+        terminal? (atom false)
+        owned-child (atom nil)]
+    (.delete placeholder)
+    (try
+     (let [expression "(try (require 'otel.exporter.chdb-test) ((ns-resolve 'otel.exporter.chdb-test 'run-persistent-migration-child!)) (catch Throwable _ (println :persistent-migration-child-error) (System/exit 1)))"
+           child (process/process [(child-test-executable) "-A:test" "-e" expression]
+                                  {:out :string :err :string
+                                   :extra-env {"JOLT_AOT_CACHE" "0"
+                                               "JOLT_PERSISTENT_MIGRATION_PATH" path}})]
+       ;; Publish ownership before any potentially throwing wait/output read.
+       (reset! owned-child child)
+      (let [result (deref child 120000 ::timeout)]
+       (reset! terminal? (and (map? result) (integer? (:exit result))))
+    ;; Validate a completed child and its unique assertion/summary witnesses.
+    ;; A failed/timeout child increments the parent's existing failure counter.
+    (check "persistent migrations qualify in a separate native process"
+           true
+           (and (map? result) (zero? (:exit result))
+                (str/includes? (str (:out result))
+                               "persistent database reopen keeps all migration records")
+                (= 1 (count (re-seq #"(?m)^:persistent-migration-child-confirmed$"
+                                   (str (:out result)))))
+                (str/includes? (str (:out result))
+                               ":persistent-migration-child-result :assertions 1 :failures 0")))))
+     (catch Throwable _
+       (check "persistent migration child setup remains an accounted failure" true false))
+     (finally
+       ;; Every post-spawn exceptional path retains the same owned handle.
+       ;; A terminal child is not driven twice. Otherwise request retirement
+       ;; once and independently await its actual result within five seconds.
+       (when (and @owned-child (not @terminal?))
+         (try (process/destroy-tree @owned-child) (catch Throwable _ nil))
+         (let [settled (try (deref @owned-child 5000 ::cleanup-timeout)
+                            (catch Throwable _ ::cleanup-error))]
+           (reset! terminal? (and (map? settled) (integer? (:exit settled))))
+           (check "persistent migration child cleanup confirms terminal ownership"
+                  true @terminal?)))
+       ;; destroy-tree is only a request. Do not delete a DB while its child
+       ;; might still own it; an unresolved timeout remains a failed gate.
+       (if @terminal?
+         (delete-tree! path)
+         (println :persistent-migration-cleanup-terminal-unconfirmed))))))
+
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "fresh"))]
     (schema/migrate! conn)
     (schema/migrate! conn)
     (let [applied (jdbc/fetch conn
@@ -182,24 +281,11 @@
       (check "migration checksums are SHA-256" [64 64 64 64]
              (mapv #(count (:checksum %)) applied))))
 
-  (let [placeholder (java.io.File/createTempFile "jolt-otel-migrations-" ".chdb")
-        path (.getAbsolutePath placeholder)
-        db-spec (str "chdb:" path)]
-    (.delete placeholder)
-    (try
-      (with-open [conn (jdbc/connection db-spec)]
-        (schema/migrate! conn))
-      (with-open [conn (jdbc/connection db-spec)]
-        (schema/migrate! conn)
-        (check "persistent database reopen keeps all migration records" 4
-               (:n (jdbc/fetch-one conn
-                                    "select count() as n from otel_schema_migrations"))))
-      (finally
-        (delete-tree! path))))
+  (run-persistent-migration-process-check)
 
   ;; chDB has no DDL transaction. Simulate a crash/failure after v1's first
   ;; statement and prove the unrecorded, idempotent migration can be retried.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "v1_failure"))]
     (let [execute! jdbc/execute!
           failed? (atom false)
           failure
@@ -229,7 +315,7 @@
 
   ;; A partially applied v2 must leave the immutable v1 history intact and
   ;; safely resume its IF NOT EXISTS ALTER/CREATE statements.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "v2_failure"))]
     (let [execute! jdbc/execute!
           failed? (atom false)
           failure
@@ -258,7 +344,7 @@
   ;; v3 is an in-place sequence of idempotent type/codec changes. A partial
   ;; application is not recorded and retry must converge without changing the
   ;; immutable v1/v2 history.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "v3_failure"))]
     (let [execute! jdbc/execute!
           failed? (atom false)
           failure
@@ -286,7 +372,7 @@
 
   ;; Exercise the v3 DDL against data shaped by the immutable v1 table, rather
   ;; than proving type changes only on an empty fresh database.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "legacy_v3"))]
     (jdbc/execute! conn schema/logs-ddl)
     (jdbc/execute!
      conn
@@ -307,7 +393,7 @@
 
   ;; v4 spans three existing tables. Failure after earlier actions must retain
   ;; the immutable v1-v3 prefix and retry every IF EXISTS/IF NOT EXISTS action.
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "v4_failure"))]
     (let [execute! jdbc/execute!
           failed? (atom false)
           fail-statement (nth schema/metric-v4-statements 17)
@@ -334,7 +420,7 @@
                                "select Version from otel_schema_migrations order by Version")))
       (run-clickstack-metric-schema-checks conn)))
 
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "checksum_drift"))]
     (schema/migrate! conn)
     (jdbc/execute! conn
                    "alter table otel_schema_migrations
@@ -416,9 +502,10 @@
 
 (defn- run-instrumentation-suppression-checks []
   (println "telemetry database self-observation suppression")
-  (let [seen (atom [])
-        exporter (chdb-export/exporter
-                  {:connection :fake :create-schema? false :signals #{:spans}})
+  (with-open [connection (test-support/connection)]
+   (let [seen (atom [])
+        exporter (test-support/call-with-qualified-native #(chdb-export/exporter
+                  {:connection connection :create-schema? false :signals #{:spans}}))
         span {:name "test"
               :kind :internal
               :start-time-unix-nano 1
@@ -431,14 +518,16 @@
               :events []
               :links []
               :status {:code :unset}}]
-    (with-redefs [jdbc/execute!
-                  (fn [_ _]
+    (with-redefs [jdbc.chdb/insert-json-rows!
+                  (fn [actual-connection _ _ _]
+                    (check "suppression probe reaches the actual ordinary connection"
+                           true (identical? connection actual-connection))
                     (swap! seen conj (context/instrumentation-suppressed?))
                     {:count 1})]
       (check "span export succeeds under suppression"
              true (export/export-spans! exporter [span])))
     (check "exporter suppresses its own database instrumentation"
-           [true] @seen))
+           [true] @seen)))
   (let [seen (atom [])]
     (with-redefs [jdbc/execute!
                   (fn [& _]
@@ -497,8 +586,8 @@
                   (fn [_] (swap! calls conj :barrier) {:status :committed})
                   jdbc/execute!
                   (fn [& _] (swap! calls conj :insert) {:count 1})]
-      (let [exporter (chdb-export/exporter
-                      {:connection :fake :durable? true :signals #{:spans}})]
+      (let [exporter (test-support/call-with-qualified-native #(chdb-export/exporter
+                      {:connection :fake :durable? true :signals #{:spans}}))]
         (check "Durable startup preflights before schema checkpoint"
                [:role :schema :checkpoint] @calls)
         (check "non-empty Durable span batch succeeds" true
@@ -552,6 +641,8 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (ordinary-rows-test/run check)
+  (ordinary-typed-rows-test/run check)
   (dependency-test/run check)
   (manifest-test/run check)
   (attribute-projection-test/run check)
@@ -570,7 +661,7 @@
   (run-instrumentation-suppression-checks)
   (run-durable-export-barrier-checks)
   (println "embedded chDB OTel exporter")
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "sdk_example"))]
     (let [exporter (chdb-export/exporter {:connection conn})
           handle (sdk/init! {:service-name "ring-demo"
                              :exporter exporter

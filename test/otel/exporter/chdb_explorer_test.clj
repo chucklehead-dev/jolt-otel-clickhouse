@@ -1,10 +1,18 @@
 (ns otel.exporter.chdb-explorer-test
   (:require [db.jdbc]
+            [clojure.string :as str]
             [jdbc.chdb]
             [jdbc.core :as jdbc]
             [otel.context :as context]
             [otel.exporter.chdb.explorer :as explorer]
             [otel.exporter.chdb.schema :as schema]))
+
+(defn- isolated-memory-db-spec [scenario]
+  ;; A logical database owns each fixture's rows without changing/resetting the
+  ;; immutable process-lifetime :memory: engine anchor.
+  {:vendor "chdb" :name ":memory:"
+   :database (str "explorer_" scenario "_"
+                  (str/replace (str (java.util.UUID/randomUUID)) "-" "_"))})
 
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
@@ -540,7 +548,7 @@
           (check (str "explorer marks " label " as its own error")
                  true (:attribute-explorer/error data))))
       (check "invalid explorer requests execute no SQL" 0 @calls)))
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "distribution"))]
     (schema/migrate! conn)
     (let [start 1700000000000000000]
       (doseq [aggregates [[:count] [:avg] [:p95]]]
@@ -590,7 +598,7 @@
               conn {:signal :metrics :fields [:metric-name]
                     :start-unix-nano start :end-unix-nano (+ start 10)
                     :limit 1}))))
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "metric_series"))]
     (schema/migrate! conn)
     (let [start 1700000000000000000
           end (+ start (* 5 60 1000000000))]
@@ -661,7 +669,7 @@
                {:metric-kind :histogram :metric-name "cumulative.duration"
                 :group-by [] :bucket :none :aggregates [:count :sum :avg]
                 :start-unix-nano start :end-unix-nano end})))))
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "cumulative_counter"))]
     (schema/migrate! conn)
     (let [start-second 1700000000
           start (* start-second 1000000000)
@@ -699,7 +707,7 @@
                  :interval-count 4 :reset-count 2
                  :observed-duration-nanos 35000000000}]
                rows))))
-  (with-open [conn (jdbc/connection "chdb::memory:")]
+  (with-open [conn (jdbc/connection (isolated-memory-db-spec "cumulative_histogram"))]
     (schema/migrate! conn)
     (let [start-second 1700000000
           start (* start-second 1000000000)

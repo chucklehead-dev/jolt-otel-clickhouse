@@ -55,8 +55,11 @@ library explicitly with:
 jolt -m jdbc.chdb.install
 ```
 
-Set `JOLT_CHDB_LIB` instead when using an already installed compatible
-`libchdb`.
+Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
+the qualified package version **26.7.3**. Exporter startup checks the actual
+loaded version before schema writes, including Durable connections. Its exact
+integer-nanosecond DateTime64 wire is qualified on SQL engine 26.7.2.1; newer
+library versions are rejected until their timestamp wire is qualified.
 
 ```clojure
 (def exporter (otel.exporter.chdb/exporter {:db-spec "chdb:telemetry.chdb"}))

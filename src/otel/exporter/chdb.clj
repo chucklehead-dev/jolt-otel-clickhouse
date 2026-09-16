@@ -1,10 +1,14 @@
 (ns otel.exporter.chdb
   "Direct Jolt OTel exporter for an embedded/in-process chDB database."
   (:require [db.jdbc]
+            [db.jdbc-shim :as jdbc-shim]
             [clojure.data.json :as json]
             [clojure.string :as str]
+            [jdbc.chdb :as chdb]
+            [jdbc.chdb.native :as native]
             [jdbc.chdb.durable :as durable]
             [jdbc.core :as jdbc]
+            [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
             [otel.context :as context]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
@@ -59,9 +63,14 @@
       :else fallback)))
 
 (defn- timestamp [nanos]
-  (let [seconds (quot nanos 1000000000)
-        remainder (mod nanos 1000000000)]
-    (format "%d.%09d" seconds remainder)))
+  ;; Pinned libchdb package 26.7.3 / SQL engine 26.7.2.1 reads JSONEachRow
+  ;; integer DateTime64(9) values as raw nanosecond ticks (pre-26.8 semantics).
+  ;; Preserve exact integers through maintained data.json, including epoch zero.
+  ;; A future engine upgrade must requalify this wire; 26.8 changes integers.
+  (when-not (and (integer? nanos) (<= 0 nanos 9223372036854775807))
+    (throw (ex-info "Telemetry timestamp exceeds DateTime64 nanosecond domain"
+                    {:type ::invalid-timestamp-nanos})))
+  nanos)
 
 (defn- metric-timestamp [nanos]
   ;; The pinned ClickStack collector stores metric timestamps as DateTime,
@@ -189,6 +198,70 @@
     (context/with-instrumentation-suppressed
       (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload)))))
 
+(defn- valid-json-value? [value]
+  (cond
+    (or (nil? value) (string? value) (boolean? value)) true
+    (integer? value) (<= -9223372036854775808 value 9223372036854775807)
+    (float? value) (and (= value value)
+                        (<= -1.7976931348623157E308 value 1.7976931348623157E308))
+    (map? value) (and (every? string? (keys value))
+                     (every? valid-json-value? (vals value)))
+    (sequential? value) (every? valid-json-value? value)
+    :else false))
+
+(defn- uint64? [value]
+  (and (integer? value) (<= 0 value 18446744073709551615N)))
+
+(defn- valid-row-value? [column value]
+  ;; These are exporter-owned physical UInt64 domains, not promoted Int64
+  ;; attributes. Preserve the full integer domain supported by JSONEachRow.
+  (case column
+    "Timestamp" (and (integer? value) (<= 0 value 9223372036854775807))
+    "Events.Timestamp" (and (sequential? value)
+                            (every? #(and (integer? %) (<= 0 % 9223372036854775807)) value))
+    "Duration" (uint64? value)
+    "Count" (uint64? value)
+    "BucketCounts" (and (sequential? value) (every? uint64? value))
+    (valid-json-value? value)))
+
+(defn- ordinary-payload [columns rows]
+  ;; Check every row before encoding or entering the driver. Error data never
+  ;; retains row values, attribute names, or the encoded telemetry payload.
+  (let [rows (vec rows)
+        expected (set columns)]
+    (doseq [row rows]
+      (when-not (and (map? row) (= expected (set (keys row)))
+                     (every? string? (keys row))
+                     (every? (fn [[column value]] (valid-row-value? column value)) row))
+        (throw (ex-info "Invalid chDB telemetry row"
+                        {:type ::invalid-ordinary-row}))))
+    ;; Remaining space stays in [0, 8 MiB]: no unchecked sum or multiplication
+    ;; of an untrusted size, and no oversized concatenated payload allocation.
+    (let [[parts _]
+          (reduce (fn [[parts remaining] row]
+                    (let [part (str (json/write-str row) "\n")
+                          size (alength (.getBytes part "UTF-8"))]
+                      (when (> size remaining)
+                        (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                                        {:limit max-insert-bytes})))
+                      [(conj parts part) (- remaining size)]))
+                  [[] max-insert-bytes] rows)]
+      (apply str parts))))
+
+(defn- insert-batch! [connection state table columns query rows]
+  (if (:durable? @state)
+    ;; Durable V1 records exact materialized SQL; its preparation, WAL and
+    ;; acknowledgement protocol must not enter the ordinary transport.
+    (insert-json-rows! connection query rows)
+    (let [payload (ordinary-payload columns rows)]
+      (context/with-instrumentation-suppressed
+        (chdb/insert-json-rows! connection table columns payload)))))
+
+(defn- typed-columns [fields]
+  (vec (mapcat (fn [field]
+                 [(get-in field [:physical :value-column])
+                  (get-in field [:physical :status-column])]) fields)))
+
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
 
@@ -245,12 +318,32 @@
                    "Max" (double (or (:max point) 0.0))
                    "AggregationTemporality" (temporality-code (:temporality metric))}))))
 
-(defn- export-metric-type! [connection type rows]
+(defn- export-metric-type! [connection state type rows]
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
-      (insert-json-rows! connection
+      (insert-batch! connection state (get schema/metric-table-names type)
+                         (get schema/clickstack-metric-insert-columns type)
                          (get metric-insert-queries type)
                          (map #(dissoc % :_type) selected)))))
+
+(defn- export-metric-rows! [connection state rows]
+  (if (:durable? @state)
+    (doseq [type [:gauge :sum :histogram]]
+      (export-metric-type! connection state type rows))
+    ;; Eagerly validate and encode every physical batch before the first driver
+    ;; call. Native execution failures can still partially apply a logical
+    ;; batch: this transport does not promise an atomic transaction/rollback.
+    (let [prepared
+          (vec (for [type [:gauge :sum :histogram]
+                     :let [selected (vec (map #(dissoc % :_type)
+                                               (filter #(= type (:_type %)) rows)))]
+                     :when (seq selected)
+                     :let [columns (get schema/clickstack-metric-insert-columns type)
+                           payload (ordinary-payload columns selected)]]
+                 [(get schema/metric-table-names type) columns payload]))]
+      (context/with-instrumentation-suppressed
+        (doseq [[table columns payload] prepared]
+          (chdb/insert-json-rows! connection table columns payload))))))
 
 (defn- signal-open? [owned? expected-signals state signal]
   (cond
@@ -336,7 +429,8 @@
       false
       (try
         (when (seq spans)
-          (insert-json-rows! connection "insert into otel_traces"
+          (insert-batch! connection state "otel_traces"
+                             (:span-insert-columns @state) "insert into otel_traces"
                              (map #(span-row % (:typed-span-projector @state))
                                   spans)))
         (complete-batch! connection state (boolean (seq spans)))
@@ -369,8 +463,7 @@
                                         :metrics
                                         [(assoc metric :data-points [point])]}]))]]
                       (assoc row :_type (:type metric))))]
-          (doseq [type [:gauge :sum :histogram]]
-            (export-metric-type! connection type rows))
+          (export-metric-rows! connection state rows)
           (complete-batch! connection state (boolean (seq rows))))
         (catch Throwable e
           (swap! state assoc :last-error e)
@@ -385,7 +478,8 @@
       (try
         (when (seq records)
           (let [typed-projector (:typed-log-projector @state)]
-            (insert-json-rows! connection
+            (insert-batch! connection state "otel_logs"
+                               (:log-insert-columns @state)
                                (selected-log-insert-query typed-projector)
                                (map #(log-row % typed-projector) records))))
         (complete-batch! connection state (boolean (seq records)))
@@ -410,6 +504,9 @@
   signal batch returns true only after its WAL flush commits or reconciles.
   :persistence-barrier supplies the same post-batch contract for another
   persistence implementation and is mutually exclusive with :durable?.
+  Ordinary connections must expose the chDB driver context; startup rejects
+  other drivers before schema mutation. Durable connections must explicitly
+  opt into :durable? true; they never fall back from the ordinary row-data API.
   :typed-span-descriptors and :typed-log-descriptors accept only opaque
   capabilities returned in active `install-approved!` results. They project
   their respective attributes while the compatible generic maps remain
@@ -437,12 +534,34 @@
          typed-log-projector (when typed-log-descriptors
                                (attribute-projection/log-projector
                                 typed-log-descriptors conn))
+         span-columns (into (into schema/clickstack-trace-insert-columns
+                                  ["EventsJSON" "LinksJSON"])
+                            (when typed-span-descriptors
+                              (typed-columns
+                               (attribute-projection/confirmed-span-fields
+                                typed-span-descriptors conn))))
+         log-columns (into schema/clickstack-log-insert-columns
+                           (when typed-log-descriptors
+                             (typed-columns
+                              (attribute-projection/confirmed-log-fields
+                               typed-log-descriptors conn))))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
-       (when durable?
+       (if durable?
          (when-not (= :writer (durable/connection-role conn))
            (throw (ex-info "Durable telemetry export requires a writer connection"
-                           {:type ::durable-writer-required}))))
+                           {:type ::durable-writer-required})))
+         ;; The ordinary transport is chDB-specific. Validate its public driver
+         ;; context before schema mutation; do not infer Durable by catching
+         ;; failed probes or retry SQL after a rejected ordinary insertion.
+         (jdbc-shim/driver-context (jdbc-proto/connection conn) :chdb))
+       ;; Library overrides may satisfy the driver's compatibility minimum yet
+       ;; change integer DateTime64 semantics. Fence the actual package before
+       ;; any exporter DDL/checkpoint; neither ordinary nor Durable can bypass.
+       (native/ensure-loaded!)
+       (when-not (= "26.7.3" (native/chdb-version))
+         (throw (ex-info "Unqualified chDB telemetry timestamp wire"
+                         {:type ::unqualified-timestamp-wire})))
        (when create-schema? (schema/ensure-schema! conn))
        ;; A full checkpoint makes the schema independently recoverable before
        ;; the exporter can acknowledge its first telemetry batch.
@@ -462,10 +581,13 @@
                               :persistence-barrier barrier
                               :typed-span-projector typed-span-projector
                               :typed-log-projector typed-log-projector
+                              :span-insert-columns span-columns
+                              :log-insert-columns log-columns
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t
-         (when owned? (.close conn))
+         ;; A failed ownership cleanup must not replace the startup failure.
+         (when owned? (try (.close conn) (catch Throwable _ nil)))
          (throw t))))))
 
 (defn last-error [exporter] (:last-error @(:state exporter)))

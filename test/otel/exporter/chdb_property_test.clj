@@ -6,6 +6,8 @@
             [hegel.stateful :as hs]
             [hegel.trace :as ht]
             [jdbc.core :as jdbc]
+            [jdbc.chdb :as chdb]
+            [otel.exporter.chdb-test-support :as support]
             [otel.any-value :as any]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.explorer :as explorer]
@@ -454,10 +456,15 @@
                                     (keys final-model-state)))
            expected-final (get final-model-state state-key)
            implementation-actions (atom ["init"])
+           ;; Replay the same insert -> persistence barrier -> acknowledgement
+           ;; boundaries using ordinary transport plus an explicit barrier.
+           ;; This does not assert a native Durable writer or switch transport
+           ;; merely to retain the obsolete SQL spy.
            exporter
            (chdb-export/->ChdbExporter
             :fake false #{:spans}
-            (atom {:closed-signals #{}
+            (atom {:span-insert-columns (:span-insert-columns (support/exporter-state {}))
+                   :closed-signals #{}
                    :connection-close-claimed? false
                    :connection-close-status :open
                    :connection-closed? false
@@ -466,7 +473,7 @@
                      (swap! implementation-actions conj "barrierSuccess"))
                    :last-error nil}))]
        (let [result
-             (with-redefs [jdbc/execute!
+             (with-redefs [chdb/insert-json-rows!
                            (fn [& _]
                              (swap! implementation-actions conj "insertSuccess")
                              {:count 1})]
@@ -534,30 +541,31 @@
            captured (atom [])
            exporter (chdb-export/->ChdbExporter
                      {} false #{:spans :logs :metrics}
-                     (atom {:closed-signals #{}
+                     (atom {:span-insert-columns (:span-insert-columns (support/exporter-state {}))
+                            :log-insert-columns (:log-insert-columns (support/exporter-state {}))
+                            :closed-signals #{}
                             :connection-closed? false :last-error nil}))]
-       (with-redefs [jdbc/execute!
-                     (fn [_ statement]
-                       (let [[table payload]
-                             (str/split
-                              statement #" FORMAT JSONEachRow\n" 2)]
-                         (swap! captured conj
-                                [table (vec (remove str/blank?
-                                                    (str/split-lines payload)))])
-                         0))]
+       (with-redefs [chdb/insert-json-rows!
+                     (fn [_ table columns payload]
+                       (swap! captured conj
+                              [table columns (vec (remove str/blank? (str/split-lines payload)))])
+                       0)]
          (check! (export/export-spans! exporter [span])
                  "otel-exporter/span-export" "span export failed" {})
          (check! (sdk-logs/export-logs! exporter [log])
                  "otel-exporter/log-export" "log export failed" {}))
-       (let [[[span-table span-lines] [log-table log-lines]] @captured
+       (let [[[span-table span-columns span-lines] [log-table log-columns log-lines]] @captured
              span-wire (json/read-str (first span-lines))
              log-wire (json/read-str (first log-lines))]
-         (check! (= "insert into otel_traces" span-table)
+         (check! (= "otel_traces" span-table)
                  "otel-exporter/table-routing" "signal used the wrong table" {})
-         (check! (= (str "insert into otel_logs ("
-                         (str/join ", " schema/clickstack-log-insert-columns)
-                         ")")
-                    log-table)
+         (check! (= "otel_logs" log-table)
+                 "otel-exporter/table-routing" "signal used the wrong table" {})
+         (check! (= (into schema/clickstack-trace-insert-columns ["EventsJSON" "LinksJSON"])
+                    span-columns)
+                 "otel-exporter/span-insert-columns"
+                 "span insert columns differ from the pinned collector order" {})
+         (check! (= schema/clickstack-log-insert-columns log-columns)
                  "otel-exporter/log-insert-columns"
                  "log insert columns differ from the pinned collector order" {})
          (check! (= [trace-id span-id trace-id span-id]
@@ -566,7 +574,7 @@
                  "otel-exporter/correlation" "wire rows lost correlation IDs" {})
          (check! (= (json/write-str nested) (get log-wire "Body"))
                  "otel-exporter/log-body" "structured log body was not JSON-safe" {})
-         (check! (= "1.000000002"
+         (check! (= 1000000002
                     (get log-wire "Timestamp"))
                  "otel-exporter/log-observed-time"
                  "zero event time did not fall back to observed time" {})
@@ -618,13 +626,14 @@
      (let [captured (atom [])
            exporter (chdb-export/->ChdbExporter
                      {} false #{:logs}
-                     (atom {:closed-signals #{}
+                     (atom {:log-insert-columns (:log-insert-columns (support/exporter-state {}))
+                            :closed-signals #{}
                             :connection-closed? false :last-error nil}))
            provider (sdk-logs/logger-provider
                      {:processors [(sdk-logs/simple-processor exporter)]})
            logger (sdk-logs/get-logger provider {:name "structured-body"})]
-       (with-redefs [jdbc/execute! (fn [_ statement]
-                                     (swap! captured conj statement)
+       (with-redefs [chdb/insert-json-rows! (fn [_ table _ payload]
+                                     (swap! captured conj (support/statement-view table nil payload))
                                      0)]
          (logs/emit! logger
                      {:severity :info
@@ -720,9 +729,10 @@
                      {} false #{:metrics}
                      (atom {:closed-signals #{}
                             :connection-closed? false :last-error nil}))]
-       (with-redefs [jdbc/execute!
-                     (fn [_ statement]
-                       (let [[query payload]
+       (with-redefs [chdb/insert-json-rows!
+                     (fn [_ table columns payload]
+                       (let [statement (support/statement-view table columns payload)
+                             [query payload]
                              (str/split statement #" FORMAT JSONEachRow\n" 2)]
                          (swap! captured conj
                                 [query (json/read-str

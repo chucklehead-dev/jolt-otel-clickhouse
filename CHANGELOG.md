@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Fail closed before exporter schema writes unless the actual loaded chDB
+  package reports the qualified 26.7.3 timestamp wire. Compatible library
+  overrides and Durable connections receive the same check; no bypass option
+  is provided, and rejected versions are not included in error data.
+
+- Encode DateTime64(9) span/log/event timestamps as exact integer nanoseconds
+  for pinned chDB package 26.7.3 / SQL engine 26.7.2.1, rejecting values outside
+  0..Int64-max before insertion. This fixes shared ordinary and Durable
+  early-epoch JSON wires; observed log time still feeds the existing Timestamp
+  fallback, without adding a column. Whole-second metric DateTime fields and
+  Durable classification/WAL/barrier algorithms are unchanged. Requalify the
+  timestamp wire before upgrading to 26.8, whose integer semantics differ.
+
+- Send ordinary telemetry batches through the driver's row-data API with
+  ordered schema-owned columns, all-row key and numeric validation, maintained
+  JSON encoding, and an exact 8 MiB UTF-8 bound. Active installer capabilities
+  supply additive typed columns. Durable exports retain materialized SQL and
+  their existing checkpoint/WAL acknowledgement protocol and require explicit
+  `:durable? true`. Startup rejects non-chDB ordinary contexts before schema
+  writes; ordinary metric batches validate every type before the first insert,
+  without promising rollback of native execution failures. Physical UInt64
+  duration/count/bucket domains remain supported. Refs #27.
+
 - Add capability-bound typed log-record filters and six-way availability
   coverage for every scalar type supported by the current promotion manifest.
   Exact schema bindings and the installed connection authorize library-owned,

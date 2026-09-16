@@ -4,6 +4,8 @@
             [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
+            [jdbc.chdb :as chdb]
+            [otel.exporter.chdb-test-support :as support]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.attribute-identity :as identity]
             [otel.exporter.chdb.attribute-manifest :as manifest]
@@ -27,12 +29,11 @@
        {:signal :logs :table "otel_logs" :location :log-attributes
         :key "job.attempt" :type :int64}]}]}))
 
-(defn- installed []
+(defn- installed [target]
   (let [approved (compiled)
         columns (registry/expected-columns (registry/prepare approved))
         observed (atom {})
-        next-column (atom 0)
-        target (atom :typed-log-target)]
+        next-column (atom 0)]
     (assoc
      (installer/install-approved!
       (backend/memory-backend) approved
@@ -68,11 +69,12 @@
 
 (defn- exported [descriptor-set target attributes]
   (let [statement (atom nil)
-        exporter (chdb-export/exporter
+        exporter (support/call-with-qualified-native #(chdb-export/exporter
                   {:connection target :create-schema? false :signals #{:logs}
-                   :typed-log-descriptors descriptor-set})]
-    (with-redefs [jdbc/execute!
-                  (fn [_ sql] (reset! statement sql) {:count 1})]
+                   :typed-log-descriptors descriptor-set}))]
+    (with-redefs [chdb/insert-json-rows!
+                  (fn [_ table columns payload]
+                    (reset! statement (support/statement-view table columns payload)) {:count 1})]
       (when-not (sdk-logs/export-logs! exporter [(log-record attributes)])
         (throw (chdb-export/last-error exporter))))
     {:query (first (str/split @statement #" FORMAT JSONEachRow\n" 2))
@@ -81,7 +83,8 @@
 
 (defn run [check]
   (println "confirmed typed log-record projection")
-  (let [installation (installed)
+  (with-open [target (support/connection)]
+  (let [installation (installed target)
         descriptor-set (:descriptor-set installation)
         target (::target installation)
         projector (projection/log-projector descriptor-set target)
@@ -127,7 +130,11 @@
                     {"job.name" "archive" "job.complete" false
                      "job.attempt" 9007199254740993})]
       (check "typed log insert names additive JSONEachRow fields"
-             "insert into otel_logs" query)
+             (str "insert into otel_logs ("
+                  (str/join ", " (into (:log-insert-columns (support/exporter-state {}))
+                                       (mapcat (fn [field] [(get-in field [:physical :value-column])
+                                                           (get-in field [:physical :status-column])])
+                                               (projection/confirmed-log-fields descriptor-set target)))) ")") query)
       (check "typed export preserves LogAttributes fallback"
              [{"job.name" "archive" "job.complete" "false"
                "job.attempt" "9007199254740993"}
@@ -136,7 +143,7 @@
               (projected-pair row installation "job.name")
               (projected-pair row installation "job.complete")
               (projected-pair row installation "job.attempt")]))
-    (let [without-capability (exported nil :legacy-log-target {"job.attempt" 7})]
+    (let [without-capability (exported nil target {"job.attempt" 7})]
       (check "legacy log export retains its fixed compatibility insert"
              [true {"job.attempt" "7"}]
              [(str/starts-with? (:query without-capability)
@@ -176,7 +183,7 @@
               :execute-ddl! (fn [_] (swap! ddl inc))}))]
       (check "wrong-table evidence fails before typed log DDL"
              [:otel.exporter.chdb.attribute-registry/missing-table-observation 0]
-             [(:type error) @ddl]))))
+             [(:type error) @ddl])))))
 
 (defn -main [& _]
   (let [failures (atom 0)]
