@@ -14,23 +14,23 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
-      JOLT_CACHE_DIR: ${{ github.workspace }}/.jolt-cache-v0.8.3
-      JOLT_GITLIBS_DIR: ${{ github.workspace }}/.jolt-gitlibs-v0.8.3
+      JOLT_CACHE_DIR: ${{ github.workspace }}/.jolt-cache-v0.8.6
+      JOLT_GITLIBS_DIR: ${{ github.workspace }}/.jolt-gitlibs-v0.8.6
       HEGEL_CACHE_DIR: ${{ github.workspace }}/.hegel-native
       JOLT_CHDB_CACHE_DIR: ${{ github.workspace }}/.chdb-native
     steps:
       - uses: actions/checkout@v4
-      - name: Install Jolt v0.8.3
+      - name: Install Jolt v0.8.6
         shell: bash
         run: |
           set -euo pipefail
           install_dir="$RUNNER_TEMP/jolt-bin"
-          curl -fsSL https://raw.githubusercontent.com/jolt-lang/jolt/v0.8.3/install \
-            | bash -s -- --dir "$install_dir" --version 0.8.3
+          curl -fsSL https://raw.githubusercontent.com/jolt-lang/jolt/v0.8.6/install \
+            | bash -s -- --dir "$install_dir" --version 0.8.6
           echo "$install_dir" >> "$GITHUB_PATH"
       - name: Assert Jolt version
         shell: bash
-        run: test "$(jolt --version)" = "jolt v0.8.3"
+        run: test "$(jolt --version)" = "jolt v0.8.6"
       - name: Install native test dependencies
         run: |
           set -euo pipefail
@@ -38,3 +38,131 @@ jobs:
           jolt -Srepro -A:test -m hegel.install
       - name: Test
         run: jolt -Srepro -M:test
+      - name: Read the exact root driver pin
+        id: driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          revision=$(jolt -Srepro -e "(require 'clojure.edn) (println (get-in (clojure.edn/read-string (slurp \"deps.edn\")) [:deps 'io.github.chucklehead-dev/jolt-chdb :git/sha]))")
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+      - name: Check out that driver revision, not a branch tip
+        uses: actions/checkout@v4
+        with:
+          repository: chucklehead-dev/jolt-chdb
+          ref: ${{ steps.driver.outputs.revision }}
+          path: .qualification-driver
+          persist-credentials: false
+      - name: Require the root API and authenticate the native pair
+        timeout-minutes: 5
+        shell: bash
+        env:
+          EXPECTED_DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+        run: |
+          set -euo pipefail
+          driver=$(realpath .qualification-driver)
+          test "$(git -C "$driver" rev-parse HEAD)" = "$EXPECTED_DRIVER_REVISION"
+          test -z "$(git -C "$driver" status --porcelain=v1)"
+          # No dependency override: old root pins must fail, never skip this lane.
+          timeout --signal=TERM --kill-after=5s 30s jolt -Srepro -e \
+            "(require 'jdbc.chdb) (when-not (fn? (some-> (ns-resolve 'jdbc.chdb 'insert-json-rows!) deref)) (println :required-root-row-api-missing) (System/exit 1))"
+          metadata=$(jolt -Srepro -e "(require 'jdbc.chdb.native) (let [{:keys [os arch]} (jdbc.chdb.native/platform) asset (get jdbc.chdb.native/assets [os arch])] (assert (= \"26.7.3\" jdbc.chdb.native/version)) (println (:name asset)) (println (:sha256 asset)) (println (jdbc.chdb.native/library-path)))")
+          mapfile -t values <<< "$metadata"
+          test "${#values[@]}" = 3
+          [[ "${values[0]}" =~ ^[a-zA-Z0-9_.-]+$ && "${values[1]}" =~ ^[a-f0-9]{64}$ ]]
+          pair=$(mktemp -d "$RUNNER_TEMP/exporter-native-pair.XXXXXXXX")
+          curl --fail --location --retry 2 --silent --show-error \
+            "https://github.com/chdb-io/chdb-core/releases/download/v26.7.3/${values[0]}" -o "$pair/archive.tar.gz"
+          printf '%s  %s\n' "${values[1]}" "$pair/archive.tar.gz" | sha256sum -c -
+          tar -xzf "$pair/archive.tar.gz" -C "$pair"
+          lib=$(realpath "$pair/libchdb.so")
+          header=$(realpath "$pair/chdb.h")
+          test -f "$lib" && test -f "$header"
+          cmp "${values[2]}" "$lib"
+          binary=$(realpath "$(command -v jolt)")
+          # Hosted release is self-contained; env launches it without a source
+          # build or external Chez selection. Local gates still require 10.4.1.
+          wrapper=$(realpath /usr/bin/env)
+          {
+            printf 'JOLT_BIN=%s\nJOLT_WRAPPER=%s\n' "$binary" "$wrapper"
+            printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)"
+            printf 'JOLT_EXPECTED_WRAPPER_SHA256=%s\n' "$(sha256sum "$wrapper" | cut -d ' ' -f1)"
+            printf 'JOLT_CHDB_LIB=%s\nJOLT_CHDB_HEADER=%s\n' "$lib" "$header"
+            printf 'JOLT_CHDB_EXPECTED_LIBRARY_SHA256=%s\n' "$(sha256sum "$lib" | cut -d ' ' -f1)"
+            printf 'JOLT_CHDB_EXPECTED_HEADER_SHA256=%s\n' "$(sha256sum "$header" | cut -d ' ' -f1)"
+            printf 'JOLT_CHDB_SOURCE_ROOT=%s\n' "$driver"
+          } >> "$GITHUB_ENV"
+          sha256sum "$binary" "$wrapper" "$lib" "$header"
+      - name: Qualify ordinary native typed rows and metric admission
+        id: ordinary_native
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
+            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 50 @n)) (println \"PASS ordinary native 50\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
+          test "$(grep -Fxc 'PASS ordinary native 50' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+      - name: Qualify typed Durable WAL with a fresh reader
+        id: durable_native
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s bash scripts/qualify-durable-typed-native.sh \
+            | tee "$RUNNER_TEMP/exporter-durable-native.log"
+          test "$(grep -Fxc 'durable-typed-native-qualified' "$RUNNER_TEMP/exporter-durable-native.log")" = 1
+          test "$(grep -c '^EVIDENCE_ROOT=' "$RUNNER_TEMP/exporter-durable-native.log")" = 1
+          root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$RUNNER_TEMP/exporter-durable-native.log")
+          [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
+          test -d "$root" && test ! -L "$root"
+          test "$(realpath "$root")" = "$root"
+          test "$(grep -Fxc ':observed-checks 20' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 21' "$root/reader.log")" = 1
+      - name: Retain only synthetic native fixture logs and status
+        if: always()
+        shell: bash
+        env:
+          ORDINARY_OUTCOME: ${{ steps.ordinary_native.outcome }}
+          DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
+          DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/exporter-native-evidence"
+          mkdir -p "$evidence"
+          printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\n' \
+            "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" > "$evidence/status.txt"
+          # Never traverse or upload native stores, WAL, databases or env files.
+          for kind in ordinary durable; do
+            log="$RUNNER_TEMP/exporter-$kind-native.log"
+            if [[ -f "$log" && ! -L "$log" ]]; then
+              cp "$log" "$evidence/$kind.log"
+              sha256sum "$evidence/$kind.log" >> "$evidence/status.txt"
+            else printf '%s-log=missing\n' "$kind" >> "$evidence/status.txt"; fi
+          done
+          log="$RUNNER_TEMP/exporter-durable-native.log"
+          if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
+            root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
+            if [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ &&
+                  -d "$root" && ! -L "$root" && "$(realpath "$root")" == "$root" ]]; then
+              for child in writer reader; do
+                log="$root/$child.log"
+                if [[ -f "$log" && ! -L "$log" && "$(realpath "$log")" == "$root/$child.log" ]]; then
+                  cp "$log" "$evidence/$child.log"
+                  sha256sum "$evidence/$child.log" >> "$evidence/status.txt"
+                else printf '%s-log=missing-or-unconfirmed\n' "$child" >> "$evidence/status.txt"; fi
+              done
+            else printf 'durable-root=unconfirmed\n' >> "$evidence/status.txt"; fi
+          else printf 'durable-root=missing-or-ambiguous\n' >> "$evidence/status.txt"; fi
+      - name: Upload the explicit synthetic-log allowlist
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: exporter-native-fixture-logs
+          if-no-files-found: warn
+          retention-days: 7
+          path: |
+            ${{ runner.temp }}/exporter-native-evidence/status.txt
+            ${{ runner.temp }}/exporter-native-evidence/ordinary.log
+            ${{ runner.temp }}/exporter-native-evidence/durable.log
+            ${{ runner.temp }}/exporter-native-evidence/writer.log
+            ${{ runner.temp }}/exporter-native-evidence/reader.log

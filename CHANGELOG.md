@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add explicit bounded CI lanes for ordinary native typed rows/metric admission
+  and typed Durable WAL readback through a fresh process (Refs #27). Hosted CI
+  selects released Jolt 0.8.6 and the exact root driver pin; an API-missing pin
+  fails qualification rather than skipping or using an unmerged override.
+  Retain only explicit synthetic fixture logs and step status on failure;
+  native stores, WAL, databases and environment files are excluded.
+
 - Add an opt-in ordinary transport ABBA benchmark with explicit provenance,
   bounded child processes and complete fresh-reader reconciliation. Refs #27.
 
