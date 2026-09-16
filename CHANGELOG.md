@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Select the merged ordinary-row chDB driver and the published OTel numeric
+  compatibility checkpoint for root-dependency qualification (Refs #27).
+  The SDK checkpoint is a review-branch candidate, not merged SDK main;
+  final review and root/native qualification remain release gates. Existing
+  explicit crypto ownership and dependency exclusions are unchanged.
+  Raise the minimum Jolt version to 0.8.6. Durable qualification now defaults
+  to revision-checked root driver/SDK pins; reviewed driver overlays require an
+  explicit source-evidence mode and exact clean revision.
+
 - Add explicit bounded CI lanes for ordinary native typed rows/metric admission
   and typed Durable WAL readback through a fresh process (Refs #27). Hosted CI
   selects released Jolt 0.8.6 and the exact root driver pin; an API-missing pin

@@ -1,11 +1,11 @@
 {:paths ["src"]
- :jolt/min-version "0.8.3"
+ :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "58f090caa31445bcf9403a15bdd01b1901a4e860"}
+         :git/sha "19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0"
+         :git/sha "0e701ceff526d159884fadae98dcca61272ef6e0"
          ;; OTel now names the canonical crypto provider at this same reviewed
          ;; revision. Keep its subtree declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,

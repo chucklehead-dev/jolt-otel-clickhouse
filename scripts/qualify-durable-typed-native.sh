@@ -9,7 +9,8 @@ wrapper=${JOLT_WRAPPER:?set the mandatory Chez 10.4.1 launcher}
 lib=$(realpath "${JOLT_CHDB_LIB:?set the qualified chDB 26.7.3 library}")
 header=$(realpath "${JOLT_CHDB_HEADER:?set the matching chDB header}")
 [[ "$(dirname "$lib")" == "$(dirname "$header")" ]] || { echo mismatched-native-pair-directory; exit 1; }
-driver=$(realpath "${JOLT_CHDB_SOURCE_ROOT:?set the reviewed driver checkout until the dependency pin includes the row API}")
+driver_mode=${JOLT_DURABLE_DRIVER_MODE:-root-pin}
+case "$driver_mode" in root-pin|reviewed-source) ;; *) echo invalid-driver-mode; exit 1 ;; esac
 binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set qualified binary SHA256}
 wrapper_sha=${JOLT_EXPECTED_WRAPPER_SHA256:?set qualified wrapper SHA256}
 library_sha=${JOLT_CHDB_EXPECTED_LIBRARY_SHA256:?set qualified library SHA256}
@@ -68,17 +69,53 @@ trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 cd "$worktree"
-[[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
-[[ -z "$(git -C "$driver" status --porcelain=v1)" ]]
-driver_options=(-Sdeps "{:deps {io.github.chucklehead-dev/jolt-chdb {:local/root \"$driver\"}}}")
-git -C "$driver" rev-parse HEAD >"$root/driver-source.txt"
+driver_options=()
+if [[ "$driver_mode" == reviewed-source ]]; then
+  driver=$(realpath "${JOLT_CHDB_SOURCE_ROOT:?set the reviewed driver checkout}")
+  reviewed_revision=${JOLT_EXPECTED_DRIVER_REV:?set the exact reviewed driver revision}
+  [[ "$reviewed_revision" =~ ^[a-f0-9]{40}$ ]]
+  [[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
+  [[ -z "$(git -C "$driver" status --porcelain=v1)" ]]
+  [[ "$(git -C "$driver" rev-parse HEAD)" == "$reviewed_revision" ]]
+  driver_options=(-Sdeps "{:deps {io.github.chucklehead-dev/jolt-chdb {:local/root \"$driver\"}}}")
+fi
+printf '%s\n' "$driver_mode" >"$root/driver-mode.txt"
 git rev-parse HEAD >"$root/exporter-source.txt"
 sha256sum "$fixture" >"$root/fixture-source.sha256"
 launch=(env -i HOME="${HOME:?}" PATH="$(dirname "$jolt"):${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
         LANG=C.UTF-8 JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache"
         JOLT_DURABLE_DRAFT_ROOT="$root" JOLT_DURABLE_DRAFT_TOKEN="$task_token"
         OSCOPE_DURABLE_NATIVE_FIXTURE="$fixture")
+if [[ -n "${JOLT_GITLIBS_DIR:-}" ]]; then
+  launch+=(JOLT_GITLIBS_DIR="$JOLT_GITLIBS_DIR")
+fi
 runtime=("$wrapper" "$jolt" -Srepro "${driver_options[@]}" -A:test -e)
+timeout --signal=TERM --kill-after=5s 30s "${launch[@]}" bash -c '
+  wrapper=$1; binary=$2; shift 2
+  "$wrapper" "$binary" -Srepro "$@" -A:test -Spath > "$JOLT_DURABLE_DRAFT_ROOT/classpath.txt"
+  "$wrapper" "$binary" -Srepro -A:test -e "(require (quote clojure.edn)) (let [d ((ns-resolve (quote clojure.edn) (quote read-string)) (slurp \"deps.edn\"))] (println (get-in d [:deps (quote io.github.chucklehead-dev/jolt-chdb) :git/sha])) (println (get-in d [:deps (quote io.github.casselc/otel) :git/sha])))" > "$JOLT_DURABLE_DRAFT_ROOT/declared-pins.txt"
+' _ "$wrapper" "$jolt" "${driver_options[@]}"
+mapfile -t declared <"$root/declared-pins.txt"
+[[ "${#declared[@]}" == 2 && "${declared[0]}" =~ ^[a-f0-9]{40}$ && "${declared[1]}" =~ ^[a-f0-9]{40}$ ]]
+[[ -z "${JOLT_EXPECTED_DRIVER_REV:-}" || "$driver_mode" != root-pin || "$JOLT_EXPECTED_DRIVER_REV" == "${declared[0]}" ]]
+mapfile -t classpaths <"$root/classpath.txt"
+[[ "${#classpaths[@]}" == 1 ]]
+IFS=: read -r -a source_roots <<< "${classpaths[0]}"
+driver_roots=(); sdk_roots=()
+for source_root in "${source_roots[@]}"; do
+  [[ -f "$source_root/jdbc/chdb.clj" ]] && driver_roots+=("$(realpath "$source_root")")
+  [[ -f "$source_root/otel/sdk/metrics.clj" ]] && sdk_roots+=("$(realpath "$source_root")")
+done
+[[ "${#driver_roots[@]}" == 1 && "${#sdk_roots[@]}" == 1 ]] || { echo ambiguous-source-provider; exit 1; }
+driver_revision=$(git -C "${driver_roots[0]}" rev-parse HEAD)
+sdk_revision=$(git -C "${sdk_roots[0]}" rev-parse HEAD)
+[[ -z "$(git -C "${driver_roots[0]}" status --porcelain=v1)" && -z "$(git -C "${sdk_roots[0]}" status --porcelain=v1)" ]]
+if [[ "$driver_mode" == root-pin ]]; then expected_driver=${declared[0]}; else expected_driver=$reviewed_revision; fi
+[[ "$driver_revision" == "$expected_driver" && "$sdk_revision" == "${declared[1]}" ]] || { echo source-pin-mismatch; exit 1; }
+printf '%s\n' "$driver_revision" >"$root/driver-source.txt"
+printf '%s\n' "$sdk_revision" >"$root/sdk-source.txt"
+timeout --signal=TERM --kill-after=5s 30s "${launch[@]}" "${runtime[@]}" '(try (require (quote jdbc.chdb)) (when-not (fn? (some-> (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!)) deref)) (println :required-driver-row-api-missing) (System/exit 1)) (println :source-provenance-qualified) (catch Throwable _ (println :source-provenance-failed) (System/exit 1)))' >"$root/provenance.log" 2>&1
+[[ "$(grep -Fxc ':source-provenance-qualified' "$root/provenance.log")" == 1 ]]
 writer_form='(try (require (quote jdbc.chdb)) (when-not (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!)) (println :required-driver-row-api-missing) (System/exit 1)) (load-file (System/getenv "OSCOPE_DURABLE_NATIVE_FIXTURE")) ((ns-resolve (quote otel.exporter.chdb-durable-typed-native-test) (quote -main)) "writer" (System/getenv "JOLT_DURABLE_DRAFT_ROOT")) (catch Throwable _ (println :safe-durable-writer-launch-failed) (System/exit 1)))'
 reader_form='(try (require (quote jdbc.chdb)) (when-not (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!)) (println :required-driver-row-api-missing) (System/exit 1)) (load-file (System/getenv "OSCOPE_DURABLE_NATIVE_FIXTURE")) ((ns-resolve (quote otel.exporter.chdb-durable-typed-native-test) (quote -main)) "reader" (System/getenv "JOLT_DURABLE_DRAFT_ROOT")) (catch Throwable _ (println :safe-durable-reader-launch-failed) (System/exit 1)))'
 setsid "${launch[@]}" bash -c 'awk "{print \$1, \$4, \$5, \$6, \$22}" "/proc/$$/stat" > "$JOLT_DURABLE_DRAFT_ROOT/writer-receipt"; exec "$@"' _ \

@@ -133,13 +133,19 @@ env JOLT_BIN=/path/to/qualified/jolt \
   JOLT_CHDB_HEADER=/path/to/native-pair/chdb.h \
   JOLT_CHDB_EXPECTED_LIBRARY_SHA256='<library-sha256>' \
   JOLT_CHDB_EXPECTED_HEADER_SHA256='<header-sha256>' \
-  JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb \
   timeout --signal=TERM --kill-after=5s 210s \
   bash scripts/qualify-durable-typed-native.sh
 ```
 
-The clean local driver override is required until the dependency pin includes
-the merged row API; it does not qualify an unmerged dependency for publication.
+The default `root-pin` mode uses the original dependency pins without overrides,
+attesting unique clean driver and SDK providers before starting the writer.
+For explicit source-only review evidence, add
+`JOLT_DURABLE_DRIVER_MODE=reviewed-source`,
+`JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb` and
+`JOLT_EXPECTED_DRIVER_REV='<full-reviewed-driver-sha>'` to the same invocation.
+That opt-in mode overrides only the driver and does not qualify root resolution.
+The selected SDK review-branch checkpoint still requires final review; pinning
+a published commit does not establish merged SDK-main or hosted-CI qualification.
 The gate verifies typed spans/logs and timestamps through fresh-reader WAL
 replay while the writer remains alive, rather than a shutdown checkpoint.
 Child environments strip credentials; evidence is retained without retries.
@@ -470,7 +476,7 @@ OTel scalar type cannot be recovered safely.
 
 ## Development and releases
 
-Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run
+Use Jolt v0.8.6 or newer. Install the pinned native dependencies, then run
 `jolt -M:test`. A release is an immutable Git tag pointing at a commit for
 which the test workflow passed; consumers should continue to pin that commit
 SHA even when also recording the tag.
