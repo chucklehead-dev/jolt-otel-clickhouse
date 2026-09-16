@@ -183,7 +183,7 @@
                                             "SELECT arrayMap(x -> toString(toUnixTimestamp64Nano(x)), `Events.Timestamp`) AS event_ticks FROM otel_traces WHERE notEmpty(`Events.Timestamp`)")))
         (let [duration (jdbc/fetch-one connection
                                       "SELECT Duration AS numeric_value, toString(Duration) AS decimal_value, toTypeName(Duration) AS physical_type FROM otel_traces WHERE Duration=toUInt64('18446744073709551615') LIMIT 1")]
-          (check "UInt64 maximum Duration exact decimal/type/numeric" 
+          (check "UInt64 maximum Duration exact decimal/type/numeric"
                  [uint64-max (str uint64-max) "UInt64"]
                  [(:numeric_value duration) (:decimal_value duration) (:physical_type duration)]))
         (check "ordinary native all metric types accepted" true

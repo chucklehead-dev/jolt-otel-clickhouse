@@ -204,7 +204,7 @@
                   jdbc/execute!
                   (fn [& _] (throw (ex-info "Old SQL path reached" {})))]
       (insert :connection ordinary "owned_table" columns "unused SQL" [row])
-      (check "ordinary API receives table and ordered schema" 
+      (check "ordinary API receives table and ordered schema"
              [:connection "owned_table" columns] (subvec (first @calls) 0 3))
       (check "maintained JSON preserves question marks, Unicode, false and zero"
              row (json/read-str (nth (first @calls) 3)))
@@ -229,7 +229,7 @@
                                     (swap! sql conj [connection query]))]
         (insert :writer (atom {:durable? true}) "owned_table" columns
                 "insert into owned_table" [row])
-        (check "Durable retains exact materialized SQL" 
+        (check "Durable retains exact materialized SQL"
                [[:writer (str "insert into owned_table FORMAT JSONEachRow\n"
                               (json/write-str row) "\n")]] @sql)))
     (let [payload #'exporter/ordinary-payload]
