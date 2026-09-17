@@ -19,6 +19,29 @@ assert "GH_DEBUG" not in os.environ and "GH_TRACE" not in os.environ
 endpoint = sys.argv[4]
 control = os.environ["OFFLINE_CONTROL"]
 sha = "1" * 40
+if "PAIR_API_LEDGER" in os.environ:
+    with open(os.environ["PAIR_API_LEDGER"], "a") as ledger:
+        ledger.write(endpoint + "\n")
+    run = os.environ["QUALIFIED_RUNTIME_RUN_ID"]
+    artifact = os.environ["QUALIFIED_RUNTIME_ARTIFACT_ID"]
+    sha = os.environ["QUALIFIED_RUNTIME_WORKFLOW_SHA"]
+    if endpoint == f"repos/casselc/jolt/actions/runs/{run}":
+        print(json.dumps({"repository": {"full_name": "casselc/jolt"},
+            "head_repository": {"full_name": "casselc/jolt"}, "head_sha": sha,
+            "path": ".github/workflows/durable-runtime-artifact.yml",
+            "run_attempt": 1, "event": "push", "head_branch": "integration/aspects",
+            "status": "in_progress" if control == "unfinished-provider" else "completed",
+            "conclusion": None if control == "unfinished-provider" else "success"}))
+    elif endpoint == f"repos/casselc/jolt/actions/artifacts/{artifact}":
+        print(json.dumps({"id": int(artifact), "name": os.environ["PAIR_ARTIFACT_NAME"],
+            "expired": False, "digest": "sha256:" + os.environ["QUALIFIED_RUNTIME_ARTIFACT_SHA256"],
+            "workflow_run": {"id": int(run), "head_sha": sha,
+                             "head_repository_id": 1310562894}}))
+    elif endpoint == f"repos/casselc/jolt/actions/artifacts/{artifact}/zip":
+        sys.stdout.buffer.write(pathlib.Path(os.environ["OFFLINE_ARCHIVE"]).read_bytes())
+    else:
+        raise AssertionError("unexpected paired fixture endpoint")
+    sys.exit(0)
 if endpoint == "repos/casselc/jolt/actions/runs/1":
     print(json.dumps({"repository": {"full_name": "casselc/jolt"},
         "head_repository": {"full_name": "casselc/jolt"},
@@ -111,3 +134,88 @@ for control in CONTROLS:
     print(f"control={control} exit={result.returncode} executed={executed} executable={executable} pass={passed}")
 print(f"SYNTHETIC-CONTROLS={len(CONTROLS)} FAILURES={failures} ROOT={ROOT}")
 assert len(CONTROLS) == 11 and failures == 0
+
+# Selection controls do NOT substitute synthetic hashes for fixed public pins.
+# Correct profiles reach ZIP bytes, which must reject this synthetic archive
+# before executable mode/probe. The original controls above cover full archive
+# and manifest acceptance with a fake child; neither set runs a real compiler.
+PROFILES = {
+    "baseline-09a2": ("10504073187", "durable-runtime-09a2baac-linux-x64",
+        "2dba59b6c96787e27b9edaaabafc4e3624b0e7bb380d0ec83a6a3bf352980f78",
+        "1ea6a9e222411379a6129ec25930f18062e3fe5be6bef886dc2fb15fe081642a"),
+    "string-writer-c5d": ("10504849823", "durable-runtime-c5d444e4-linux-x64",
+        "49ac4be188348f5a7c72148ae1da63719914442f056ce25c89972fae8ce1f314",
+        "c250124902495885fc417bc9bf559f5fe5a44701f3a3e4c0a56062a98e07d165"),
+}
+COMPILER_PINS = {
+    "baseline-09a2": ("09a2baac9714f98b994473f64fd239f431a9fffb",
+                      "4c2fb3c2b00fe085ce3920a1de558c65d3b8f979"),
+    "string-writer-c5d": ("c5d444e4d074767f507fe86b203b6dde6c309fc5",
+                          "555b5a9d9745be2a9f34041022c5376db5eb41f0"),
+}
+# Source-coupled closed mapping checks: these assert selection, not execution
+# of either real paired binary or authentication of a synthetic manifest.
+script_source = SCRIPT.read_text()
+assert "profile=${QUALIFIED_RUNTIME_PROFILE-aea}" in script_source
+assert "compiler=aea91781bbab68bf174fef4a689bb00dcf834ded" in script_source
+assert "compiler_tree=a31de1596fcabd0e45fbcbc528842805acea0ee7" in script_source
+for profile, pins in PROFILES.items():
+    block = script_source.split(f"  {profile})\n", 1)[1].split(";;", 1)[0]
+    compiler, tree = COMPILER_PINS[profile]
+    for expected in (f"compiler={compiler}", f"compiler_tree={tree}",
+                     f"artifact_name={pins[1]}", f"pair_artifact={pins[0]}",
+                     f"pair_archive={pins[2]}", f"pair_binary={pins[3]}"):
+        assert block.splitlines().count("    " + expected) == 1
+pair_controls = ["selection", "unfinished-provider", "cross-name", "wrong-run",
+                 "wrong-attempt", "wrong-controller", "cross-artifact",
+                 "cross-archive", "cross-binary", "unknown-profile", "empty-profile"]
+pair_failures = 0
+for profile, pins in PROFILES.items():
+    other = next(value for key, value in PROFILES.items() if key != profile)
+    for control in pair_controls:
+        prefix = f"{profile}-{control}"
+        ledger = ROOT / f"{prefix}.api"
+        sentinel = ROOT / f"{prefix}.executed"
+        environment = {
+            "PATH": f"{MOCK}:/usr/bin:/bin", "TMPDIR": str(ROOT), "LC_ALL": "C",
+            "QUALIFIED_RUNTIME_PROFILE": profile,
+            "QUALIFIED_RUNTIME_RUN_ID": "35237991514",
+            "QUALIFIED_RUNTIME_RUN_ATTEMPT": "1",
+            "QUALIFIED_RUNTIME_WORKFLOW_SHA": "1fea9ae8becb8b5ada545d32b032cc4de91c52cc",
+            "QUALIFIED_RUNTIME_ARTIFACT_ID": pins[0],
+            "QUALIFIED_RUNTIME_ARTIFACT_SHA256": pins[2],
+            "QUALIFIED_RUNTIME_BINARY_SHA256": pins[3],
+            "PAIR_ARTIFACT_NAME": pins[1], "PAIR_API_LEDGER": str(ledger),
+            "OFFLINE_CONTROL": control, "OFFLINE_ARCHIVE": str(archive),
+            "FIXTURE_EXEC_SENTINEL": str(sentinel),
+        }
+        changes = {
+            "wrong-run": ("QUALIFIED_RUNTIME_RUN_ID", "1"),
+            "wrong-attempt": ("QUALIFIED_RUNTIME_RUN_ATTEMPT", "2"),
+            "wrong-controller": ("QUALIFIED_RUNTIME_WORKFLOW_SHA", "1" * 40),
+            "cross-artifact": ("QUALIFIED_RUNTIME_ARTIFACT_ID", other[0]),
+            "cross-archive": ("QUALIFIED_RUNTIME_ARTIFACT_SHA256", other[2]),
+            "cross-binary": ("QUALIFIED_RUNTIME_BINARY_SHA256", other[3]),
+            "cross-name": ("PAIR_ARTIFACT_NAME", other[1]),
+            "unknown-profile": ("QUALIFIED_RUNTIME_PROFILE", "arbitrary-compiler"),
+            "empty-profile": ("QUALIFIED_RUNTIME_PROFILE", ""),
+        }
+        if control in changes:
+            key, value = changes[control]
+            environment[key] = value
+        result = subprocess.run(["bash", str(SCRIPT)], env=environment,
+                                capture_output=True, timeout=10)
+        log = result.stdout + result.stderr
+        (ROOT / f"{prefix}.log").write_bytes(log)
+        requests = ledger.read_text().splitlines() if ledger.exists() else []
+        expected = 3 if control == "selection" else 1 if control == "unfinished-provider" else 2 if control == "cross-name" else 0
+        evidence = [line.split("=", 1)[1] for line in result.stdout.decode().splitlines()
+                    if line.startswith("QUALIFIED_RUNTIME_EVIDENCE_ROOT=")]
+        executable = any(os.access(pathlib.Path(root) / "jolt", os.X_OK) for root in evidence)
+        passed = result.returncode != 0 and not sentinel.exists() and not executable and len(requests) == expected
+        if control == "selection":
+            passed = passed and b"computed checksum did NOT match" in log
+        pair_failures += not passed
+        print(f"pair={prefix} exit={result.returncode} requests={len(requests)} pass={passed}")
+print(f"PAIR-SELECTION-CONTROLS={len(PROFILES) * len(pair_controls)} FAILURES={pair_failures}")
+assert pair_failures == 0
