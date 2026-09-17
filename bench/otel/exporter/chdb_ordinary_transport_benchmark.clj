@@ -61,8 +61,16 @@
 (defn sample [f]
   (let [measured (:measured *profile*)
         before (counters)
-        times (mapv (fn [_] (let [start (System/nanoTime)]
-                             (f) (- (System/nanoTime) start))) (range measured))
+        times (mapv (fn [index]
+                      (let [start (System/nanoTime)
+                            _ (f)
+                            elapsed (- (System/nanoTime) start)]
+                        ;; Outside the timed interval, but perturbs interbatch
+                        ;; scheduling/GC. Preserve partial observations on failure.
+                        (println :sample-observation :index index
+                                 :batch-rows batch-size :latency-nanos elapsed)
+                        (flush)
+                        elapsed)) (range measured))
         after (counters)
         ordered (vec (sort times))
         total (reduce + 0 times)]
@@ -129,6 +137,8 @@
                      :bytes (:bytes control) :sha256 (:digest control)
                      :columns-sha256 (digest (pr-str cols)))
             (dotimes [_ (:warmups *profile*)] (insert))
+            (println :region-start :route route :region (keyword region))
+            (flush)
             (println :region-result :route route :region (keyword region) :result (sample insert))))
         (require! (= (total-rows) (:n (jdbc/fetch-one connection "SELECT count() AS n FROM otel_traces"))))
         (println :writer-green :route route :rows (total-rows))

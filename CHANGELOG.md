@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Default the opt-in ordinary transport benchmark to the declared root graph;
+  keep local driver overlays explicitly exploratory. Record and check each
+  writer/reader's selected providers before native work and compare graph
+  receipts across A/B/B/A arms. Add a provenance-only probe without native
+  writes. Retain individual sample observations and explicit child exits plus
+  available-artifact/source receipts on failure without qualifying unfinished
+  comparisons. Observation perturbs interbatch behavior even outside timing.
+  Refs #44. This does not qualify p99, allocation or Durable targets.
+
 - Separate official-runtime Durable rejection checks from positive replay on
   an explicitly authenticated capability-runtime artifact. Validate producer,
   archive and binary provenance before execution, and maintain offline controls

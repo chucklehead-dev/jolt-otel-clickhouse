@@ -516,12 +516,29 @@ timestamps and promoted Boolean/Int64 values and statuses; payload digests and
 ordered columns must agree across arms.
 
 Set the same explicit Jolt/mandatory Chez wrapper, native library/header and
-four checksum variables shown for the Durable developer gate above, plus a
-clean `JOLT_CHDB_SOURCE_ROOT` and its full `JOLT_EXPECTED_DRIVER_REV`. The
-local override is required until the merged row API is pinned; it does not
-make an unmerged dependency publishable. The launcher enforces a 360-second
+four checksum variables shown for the Durable developer gate above, with
+no driver override. The default `JOLT_ORDINARY_DRIVER_MODE=root-pin` selects
+the declared released graph. Every writer and reader records its actual
+driver, SDK, JSON, crypto and canonical DB checkouts and revisions, rejects
+ambiguous/dirty or mismatched providers before native work, and compares those
+receipts across arms. This is a check of those providers, not every namespace
+in the graph (the separately known time-coordinate overlap is not qualified).
+For an explicitly exploratory driver checkout, set
+`JOLT_ORDINARY_DRIVER_MODE=reviewed-source`, a clean `JOLT_CHDB_SOURCE_ROOT`
+and its full `JOLT_EXPECTED_DRIVER_REV`; its receipt is labeled and does not
+qualify the ordinary root driver. `JOLT_ORDINARY_PROVENANCE_ONLY=1` checks the
+selected child graph without loading the benchmark or making native writes.
+The launcher enforces a 360-second
 outer deadline and 60 seconds per child, strips child credentials and retains
-task-owned stores and aggregate evidence without retries. Both routes use the
+task-owned stores and aggregate evidence without retries. Each child has an
+explicit exit receipt; failure retains source-after checks and hashes of
+available public artifacts, with unfinished comparisons marked unqualified.
+Individual sample observations are flushed after each timed insert, so partial
+results survive a later failure. Logging is outside the latency interval but
+perturbs interbatch scheduling and GC; use the same observer in every arm and
+do not compare these numbers directly with an unobserved older run. Region
+CPU/GC/heap snapshots also include printing and flushing, not isolated insertion
+allocation or GC. Both routes use the
 current encoder/projector: this is a transport comparison, not a historical
 before/after baseline, p99/allocation qualification, or a Durable/S3 target claim.
 
