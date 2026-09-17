@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-test
   (:require [db.jdbc]
+            [clojure.test :as test]
             [clojure.string :as str]
             [jdbc.chdb.durable :as durable]
             [jdbc.chdb]
@@ -9,6 +10,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
+            [otel.exporter.chdb-ordinary-transport-diagnostics-test]
             [otel.exporter.chdb-ordinary-typed-rows-test :as ordinary-typed-rows-test]
             [otel.exporter.chdb-attribute-manifest-test :as manifest-test]
             [otel.exporter.chdb-attribute-projection-test :as attribute-projection-test]
@@ -63,6 +65,24 @@
   (if (zero? @failures)
     (println "all checks passed")
     (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
+
+(defn- run-ordinary-transport-diagnostics-checks []
+  (let [suite 'otel.exporter.chdb-ordinary-transport-diagnostics-test
+        names '[known-schema-categories-are-closed
+                unknown-and-malicious-data-cannot-leak
+                setup-markers-preserve-original-calls-and-outcomes
+                successful-setup-result-is-unchanged
+                maintained-profile-and-failure-exit-source-contract]
+        actual (set (for [[name var] (ns-publics suite) :when (:test (meta var))] name))]
+    (check "ordinary transport diagnostics exact five-test inventory" (set names) actual)
+    (when (pos? @failures) (finish-checks!))
+    (binding [test/*report-counters* (ref test/*initial-report-counters*)]
+      (test/test-vars (mapv #(ns-resolve suite %) names))
+      (check "ordinary transport diagnostics strict summary"
+             {:test 5 :pass 40 :fail 0 :error 0}
+             (select-keys @test/*report-counters* [:test :pass :fail :error])))
+    ;; Do not enter native gates after missing tests or a failing pure suite.
+    (when (pos? @failures) (finish-checks!))))
 
 (defn- isolated-memory-db-spec [scenario]
   ;; Separate query contexts select separate logical databases while respecting
@@ -651,6 +671,7 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (run-ordinary-transport-diagnostics-checks)
   (ordinary-rows-test/run check)
   (ordinary-typed-rows-test/run check)
   (dependency-test/run check)
