@@ -32,6 +32,7 @@ revision = git(provider, "rev-parse", "HEAD")
 checks = 0
 for control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure", "success", "receipt-publication-failure"]:
     work = ROOT / control
+    invocation_ledger = ROOT / f"{control}-compiler-invocations"
     for name in ["scripts", "bench/otel/exporter", "src/otel/exporter", "tools", "native", "evidence"]:
         (work / name).mkdir(parents=True, exist_ok=True)
     launcher = work / "scripts/qualify-ordinary-transport-benchmark.sh"
@@ -43,6 +44,8 @@ for control in ["late-child-failure", "partial-writer-failure", "child-receipt-w
     binary = work / "tools/jolt"
     binary.write_text(f'''#!/usr/bin/env python3
 import os, pathlib, sys
+with open({str(invocation_ledger)!r}, "a") as marker:
+    marker.write("public fake compiler invoked\\n")
 args = sys.argv[1:]
 if "-Spath" in args:
     print({str(provider)!r})
@@ -144,5 +147,17 @@ exec /usr/bin/sha256sum "$@"
     assert (b"ORDINARY_TRANSPORT_ABBA_GREEN=" in result.stdout) == (expected == 0)
     checks += 1
     print(f"control={control} exit={result.returncode} pass=True evidence={evidence}")
-assert checks == 5
+# The same real launcher must reject command intent before any fake compiler
+# invocation or effect-capable child. Reuse the final owned fixture unchanged.
+before = invocation_ledger.read_bytes()
+result = subprocess.run(["bash", str(launcher), "--provenance-only"], env=env,
+                        capture_output=True, timeout=15)
+assert result.returncode == 64
+assert result.stdout == b"invalid-benchmark-arguments\n"
+assert result.stderr == b""
+assert invocation_ledger.read_bytes() == before
+assert b"CHILD_BEGIN=" not in result.stdout and b"EVIDENCE_ROOT=" not in result.stdout
+checks += 1
+print("control=unknown-cli-argument exit=64 compiler-invocations=0 pass=True")
+assert checks == 6
 print(f"SYNTHETIC-RECEIPT-CONTROLS={checks} FAILURES=0 ROOT={ROOT}")

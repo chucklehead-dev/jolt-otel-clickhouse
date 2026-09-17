@@ -1,5 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
+# Validate intent before provider inspection, subprocesses or native work.
+# Metadata-only mode is the documented environment setting, not a CLI flag.
+case "${1:-}" in
+  '') [[ $# == 0 ]] || { echo invalid-benchmark-arguments; exit 64; } ;;
+  --bounded-inner) [[ $# == 1 ]] || { echo invalid-benchmark-arguments; exit 64; } ;;
+  --attest-classpath) [[ $# == 7 ]] || { echo invalid-benchmark-arguments; exit 64; } ;;
+  *) echo invalid-benchmark-arguments; exit 64 ;;
+esac
 clean_provider() {
   local status line
   status=$(git -C "$1" status --porcelain=v1 --untracked-files=all) || return 1
