@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add closed, payload-free setup/migration diagnostics to the ordinary transport
+  benchmark, preserving its assertions and failure exits; setup intermittency
+  remains unresolved and this does not claim an encoder or compiler fix.
+
 - Add closed baseline/StringWriter profiles for one authenticated Durable
   runtime artifact pair, preserving the existing AEA default. Reject mismatched
   independent pins before provider access; keep archive, manifest and ranged

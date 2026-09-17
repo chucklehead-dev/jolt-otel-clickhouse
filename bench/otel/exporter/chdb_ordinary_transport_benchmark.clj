@@ -19,6 +19,26 @@
 (def base-nanos 1700000000123456789)
 (def limit (* 8 1024 1024))
 (defn require! [ok] (when-not ok (throw (ex-info "Benchmark control failed" {}))))
+(defn schema-failure-diagnostic [data]
+  ;; Closed public labels only: never return arbitrary type/message/SQL/data.
+  (let [category (case (:type data)
+                   :otel.exporter.chdb.schema/invalid-plan :invalid-plan
+                   :otel.exporter.chdb.schema/duplicate-version :duplicate-version
+                   :otel.exporter.chdb.schema/unknown-version :unknown-version
+                   :otel.exporter.chdb.schema/migration-drift :migration-drift
+                   :otel.exporter.chdb.schema/nonconsecutive-history :nonconsecutive-history
+                   :otel.exporter.chdb.schema/migration-failed :migration-failed
+                   :unknown)
+        phase (case (:phase data) :statement :statement :record :record :unknown)
+        version (:version data) index (:statement-index data)]
+    {:category category :phase phase
+     :version (if (and (integer? version) (<= 1 version 4)) version :unknown)
+     :statement-index (if (and (= phase :statement) (integer? index) (<= 0 index 127))
+                        index :unknown)}))
+
+(defn- emit-diagnostic! [& public-fields]
+  ;; Evidence I/O failure must not replace setup's original result/Throwable.
+  (try (apply println public-fields) (flush) (catch Throwable _ nil)))
 (defn digest [text] (#'manifest/sha256 text))
 
 (defn approved []
@@ -82,7 +102,10 @@
      :allocation-qualified false :tail-target-qualified false}))
 
 (defn setup [connection]
+  (emit-diagnostic! :benchmark-setup :schema :enter)
   (schema/ensure-schema! connection)
+  (emit-diagnostic! :benchmark-setup :schema :return)
+  (emit-diagnostic! :benchmark-setup :installer :enter)
   (let [installation (installer/install-approved!
                       (backend/memory-backend) (approved)
                       {:target connection
@@ -91,6 +114,7 @@
                                                                  (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})
                        :execute-ddl! #(jdbc/execute! connection %)})
         capability (:descriptor-set installation)]
+    (emit-diagnostic! :benchmark-setup :installer :return)
     (require! (= :active (:status installation)))
     {:projector (projection/trace-projector capability connection)
      :fields (projection/confirmed-span-fields capability connection)
@@ -204,4 +228,12 @@
                      (instance? clojure.lang.ExceptionInfo error) :exception-info
                      (instance? java.lang.IllegalArgumentException error) :illegal-argument
                      :else :other))
+      (try
+        (let [{:keys [category phase version statement-index]}
+              (schema-failure-diagnostic (ex-data error))]
+          (emit-diagnostic! :benchmark-red-diagnostic :category category :phase phase
+                            :version version :statement-index statement-index))
+        (catch Throwable _
+          (emit-diagnostic! :benchmark-red-diagnostic :category :unknown :phase :unknown
+                            :version :unknown :statement-index :unknown)))
       (System/exit 1))))
