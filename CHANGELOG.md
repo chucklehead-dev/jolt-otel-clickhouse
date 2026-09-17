@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep the SDK dependency test aligned with the reviewed merged SDK pin and
+  honor an explicitly selected absolute test executable. Treat SDK source and
+  resources as one canonical checkout, rejecting duplicate or distinct
+  providers without claiming whole-graph uniqueness (#45).
+
 - Select the merged ordinary-row chDB driver and the published OTel numeric
   compatibility checkpoint for root-dependency qualification (Refs #27).
   The SDK checkpoint is a review-branch candidate, not merged SDK main;
