@@ -7,7 +7,7 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0/")
+  "https___github.com_casselc_otel.git/0e701ceff526d159884fadae98dcca61272ef6e0/")
 
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
@@ -26,12 +26,70 @@
          (str/includes? (first roots) expected-root))))
 
 (defn- exact-coordinate? [classpath dependency expected-root]
-  (let [roots (dependency-roots classpath dependency)]
-    (and (seq roots)
-         (every? #(str/includes? % expected-root) roots))))
+  ;; SDK src and resources are one provider only when they share the same
+  ;; canonical checkout. This is a bounded SDK oracle, not full-graph uniqueness.
+  (try
+    (let [roots (mapv #(.getCanonicalPath (java.io.File. %))
+                      (dependency-roots classpath dependency))
+          checkouts (mapv (fn [path]
+                            (when (or (str/ends-with? path "/src")
+                                      (str/ends-with? path "/resources"))
+                              (.getParent (java.io.File. path)))) roots)]
+      (and (seq roots)
+           (= (count roots) (count (set roots)))
+           (every? some? checkouts)
+           (= 1 (count (set checkouts)))
+           (every? #(str/ends-with? (str % "/") (str "/" expected-root))
+                   checkouts)))
+    (catch Exception _ false)))
+
+(defn- child-test-executable
+  ([] (child-test-executable (System/getenv "JOLT_TEST_CHILD_EXECUTABLE")))
+  ([selected]
+   (if (nil? selected)
+     "jolt"
+     (do
+       (when-not (and (not (str/blank? selected))
+                      (.isAbsolute (java.io.File. selected)))
+         (throw (ex-info "Invalid dependency test executable"
+                         {:type ::invalid-child-test-executable})))
+       selected))))
+
+(defn run-oracle-controls! [check]
+  ;; Freeze the approved witness independently of the implementation oracle.
+  (let [fixture-root "https___github.com_casselc_otel.git/0e701ceff526d159884fadae98dcca61272ef6e0/"
+        root (str "/public-fixture/a/" fixture-root)
+        other (str "/public-fixture/b/" fixture-root)
+        source (str root "src")
+        resources (str root "resources")
+        oracle #(exact-coordinate? % "casselc_otel.git" otel-root)]
+    (check "SDK source provider is accepted" true (boolean (oracle source)))
+    (check "SDK src/resources share one checkout" true
+           (boolean (oracle (str source ":" resources))))
+    (check "SDK canonical aliases share one checkout" true
+           (boolean (oracle (str source ":" root "src/../resources"))))
+    (check "SDK old reviewed SHA is rejected" false
+           (boolean (oracle (str/replace source
+                             "0e701ceff526d159884fadae98dcca61272ef6e0"
+                             "87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0"))))
+    (check "SDK distinct checkout at same SHA is rejected" false
+           (boolean (oracle (str source ":" other "src"))))
+    (check "SDK repeated source provider is rejected" false
+           (boolean (oracle (str source ":" source))))
+    (check "SDK unexpected checkout child is rejected" false
+           (boolean (oracle (str root "test"))))
+    (check "SDK missing provider is rejected" false (boolean (oracle "./test")))
+    (check "ordinary users retain child executable fallback" "jolt"
+           (child-test-executable nil))
+    (check "explicit absolute child executable is retained" "/public-fixture/jolt"
+           (child-test-executable "/public-fixture/jolt"))
+    (doseq [selected ["jolt" "" " "]]
+      (check "relative or blank selected child executable is rejected" true
+             (try (child-test-executable selected) false
+                  (catch Exception _ true))))))
 
 (defn- dependency-report [extra-args]
-  (let [child (process/process (into ["jolt" "-Srepro"]
+  (let [child (process/process (into [(child-test-executable) "-Srepro"]
                                      (concat extra-args ["-Spath"]))
                                {:out :string :err :string})
         result (deref child 60000 ::timeout)]
@@ -40,6 +98,7 @@
     result))
 
 (defn run [check]
+  (run-oracle-controls! check)
   (println "clean jolt-crypto dependency resolution")
   (let [result (dependency-report [])]
     (check "dependency report completes"

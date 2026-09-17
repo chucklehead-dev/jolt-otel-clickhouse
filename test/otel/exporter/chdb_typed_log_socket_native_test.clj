@@ -2,11 +2,13 @@
   (:require [clojure.data.json :as json]
             [clojure.string :as str]
             [db.jdbc]
+            [jdbc.chdb :as chdb]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
             [jolt.http.body :as http-body]
             [jolt.http.server :as http-server]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
@@ -118,7 +120,8 @@
            {:connection connection :create-schema? false :signals #{:logs}
             :typed-log-descriptors descriptor-set})
           listener (atom nil)
-          client (atom nil)]
+          client (atom nil)
+          mutant-historical (atom 0)]
       (try
         (let [direct (record "typed.log.socket")]
           (check! "direct typed log export succeeds" true
@@ -149,29 +152,52 @@
                     [(get first-row value-key) (get first-row status-key)
                      (:logattributes first-row)]))
           (let [captured (atom nil)
-                mutant-record (record "typed.log.fixed-column-mutant")]
-            (with-redefs [jdbc/execute!
-                          (fn [_ statement]
-                            (reset! captured statement)
-                            {:count 1})]
-              (check! "typed insert payload can be captured before execution"
+                insert chdb/insert-json-rows!
+                mutant-record (record "typed.log.capture-source")]
+            (with-redefs [chdb/insert-json-rows!
+                          (fn [conn table columns payload]
+                            (reset! captured {:table table :payload payload})
+                            (insert conn table columns payload))]
+              (check! "typed insert payload is captured while delegating native execution"
                       true
                       (sdk-logs/export-logs! receiving [mutant-record])))
-            (let [fixed-prefix
+            (check! "captured source row really persists through the ordinary API" 1
+                    (count (rows connection "typed.log.capture-source")))
+            (let [captured-row (json/read-str (:payload @captured))
+                  ;; Only this diagnostic mutant changes the public fixture
+                  ;; event name; the real captured insertion stays untouched.
+                  captured-sql (test-support/statement-view
+                                (:table @captured) nil
+                                (str (json/write-str
+                                      (assoc captured-row "EventName" "typed.log.fixed-column-mutant")) "\n"))
+                  fixed-prefix
                   (str "insert into otel_logs ("
                        (str/join ", " schema/clickstack-log-insert-columns)
                        ")")
                   mutant
-                  (str/replace-first @captured "insert into otel_logs"
+                  (str/replace-first captured-sql "insert into otel_logs"
                                      fixed-prefix)
                   error (caught #(jdbc/execute! connection mutant))
-                  status (when-not error
-                           (get (first (rows connection
-                                            "typed.log.fixed-column-mutant"))
-                                status-key))]
+                  mutant-rows (rows connection "typed.log.fixed-column-mutant")
+                  status (get (first mutant-rows) status-key)]
               (check! "legacy fixed-column mutation cannot persist typed status"
                       true
-                      (or (some? error) (not= 3 status)))))
+                      (or (some? error) (not= 3 status)))
+              (if error
+                (check! "rejected fixed-column mutant persists exactly zero rows"
+                        0 (count mutant-rows))
+                (do
+                  (check! "accepted fixed-column mutant persists exactly one row"
+                          1 (count mutant-rows))
+                  (check! "accepted fixed-column mutant has all historical statuses"
+                          [0 0 0]
+                          (mapv #(get (first mutant-rows)
+                                      (keyword (get-in % [:physical :status-column]))) fields))
+                  (check! "accepted fixed-column mutant preserves generic attributes"
+                          {"job.name" "archive" "job.complete" "false"
+                           "job.attempt" (str exact-int64) "fallback" "retained"}
+                          (:logattributes (first mutant-rows)))
+                  (reset! mutant-historical 1)))))
           (let [legacy
                 (chdb-export/exporter
                  {:connection connection :create-schema? false
@@ -200,7 +226,10 @@
                           connection descriptor-set
                           (filter-request query-field operator value))]
               (check! (str "native typed log filter and coverage: " key)
-                      [5 2 2 1 2 expected]
+                      ;; Two socket rows + one captured typed source + two
+                      ;; legacy controls, plus only an independently qualified
+                      ;; accepted historical mutant (never inferred from coverage).
+                      [(+ 5 @mutant-historical) 3 (+ 1 @mutant-historical) 1 3 expected]
                       [(get-in result [:coverage :total])
                        (get-in result [:coverage :valid])
                        (get-in result [:coverage

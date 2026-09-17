@@ -55,8 +55,11 @@ library explicitly with:
 jolt -m jdbc.chdb.install
 ```
 
-Set `JOLT_CHDB_LIB` instead when using an already installed compatible
-`libchdb`.
+Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
+the qualified package version **26.7.3**. Exporter startup checks the actual
+loaded version before schema writes, including Durable connections. Its exact
+integer-nanosecond DateTime64 wire is qualified on SQL engine 26.7.2.1; newer
+library versions are rejected until their timestamp wire is qualified.
 
 ```clojure
 (def exporter (otel.exporter.chdb/exporter {:db-spec "chdb:telemetry.chdb"}))
@@ -116,6 +119,62 @@ once after all of its table inserts. An empty batch does not publish a new
 manifest. If insertion or the persistence barrier fails, export returns
 `false` and `last-error` retains the cause. Span force-flush reaches the same
 barrier.
+
+For a local-only Linux native integration check, run the following from this
+repository, replacing every placeholder with independently qualified paths
+and SHA-256 checksums:
+
+```sh
+env JOLT_BIN=/path/to/qualified/jolt \
+  JOLT_WRAPPER=/path/to/chez-10.4.1-wrapper \
+  JOLT_EXPECTED_BINARY_SHA256='<binary-sha256>' \
+  JOLT_EXPECTED_WRAPPER_SHA256='<wrapper-sha256>' \
+  JOLT_CHDB_LIB=/path/to/native-pair/libchdb.so \
+  JOLT_CHDB_HEADER=/path/to/native-pair/chdb.h \
+  JOLT_CHDB_EXPECTED_LIBRARY_SHA256='<library-sha256>' \
+  JOLT_CHDB_EXPECTED_HEADER_SHA256='<header-sha256>' \
+  timeout --signal=TERM --kill-after=5s 210s \
+  bash scripts/qualify-durable-typed-native.sh
+```
+
+The default `root-pin` mode uses the original dependency pins without overrides,
+attesting unique clean driver and SDK providers before starting the writer.
+For explicit source-only review evidence, add
+`JOLT_DURABLE_DRIVER_MODE=reviewed-source`,
+`JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb` and
+`JOLT_EXPECTED_DRIVER_REV='<full-reviewed-driver-sha>'` to the same invocation.
+That opt-in mode overrides only the driver and does not qualify root resolution.
+The selected SDK checkpoint is merged SDK main. Published pins alone still do
+not establish a particular application's runtime/native or hosted-CI qualification.
+The gate verifies typed spans/logs and timestamps through fresh-reader WAL
+replay while the writer remains alive, rather than a shutdown checkpoint.
+Child environments strip credentials; evidence is retained without retries.
+An unconfirmed surviving process reports incomplete cleanup without signaling
+an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.
+
+Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
+do not provide that capability; the driver rejects them before storage effects.
+The ordinary exporter remains qualified separately on official 0.8.6. For
+Durable, select a reviewed compiler artifact containing casselc/jolt#73, not
+just a newer version string or a moving branch.
+
+The initial shared artifact supports Linux X64, not every platform supported
+by the ordinary exporter. `scripts/fetch-qualified-durable-runtime.sh` accepts
+only explicit producer run, attempt, workflow commit, artifact ID, archive and binary checksum
+pins. It checks the successful producer run and exact artifact, validates the
+archive/manifest/binary, restores executable mode only after verification, and
+checks ranged append before returning its binary path. CI keeps the official
+unsupported-host no-effect test separate from positive writer/fresh-reader
+replay on that supported artifact. Cross-repository artifact access must work
+with the caller's authenticated read permissions; permission or expired-artifact
+failures never select an alternate compiler. Artifacts expire after 90 days and
+must be deliberately rotated to another reviewed and qualified run.
+
+The initial shared artifact lane pins successful producer run `35188849252`,
+attempt `1`, at reviewed workflow commit `6bf745bf`. Consumer CI must still
+qualify cross-repository access and positive Durable replay on those bytes.
+Offline artifact controls exercise only public mock data, not real hosting or
+compiler capability; run them with `python3 scripts/test-qualified-durable-runtime.py`.
 
 This is an at-least-once boundary: a failed or ambiguous attempt can have made
 local progress, so an SDK retry may produce duplicates. Durable's flush only
@@ -441,10 +500,30 @@ OTel scalar type cannot be recovered safely.
 
 ## Development and releases
 
-Use Jolt v0.8.3 or newer. Install the pinned native dependencies, then run
+Use Jolt v0.8.6 or newer. Install the pinned native dependencies, then run
 `jolt -M:test`. A release is an immutable Git tag pointing at a commit for
 which the test workflow passed; consumers should continue to pin that commit
 SHA even when also recording the tag.
+
+### Ordinary transport comparison
+
+The opt-in Linux developer lane `bash scripts/qualify-ordinary-transport-benchmark.sh`
+compares the current shared row projection over legacy SQL and ordinary row-data
+transport in A/B/B/A order. Each arm uses 512-row batches, five warmups and
+20 measurements for serialization-inclusive and pre-encoded regions. A fresh
+reader reconciles all 25,600 rows as 1,024 complete groups, including exact
+timestamps and promoted Boolean/Int64 values and statuses; payload digests and
+ordered columns must agree across arms.
+
+Set the same explicit Jolt/mandatory Chez wrapper, native library/header and
+four checksum variables shown for the Durable developer gate above, plus a
+clean `JOLT_CHDB_SOURCE_ROOT` and its full `JOLT_EXPECTED_DRIVER_REV`. The
+local override is required until the merged row API is pinned; it does not
+make an unmerged dependency publishable. The launcher enforces a 360-second
+outer deadline and 60 seconds per child, strips child credentials and retains
+task-owned stores and aggregate evidence without retries. Both routes use the
+current encoder/projector: this is a transport comparison, not a historical
+before/after baseline, p99/allocation qualification, or a Durable/S3 target claim.
 
 ### Backend benchmark
 

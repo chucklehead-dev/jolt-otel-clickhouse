@@ -2,6 +2,68 @@
 
 ## Unreleased
 
+- Separate official-runtime Durable rejection checks from positive replay on
+  an explicitly authenticated capability-runtime artifact. Validate producer,
+  archive and binary provenance before execution, and maintain offline controls
+  for malformed or stale artifact evidence. Shared-artifact qualification is
+  pending; an ordinary minimum compiler version is not a Durable capability
+  claim (#48).
+
+- Let the Durable native qualifier accept the pinned resolver's exact
+  untracked cache marker while still rejecting changed provider source or
+  other untracked files. Provider checks fail closed on Git errors.
+
+- Keep the SDK dependency test aligned with the reviewed merged SDK pin and
+  honor an explicitly selected absolute test executable. Treat SDK source and
+  resources as one canonical checkout, rejecting duplicate or distinct
+  providers without claiming whole-graph uniqueness (#45).
+
+- Select the merged ordinary-row chDB driver and the published OTel numeric
+  compatibility checkpoint for root-dependency qualification (Refs #27).
+  The SDK checkpoint is a review-branch candidate, not merged SDK main;
+  final review and root/native qualification remain release gates. Existing
+  explicit crypto ownership and dependency exclusions are unchanged.
+  Raise the minimum Jolt version to 0.8.6. Durable qualification now defaults
+  to revision-checked root driver/SDK pins; reviewed driver overlays require an
+  explicit source-evidence mode and exact clean revision.
+
+- Add explicit bounded CI lanes for ordinary native typed rows/metric admission
+  and typed Durable WAL readback through a fresh process (Refs #27). Hosted CI
+  selects released Jolt 0.8.6 and the exact root driver pin; an API-missing pin
+  fails qualification rather than skipping or using an unmerged override.
+  Retain only explicit synthetic fixture logs and step status on failure;
+  native stores, WAL, databases and environment files are excluded.
+
+- Add an opt-in ordinary transport ABBA benchmark with explicit provenance,
+  bounded child processes and complete fresh-reader reconciliation. Refs #27.
+
+- Add an opt-in, local-only Linux native gate for typed Durable span/log
+  exports and fresh-reader WAL recovery, preserving canonical tests and
+  requiring explicit runtime/library provenance. Refs #27.
+
+- Fail closed before exporter schema writes unless the actual loaded chDB
+  package reports the qualified 26.7.3 timestamp wire. Compatible library
+  overrides and Durable connections receive the same check; no bypass option
+  is provided, and rejected versions are not included in error data.
+
+- Encode DateTime64(9) span/log/event timestamps as exact integer nanoseconds
+  for pinned chDB package 26.7.3 / SQL engine 26.7.2.1, rejecting values outside
+  0..Int64-max before insertion. This fixes shared ordinary and Durable
+  early-epoch JSON wires; observed log time still feeds the existing Timestamp
+  fallback, without adding a column. Whole-second metric DateTime fields and
+  Durable classification/WAL/barrier algorithms are unchanged. Requalify the
+  timestamp wire before upgrading to 26.8, whose integer semantics differ.
+
+- Send ordinary telemetry batches through the driver's row-data API with
+  ordered schema-owned columns, all-row key and numeric validation, maintained
+  JSON encoding, and an exact 8 MiB UTF-8 bound. Active installer capabilities
+  supply additive typed columns. Durable exports retain materialized SQL and
+  their existing checkpoint/WAL acknowledgement protocol and require explicit
+  `:durable? true`. Startup rejects non-chDB ordinary contexts before schema
+  writes; ordinary metric batches validate every type before the first insert,
+  without promising rollback of native execution failures. Physical UInt64
+  duration/count/bucket domains remain supported. Refs #27.
+
 - Add capability-bound typed log-record filters and six-way availability
   coverage for every scalar type supported by the current promotion manifest.
   Exact schema bindings and the installed connection authorize library-owned,

@@ -4,6 +4,8 @@
             [clojure.string :as str]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.core :as jdbc]
+            [jdbc.chdb :as chdb]
+            [otel.exporter.chdb-test-support :as support]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-projection :as projection]
@@ -28,13 +30,12 @@
         :location :span-attributes :key "checkout.count" :type :int64}]}]}))
 
 (defn- installed
-  ([] (installed (compiled)))
-  ([approved-manifest]
+  ([target] (installed (compiled) target))
+  ([approved-manifest target]
   (let [manifest approved-manifest
         columns (registry/expected-columns (registry/prepare manifest))
         observed (atom {})
-        next-column (atom 0)
-        target (atom :projection-target)]
+        next-column (atom 0)]
     (assoc
      (installer/install-approved!
       (backend/memory-backend) manifest
@@ -86,18 +87,19 @@
 
 (defn- exported-row [descriptor-set target attributes]
   (let [statement (atom nil)
-        exporter (chdb-export/exporter
+        exporter (support/call-with-qualified-native #(chdb-export/exporter
                   {:connection target :create-schema? false :signals #{:spans}
-                   :typed-span-descriptors descriptor-set})]
-    (with-redefs [jdbc/execute!
-                  (fn [_ sql] (reset! statement sql) {:count 1})]
+                   :typed-span-descriptors descriptor-set}))]
+    (with-redefs [chdb/insert-json-rows!
+                  (fn [_ table _ payload] (reset! statement (support/statement-view table nil payload)) {:count 1})]
       (when-not (export/export-spans! exporter [(span attributes)])
         (throw (chdb-export/last-error exporter))))
     (json/read-str (second (str/split @statement #"FORMAT JSONEachRow\n" 2)))))
 
 (defn run [check]
   (println "confirmed typed span projection")
-  (let [installation (installed)
+  (with-open [target (support/connection)]
+  (let [installation (installed target)
         descriptor-set (:descriptor-set installation)
         target (::target installation)
         projector (projection/span-projector descriptor-set target)
@@ -144,7 +146,7 @@
               (projected-pair row installation "checkout.complete")
               (projected-pair row installation "checkout.count")]))
 
-    (let [row (exported-row nil :legacy-target {"checkout.count" 7})]
+    (let [row (exported-row nil target {"checkout.count" 7})]
       (check "legacy export without a capability remains generic-map only"
              [{"checkout.count" "7"} false]
              [(get row "SpanAttributes")
@@ -206,9 +208,10 @@
              #(chdb-export/exporter
                {:db-spec "chdb::memory:" :create-schema? false
                 :signals #{:spans}
-                :typed-span-descriptors descriptor-set})))))
+                :typed-span-descriptors descriptor-set}))))))
 
-  (let [installation (installed (mixed-compiled))
+  (with-open [target (support/connection)]
+  (let [installation (installed (mixed-compiled) target)
         descriptor-set (:descriptor-set installation)
         target (::target installation)
         projector (projection/trace-projector descriptor-set target)
@@ -230,4 +233,4 @@
     (check "mixed trace capability cannot enter the legacy span-only projector"
            :otel.exporter.chdb.attribute-projection/location-required
            (:type (thrown-data
-                   #(projection/span-projector descriptor-set target))))))
+                   #(projection/span-projector descriptor-set target)))))))
