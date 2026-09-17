@@ -44,6 +44,14 @@ jobs:
           set -euo pipefail
           jolt -Srepro -m jdbc.chdb.install
           jolt -Srepro -A:test -m hegel.install
+      - name: Fake child executable provenance controls
+        timeout-minutes: 2
+        shell: bash
+        # Parent loads native-related namespaces; child stubs invoke no Jolt.
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 60s jolt -Srepro -A:test -e \
+            "(require 'otel.exporter.chdb-child-provenance-test 'clojure.test) (let [r (clojure.test/run-tests 'otel.exporter.chdb-child-provenance-test) ok (and (= 1 (:test r)) (= 10 (:pass r)) (zero? (:fail r)) (zero? (:error r)))] (println :fake-child-provenance-result :qualified ok) (System/exit (if ok 0 1)))"
       - name: Test
         run: jolt -Srepro -M:test
       - name: Read the exact root driver pin
