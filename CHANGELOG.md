@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Let the Durable native qualifier accept the pinned resolver's exact
+  untracked cache marker while still rejecting changed provider source or
+  other untracked files. Provider checks fail closed on Git errors.
+
 - Keep the SDK dependency test aligned with the reviewed merged SDK pin and
   honor an explicitly selected absolute test executable. Treat SDK source and
   resources as one canonical checkout, rejecting duplicate or distinct

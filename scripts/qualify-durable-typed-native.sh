@@ -1,5 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
+clean_provider() {
+  local status line
+  status=$(git -C "$1" status --porcelain=v1 --untracked-files=all) || return 1
+  while IFS= read -r line; do
+    # The pinned Jolt resolver creates this exact untracked cache marker.
+    # Tracked changes and every other untracked file remain disallowed.
+    [[ -z "$line" || "$line" == '?? .jolt-git-ok' ]] || return 1
+  done <<< "$status"
+}
+# Narrow shell-only control seam: no provenance/native/writer startup.
+if [[ "${1:-}" == --check-provider-cleanliness ]]; then
+  [[ "$#" == 2 ]] || exit 1
+  clean_provider "$2"
+  exit
+fi
 # Linux-only bounded acceptance lane. Run under an outer 210s timeout.
 [[ "$(uname -s)" == Linux ]] || { echo unsupported-process-ownership-host; exit 1; }
 worktree=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -75,7 +90,7 @@ if [[ "$driver_mode" == reviewed-source ]]; then
   reviewed_revision=${JOLT_EXPECTED_DRIVER_REV:?set the exact reviewed driver revision}
   [[ "$reviewed_revision" =~ ^[a-f0-9]{40}$ ]]
   [[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
-  [[ -z "$(git -C "$driver" status --porcelain=v1)" ]]
+  clean_provider "$driver"
   [[ "$(git -C "$driver" rev-parse HEAD)" == "$reviewed_revision" ]]
   driver_options=(-Sdeps "{:deps {io.github.chucklehead-dev/jolt-chdb {:local/root \"$driver\"}}}")
 fi
@@ -109,7 +124,8 @@ done
 [[ "${#driver_roots[@]}" == 1 && "${#sdk_roots[@]}" == 1 ]] || { echo ambiguous-source-provider; exit 1; }
 driver_revision=$(git -C "${driver_roots[0]}" rev-parse HEAD)
 sdk_revision=$(git -C "${sdk_roots[0]}" rev-parse HEAD)
-[[ -z "$(git -C "${driver_roots[0]}" status --porcelain=v1)" && -z "$(git -C "${sdk_roots[0]}" status --porcelain=v1)" ]]
+clean_provider "${driver_roots[0]}"
+clean_provider "${sdk_roots[0]}"
 if [[ "$driver_mode" == root-pin ]]; then expected_driver=${declared[0]}; else expected_driver=$reviewed_revision; fi
 [[ "$driver_revision" == "$expected_driver" && "$sdk_revision" == "${declared[1]}" ]] || { echo source-pin-mismatch; exit 1; }
 printf '%s\n' "$driver_revision" >"$root/driver-source.txt"
