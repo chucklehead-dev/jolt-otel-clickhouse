@@ -45,10 +45,11 @@
 (defn- thrown-data [f]
   (try (f) nil (catch Throwable error (ex-data error))))
 
-(defn- child-test-executable []
+(defn- child-test-executable
+  ([] (child-test-executable (System/getenv "JOLT_TEST_CHILD_EXECUTABLE")))
+  ([selected]
   ;; Local qualification supplies an absolute, checksum-guarded command:
   ;; the mandatory Chez wrapper prepends ~/.local/bin to PATH.
-  (let [selected (System/getenv "JOLT_TEST_CHILD_EXECUTABLE")]
     (if (nil? selected)
       "jolt"
       (do
@@ -57,6 +58,11 @@
           (throw (ex-info "Invalid child test executable"
                           {:type ::invalid-child-test-executable})))
         selected))))
+
+(defn- finish-checks! []
+  (if (zero? @failures)
+    (println "all checks passed")
+    (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
 
 (defn- isolated-memory-db-spec [scenario]
   ;; Separate query contexts select separate logical databases while respecting
@@ -299,6 +305,7 @@
                           ([connection statement options]
                            (execute! connection statement options)))]
             (thrown-data #(schema/migrate! conn)))]
+      (check "v1 migration injection guard ran" true @failed?)
       (check "failed migration identifies statement phase" :statement (:phase failure))
       (check "failed migration identifies version" 1 (:version failure))
       (check "failed migration remains unrecorded" 0
@@ -329,6 +336,7 @@
                           ([connection statement options]
                            (execute! connection statement options)))]
             (thrown-data #(schema/migrate! conn)))]
+      (check "v2 migration injection guard ran" true @failed?)
       (check "partial v2 failure identifies version" 2 (:version failure))
       (check "partial v2 leaves only v1 recorded" [1]
              (mapv :version
@@ -358,6 +366,7 @@
                           ([connection statement options]
                            (execute! connection statement options)))]
             (thrown-data #(schema/migrate! conn)))]
+      (check "v3 migration injection guard ran" true @failed?)
       (check "partial v3 failure identifies version" 3 (:version failure))
       (check "partial v3 leaves v1/v2 recorded" [1 2]
              (mapv :version
@@ -408,6 +417,7 @@
                           ([connection statement options]
                            (execute! connection statement options)))]
             (thrown-data #(schema/migrate! conn)))]
+      (check "v4 migration injection guard ran" true @failed?)
       (check "partial v4 failure identifies version" 4 (:version failure))
       (check "partial v4 leaves v1-v3 recorded" [1 2 3]
              (mapv :version
@@ -896,6 +906,4 @@
     (check (str "Hegel " label) true (:passed? result))
     (check (str "Hegel " label " is deterministic") false (:flaky? result)))
   (explorer-test/run check)
-  (if (zero? @failures)
-    (println "all checks passed")
-    (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
+  (finish-checks!))

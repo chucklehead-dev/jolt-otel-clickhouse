@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Require explicit witnesses that each migration fault injection ran. Add
+  shell-only fake child controls for absolute executable selection under PATH
+  shadowing and unchanged parent failure accounting. These are test-boundary
+  checks, not native lifetime or performance qualification (#43).
+
 - Reject unknown benchmark launcher arguments before provider inspection or
   child startup. Keep metadata-only mode explicitly environment-configured;
   add a fake-compiler control proving a mistaken CLI flag cannot start work.
