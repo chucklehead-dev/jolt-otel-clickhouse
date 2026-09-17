@@ -24,6 +24,10 @@ jobs:
       - name: Offline runtime artifact trust controls
         timeout-minutes: 2
         run: timeout 30s python3 scripts/test-qualified-durable-runtime.py
+      - name: Synthetic benchmark failure receipt controls
+        timeout-minutes: 2
+        # Fake compiler only: no performance run, native storage or credentials.
+        run: timeout 60s python3 scripts/test-ordinary-transport-failure-receipts.py
       - name: Install Jolt v0.8.6
         shell: bash
         run: |
