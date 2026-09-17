@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test:
@@ -20,6 +21,9 @@ jobs:
       JOLT_CHDB_CACHE_DIR: ${{ github.workspace }}/.chdb-native
     steps:
       - uses: actions/checkout@v4
+      - name: Offline runtime artifact trust controls
+        timeout-minutes: 2
+        run: timeout 30s python3 scripts/test-qualified-durable-runtime.py
       - name: Install Jolt v0.8.6
         shell: bash
         run: |
@@ -102,6 +106,66 @@ jobs:
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
             "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 50 @n)) (println \"PASS ordinary native 50\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
           test "$(grep -Fxc 'PASS ordinary native 50' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+      - name: Official host rejects unsupported Durable before effects
+        timeout-minutes: 2
+        shell: bash
+        env:
+          EXPECTED_DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .qualification-driver rev-parse HEAD)" = "$EXPECTED_DRIVER_REVISION"
+          # Add only exact checked-out test support, never override driver code.
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro \
+            -Sdeps '{:aliases {:capability-negative {:extra-paths [".qualification-driver/test"]}}}' \
+            -A:test:capability-negative -e '
+              (require (quote jdbc.chdb-durable-writer-test))
+              (let [gate (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote run-capability-checks!))
+                    check (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote check))
+                    n (atom 0)]
+                (assert (and gate check (fn? (deref gate)) (fn? (deref check))))
+                (let [supported? (with-redefs-fn
+                                   {check (fn [_ expected actual]
+                                            (swap! n inc)
+                                            (assert (= expected actual)))}
+                                   (fn [] ((deref gate))))]
+                  (assert (false? supported?))
+                  (assert (= 4 @n))
+                  (println "PASS official unsupported capability boundary 4")))' \
+            | tee "$RUNNER_TEMP/exporter-official-capability-negative.log"
+          test "$(grep -Fxc 'PASS official unsupported capability boundary 4' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
+
+      - name: Authenticate the shared capability runtime for positive Durable
+        timeout-minutes: 3
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Successful reviewed producer; consumer qualification remains a CI gate.
+          # Rotate explicitly before expiry; no branch/latest fallback.
+          QUALIFIED_RUNTIME_RUN_ID: '35188849252'
+          QUALIFIED_RUNTIME_RUN_ATTEMPT: '1'
+          QUALIFIED_RUNTIME_ARTIFACT_ID: '10483062488'
+          QUALIFIED_RUNTIME_WORKFLOW_SHA: '6bf745bf6101f2c3481d0ffe16401843c7675050'
+          QUALIFIED_RUNTIME_ARTIFACT_SHA256: '353670dda1447d96d46aa1e133e4910481caf2f328d159a9bde76ed863e41524'
+          QUALIFIED_RUNTIME_BINARY_SHA256: '31cff7ea89a652bd99848cf15686eb576d90d9ac3962ac07701fb6005e6eb458'
+        run: |
+          set -euo pipefail
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 120s \
+            bash scripts/fetch-qualified-durable-runtime.sh \
+            | tee "$RUNNER_TEMP/exporter-qualified-runtime.log"
+          test "$(grep -c '^QUALIFIED_RUNTIME_BIN=' "$RUNNER_TEMP/exporter-qualified-runtime.log")" = 1
+          binary=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/exporter-qualified-runtime.log")
+          [[ "$binary" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
+          test -f "$binary" && test ! -L "$binary"
+          test "$(realpath "$binary")" = "$binary"
+          test "$(sha256sum "$binary" | cut -d ' ' -f1)" = "$QUALIFIED_RUNTIME_BINARY_SHA256"
+          # The official aggregate/native50 already ran. Select this artifact
+          # only for the existing positive writer/fresh-reader fixture below.
+          {
+            printf 'JOLT_BIN=%s\n' "$binary"
+            printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$QUALIFIED_RUNTIME_BINARY_SHA256"
+            printf 'JOLT_CACHE_DIR=%s/.jolt-cache-durable-aea\n' "$GITHUB_WORKSPACE"
+          } >> "$GITHUB_ENV"
+
       - name: Qualify typed Durable WAL with a fresh reader
         id: durable_native
         timeout-minutes: 4
@@ -131,6 +195,14 @@ jobs:
           mkdir -p "$evidence"
           printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\n' \
             "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" > "$evidence/status.txt"
+          # Only public authentication diagnostics/boundary fixture output.
+          for kind in official-capability-negative qualified-runtime; do
+            log="$RUNNER_TEMP/exporter-$kind.log"
+            if [[ -f "$log" && ! -L "$log" ]]; then
+              cp "$log" "$evidence/$kind.log"
+              sha256sum "$evidence/$kind.log" >> "$evidence/status.txt"
+            fi
+          done
           # Never traverse or upload native stores, WAL, databases or env files.
           for kind in ordinary durable; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
@@ -166,3 +238,5 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/durable.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
+            ${{ runner.temp }}/exporter-native-evidence/official-capability-negative.log
+            ${{ runner.temp }}/exporter-native-evidence/qualified-runtime.log

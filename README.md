@@ -144,13 +144,37 @@ For explicit source-only review evidence, add
 `JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb` and
 `JOLT_EXPECTED_DRIVER_REV='<full-reviewed-driver-sha>'` to the same invocation.
 That opt-in mode overrides only the driver and does not qualify root resolution.
-The selected SDK review-branch checkpoint still requires final review; pinning
-a published commit does not establish merged SDK-main or hosted-CI qualification.
+The selected SDK checkpoint is merged SDK main. Published pins alone still do
+not establish a particular application's runtime/native or hosted-CI qualification.
 The gate verifies typed spans/logs and timestamps through fresh-reader WAL
 replay while the writer remains alive, rather than a shutdown checkpoint.
 Child environments strip credentials; evidence is retained without retries.
 An unconfirmed surviving process reports incomplete cleanup without signaling
 an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.
+
+Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
+do not provide that capability; the driver rejects them before storage effects.
+The ordinary exporter remains qualified separately on official 0.8.6. For
+Durable, select a reviewed compiler artifact containing casselc/jolt#73, not
+just a newer version string or a moving branch.
+
+The initial shared artifact supports Linux X64, not every platform supported
+by the ordinary exporter. `scripts/fetch-qualified-durable-runtime.sh` accepts
+only explicit producer run, attempt, workflow commit, artifact ID, archive and binary checksum
+pins. It checks the successful producer run and exact artifact, validates the
+archive/manifest/binary, restores executable mode only after verification, and
+checks ranged append before returning its binary path. CI keeps the official
+unsupported-host no-effect test separate from positive writer/fresh-reader
+replay on that supported artifact. Cross-repository artifact access must work
+with the caller's authenticated read permissions; permission or expired-artifact
+failures never select an alternate compiler. Artifacts expire after 90 days and
+must be deliberately rotated to another reviewed and qualified run.
+
+The initial shared artifact lane pins successful producer run `35188849252`,
+attempt `1`, at reviewed workflow commit `6bf745bf`. Consumer CI must still
+qualify cross-repository access and positive Durable replay on those bytes.
+Offline artifact controls exercise only public mock data, not real hosting or
+compiler capability; run them with `python3 scripts/test-qualified-durable-runtime.py`.
 
 This is an at-least-once boundary: a failed or ambiguous attempt can have made
 local progress, so an SDK retry may produce duplicates. Durable's flush only

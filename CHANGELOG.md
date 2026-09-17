@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Separate official-runtime Durable rejection checks from positive replay on
+  an explicitly authenticated capability-runtime artifact. Validate producer,
+  archive and binary provenance before execution, and maintain offline controls
+  for malformed or stale artifact evidence. Shared-artifact qualification is
+  pending; an ordinary minimum compiler version is not a Durable capability
+  claim (#48).
+
 - Let the Durable native qualifier accept the pinned resolver's exact
   untracked cache marker while still rejecting changed provider source or
   other untracked files. Provider checks fail closed on Git errors.
