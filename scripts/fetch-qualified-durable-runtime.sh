@@ -8,6 +8,39 @@ repo=casselc/jolt
 compiler=aea91781bbab68bf174fef4a689bb00dcf834ded
 compiler_tree=a31de1596fcabd0e45fbcbc528842805acea0ee7
 artifact_name=durable-runtime-aea91781-linux-x64
+profile=${QUALIFIED_RUNTIME_PROFILE-aea}
+case "$profile" in
+  aea) ;;
+  baseline-09a2)
+    compiler=09a2baac9714f98b994473f64fd239f431a9fffb
+    compiler_tree=4c2fb3c2b00fe085ce3920a1de558c65d3b8f979
+    artifact_name=durable-runtime-09a2baac-linux-x64
+    pair_artifact=10504073187
+    pair_archive=2dba59b6c96787e27b9edaaabafc4e3624b0e7bb380d0ec83a6a3bf352980f78
+    pair_binary=1ea6a9e222411379a6129ec25930f18062e3fe5be6bef886dc2fb15fe081642a
+    ;;
+  string-writer-c5d)
+    compiler=c5d444e4d074767f507fe86b203b6dde6c309fc5
+    compiler_tree=555b5a9d9745be2a9f34041022c5376db5eb41f0
+    artifact_name=durable-runtime-c5d444e4-linux-x64
+    pair_artifact=10504849823
+    pair_archive=49ac4be188348f5a7c72148ae1da63719914442f056ce25c89972fae8ce1f314
+    pair_binary=c250124902495885fc417bc9bf559f5fe5a44701f3a3e4c0a56062a98e07d165
+    ;;
+  *) echo qualified-runtime-unknown-profile >&2; exit 1 ;;
+esac
+# Experimental profiles are one authenticated pair, not caller-selected builds.
+# Require all independent pins rather than silently supplying absent authority.
+if [[ "$profile" != aea ]]; then
+  [[ "${QUALIFIED_RUNTIME_RUN_ID:-}" == 35237991514 &&
+     "${QUALIFIED_RUNTIME_RUN_ATTEMPT:-}" == 1 &&
+     "${QUALIFIED_RUNTIME_WORKFLOW_SHA:-}" == 1fea9ae8becb8b5ada545d32b032cc4de91c52cc &&
+     "${QUALIFIED_RUNTIME_ARTIFACT_ID:-}" == "$pair_artifact" &&
+     "${QUALIFIED_RUNTIME_ARTIFACT_SHA256:-}" == "$pair_archive" &&
+     "${QUALIFIED_RUNTIME_BINARY_SHA256:-}" == "$pair_binary" ]] || {
+    echo qualified-runtime-pair-pin-mismatch >&2; exit 1;
+  }
+fi
 workflow_path=.github/workflows/durable-runtime-artifact.yml
 for name in QUALIFIED_RUNTIME_RUN_ID QUALIFIED_RUNTIME_RUN_ATTEMPT QUALIFIED_RUNTIME_ARTIFACT_ID; do
   value=${!name:-}

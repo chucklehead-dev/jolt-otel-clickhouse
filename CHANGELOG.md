@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add closed baseline/StringWriter profiles for one authenticated Durable
+  runtime artifact pair, preserving the existing AEA default. Reject mismatched
+  independent pins before provider access; keep archive, manifest and ranged
+  append guards unchanged. Offline selection controls do not qualify actual
+  runtime performance or repin any consumer.
+
 - Require explicit witnesses that each migration fault injection ran. Add
   shell-only fake child controls for absolute executable selection under PATH
   shadowing and unchanged parent failure accounting. These are test-boundary
