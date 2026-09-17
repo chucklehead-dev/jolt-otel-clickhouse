@@ -526,7 +526,9 @@ in the graph (the separately known time-coordinate overlap is not qualified).
 For an explicitly exploratory driver checkout, set
 `JOLT_ORDINARY_DRIVER_MODE=reviewed-source`, a clean `JOLT_CHDB_SOURCE_ROOT`
 and its full `JOLT_EXPECTED_DRIVER_REV`; its receipt is labeled and does not
-qualify the ordinary root driver. `JOLT_ORDINARY_PROVENANCE_ONLY=1` checks the
+qualify the ordinary root driver. Unknown command-line arguments are rejected
+before provider inspection or child startup. Metadata-only mode is an environment
+setting, not a `--provenance-only` flag. `JOLT_ORDINARY_PROVENANCE_ONLY=1` checks the
 selected child graph without loading the benchmark or making native writes.
 The launcher enforces a 360-second
 outer deadline and 60 seconds per child, strips child credentials and retains

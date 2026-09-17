@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reject unknown benchmark launcher arguments before provider inspection or
+  child startup. Keep metadata-only mode explicitly environment-configured;
+  add a fake-compiler control proving a mistaken CLI flag cannot start work.
+
 - Default the opt-in ordinary transport benchmark to the declared root graph;
   keep local driver overlays explicitly exploratory. Record and check each
   writer/reader's selected providers before native work and compare graph
