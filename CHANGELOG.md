@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Distinguish statement-phase migration failures from ambiguous registry-record
+  result-consumption failures. Add a two-process native witness that injects
+  after the v99 registry INSERT and independently reads the exact record; keep
+  record failure non-retriable in process and make no unrecorded-result claim
+  (#55).
+
 - Run the qualified artifact's unchanged ranged-append capability check from
   its private artifact directory, independent of unrelated caller dependencies.
   Retain the 30-second deadline and all provenance checks; application/native
