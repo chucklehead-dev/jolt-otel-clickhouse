@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Repin the root `casselc/data.json` dependency to `97298fd8a67a6d4ee3eb1346d5e184beb9565b90`
+  and receipt-test one exact resolved provider/root, including old-SHA and
+  duplicate-provider negative controls. This is dependency provenance work;
+  it makes no throughput or other performance claim (#56).
+
 - Distinguish statement-phase migration failures from ambiguous registry-record
   result-consumption failures. Add a two-process native witness that injects
   after the v99 registry INSERT and independently reads the exact record; keep
