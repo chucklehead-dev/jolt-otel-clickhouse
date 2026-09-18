@@ -112,6 +112,10 @@ require_manifest_line ranged_append_ascii=98
 
 # Artifact ZIP transport does not retain executable mode. Validate bytes first.
 chmod 755 "$root/jolt"
+# This is an artifact capability check, not qualification of the caller's
+# application graph. The newly owned artifact directory contains no deps.edn.
+(
+cd "$root"
 timeout --signal=TERM --kill-after=5s 30s "$root/jolt" -Srepro -e '
   (let [out (java.io.ByteArrayOutputStream.)
         writer (java.io.OutputStreamWriter. out "UTF-8")]
@@ -119,4 +123,5 @@ timeout --signal=TERM --kill-after=5s 30s "$root/jolt" -Srepro -e '
     (.flush writer)
     (assert (= [98] (vec (.toByteArray out))))
     (println :qualified-runtime-ranged-append-pass))'
+)
 printf 'QUALIFIED_RUNTIME_BIN=%s\n' "$root/jolt"
