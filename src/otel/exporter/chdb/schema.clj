@@ -3,8 +3,11 @@
   names. Map types and correlation columns intentionally match ClickStack.
 
   Schema changes are ordered, checksummed migrations. chDB does not support
-  transactions, so every migration statement must be idempotent: a failed
-  migration is left unrecorded and is retried on the next open."
+  transactions, so every migration statement must be idempotent. A
+  statement-phase failure leaves that migration unrecorded and may be retried
+  on a later open. A failure while consuming the native result of the registry
+  record is ambiguous: the native INSERT may already have taken effect, so
+  this library does not retry it in process."
   (:require [db.jdbc]
             [clojure.data.json :as json]
             [clojure.string :as str]
@@ -457,8 +460,9 @@
 (defn migrate!
   "Create the migration registry, validate its immutable history, and apply
   pending migrations in order. Returns conn. Because chDB has no transactions,
-  failed migration DDL is deliberately not recorded and must be idempotent so a
-  later call can retry it safely."
+  statement-phase failures are deliberately unrecorded and their DDL must be
+  idempotent for a later retry. A record-phase failure is reported without an
+  in-process retry: native effect and result consumption are separate events."
   [conn]
   (context/with-instrumentation-suppressed
     (migrate-unsuppressed! conn)))

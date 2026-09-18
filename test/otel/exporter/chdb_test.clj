@@ -135,6 +135,104 @@
       (doseq [file (reverse (file-seq root))]
         (.delete file)))))
 
+(defn- run-causal-record-effect-readback-process! [path]
+  (let [terminal? (atom false)
+        owned-child (atom nil)]
+    (try
+      (let [expression (str "(try (require 'otel.exporter.chdb-migration-record-effect-child) "
+                            "((ns-resolve 'otel.exporter.chdb-migration-record-effect-child "
+                            "'-main)) "
+                            "(catch Throwable _ "
+                            "(println :causal-record-effect-readback-child-error) "
+                            "(System/exit 1)))")
+            child (process/process [(child-test-executable) "-A:test" "-e" expression]
+                                   {:out :string :err :string
+                                    :extra-env {"JOLT_AOT_CACHE" "0"
+                                                "JOLT_CAUSAL_RECORD_EFFECT_PATH" path}})]
+        (reset! owned-child child)
+        (let [result (deref child 120000 ::timeout)]
+          (reset! terminal? (and (map? result) (integer? (:exit result))))
+          (when-not (and (map? result) (zero? (:exit result)))
+            (println "  record-effect readback child stdout:" (str (:out result)))
+            (println "  record-effect readback child stderr:" (str (:err result))))
+          (check "record-effect readback qualifies in a separate native process"
+                 true
+                 (and (map? result)
+                      (zero? (:exit result))
+                      (str/includes? (str (:out result))
+                                     ":causal-record-effect-readback-child-confirmed")
+                      (str/includes? (str (:out result))
+                                     ":causal-record-effect-readback-child-result :qualified true")))))
+      (catch Throwable _
+        (check "record-effect readback child setup remains an accounted failure" true false))
+      (finally
+        ;; Do not remove a persistent native database until its reader has a
+        ;; terminal result; destroy-tree only requests that termination.
+        (when (and @owned-child (not @terminal?))
+          (try (process/destroy-tree @owned-child) (catch Throwable _ nil))
+          (let [settled (try (deref @owned-child 5000 ::cleanup-timeout)
+                             (catch Throwable _ ::cleanup-error))]
+            (reset! terminal? (and (map? settled) (integer? (:exit settled))))
+            (check "record-effect readback cleanup confirms terminal ownership"
+                   true @terminal?)))
+        (if @terminal?
+          (delete-tree! path)
+          (println :causal-record-effect-readback-cleanup-terminal-unconfirmed))))))
+
+(defn- run-causal-record-effect-writer-process! [path]
+  (let [terminal? (atom false)
+        owned-child (atom nil)
+        qualified? (atom false)]
+    (try
+      (let [expression (str "(try (require 'otel.exporter.chdb-migration-record-effect-writer) "
+                            "((ns-resolve 'otel.exporter.chdb-migration-record-effect-writer '-main)) "
+                            "(catch Throwable _ "
+                            "(println :causal-record-effect-writer-child-error) "
+                            "(System/exit 1)))")
+            child (process/process [(child-test-executable) "-A:test" "-e" expression]
+                                   {:out :string :err :string
+                                    :extra-env {"JOLT_AOT_CACHE" "0"
+                                                "JOLT_CAUSAL_RECORD_EFFECT_PATH" path}})]
+        (reset! owned-child child)
+        (let [result (deref child 120000 ::timeout)
+              qualified (and (map? result)
+                             (zero? (:exit result))
+                             (str/includes? (str (:out result))
+                                            ":causal-record-effect-writer-child-confirmed")
+                             (str/includes? (str (:out result))
+                                            ":causal-record-effect-writer-child-result :qualified true"))]
+          (reset! terminal? (and (map? result) (integer? (:exit result))))
+          (reset! qualified? qualified)
+          (when-not qualified
+            (println "  record-effect writer child stdout:" (str (:out result)))
+            (println "  record-effect writer child stderr:" (str (:err result))))
+          (check "post-native record effect writer qualifies" true qualified)))
+      (catch Throwable _
+        (check "record-effect writer child setup remains an accounted failure" true false))
+      (finally
+        (when (and @owned-child (not @terminal?))
+          (try (process/destroy-tree @owned-child) (catch Throwable _ nil))
+          (let [settled (try (deref @owned-child 5000 ::cleanup-timeout)
+                             (catch Throwable _ ::cleanup-error))]
+            (reset! terminal? (and (map? settled) (integer? (:exit settled))))
+            (check "record-effect writer cleanup confirms terminal ownership"
+                   true @terminal?)))))
+    @qualified?))
+
+(defn- run-causal-record-effect-check []
+  (let [placeholder (java.io.File/createTempFile "jolt-otel-record-effect-" ".chdb")
+        path (.getAbsolutePath placeholder)]
+    (.delete placeholder)
+    (try
+      (when (run-causal-record-effect-writer-process! path)
+        ;; This is intentionally a second native process, not a same-process
+        ;; query. It characterizes native effect versus result consumption and
+        ;; makes no retry or unrecorded-result claim.
+        (run-causal-record-effect-readback-process! path))
+      (finally
+        (when (.exists (java.io.File. path))
+          (delete-tree! path))))))
+
 (defn- normalize-clickstack-type [type]
   (-> type
       (str/replace #"LowCardinality\(([^()]*)\)" "$1")
@@ -308,6 +406,7 @@
              (mapv #(count (:checksum %)) applied))))
 
   (run-persistent-migration-process-check)
+  (run-causal-record-effect-check)
 
   ;; chDB has no DDL transaction. Simulate a crash/failure after v1's first
   ;; statement and prove the unrecorded, idempotent migration can be retried.
