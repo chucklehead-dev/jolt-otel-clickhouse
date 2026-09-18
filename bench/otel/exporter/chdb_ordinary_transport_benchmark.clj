@@ -206,6 +206,31 @@
       (println :fresh-reader-green :groups 1024 :rows (total-rows)
                :full-rows-equal true :exact-nanos true :typed-values-status true))))
 
+(defn registry-readback-status [rows]
+  (case (count rows)
+    0 :absent
+    1 :exact-one
+    :duplicate))
+
+(defn registry-readback! [path]
+  "Test-only recovery observation for a terminal v1 registry-record failure.
+
+  This is deliberately not a recovery operation: it opens a fresh connection
+  and performs one bounded SELECT.  In particular it must not call schema
+  migration, setup, DDL, the attribute installer, an exporter, or retry the
+  failed writer.  The closed result is evidence only; it does not decide that
+  an ambiguous native result was acknowledged."
+  (let [status
+        (try
+          (with-open [connection (jdbc/connection (str "chdb:" path))]
+            (registry-readback-status
+             (jdbc/fetch connection
+                         "SELECT Version FROM otel_schema_migrations WHERE Version=1")))
+          (catch Throwable _ :unavailable))]
+    ;; Keep the readback receipt closed and payload-free.
+    (println :registry-readback :version 1 :status status)
+    (flush)))
+
 (defn -main [mode route path & [profile-name]]
   (try
     (native/ensure-loaded!)
@@ -221,6 +246,7 @@
         (case mode
           "writer" (writer! (case route "legacy" :legacy "candidate" :candidate :invalid) path)
           "reader" (reader! path)
+          "registry-readback" (registry-readback! path)
           (require! false))))
     (catch Throwable error
       (println :benchmark-red :class

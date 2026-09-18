@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- On an ordinary benchmark writer's terminal v1 registry record-phase failure,
+  launch one fresh read-only child which reports only the closed registry
+  cardinality observation. Preserve the original writer failure if that
+  observation or its receipt fails, and stop the A/B/B/A sequence without an
+  in-process retry or migration claim (#55).
+
 - Repin the root `casselc/data.json` dependency to `97298fd8a67a6d4ee3eb1346d5e184beb9565b90`
   and receipt-test one exact resolved provider/root, including old-SHA and
   duplicate-provider negative controls. This is dependency provenance work;

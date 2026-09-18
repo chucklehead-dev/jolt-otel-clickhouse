@@ -71,6 +71,21 @@
              (benchmark/setup connection)))
       (is (= [:schema :installer] @calls)))))
 
+(deftest registry-readback-is-closed-and-read-only-by-construction
+  (is (= :absent (benchmark/registry-readback-status [])))
+  (is (= :exact-one (benchmark/registry-readback-status [{}])))
+  (is (= :duplicate (benchmark/registry-readback-status [{} {}])))
+  ;; Synthetic launcher controls exercise its separate process and receipt
+  ;; ownership. This guard prevents the observer itself growing an effect path.
+  (let [source (slurp "bench/otel/exporter/chdb_ordinary_transport_benchmark.clj")
+        start (str/index-of source "(defn registry-readback!")
+        end (str/index-of source "(defn -main" start)
+        observer (subs source start end)]
+    (is (str/includes? observer "SELECT Version FROM otel_schema_migrations WHERE Version=1"))
+    (doseq [forbidden ["(schema/" "(migrate!" "(setup " "(jdbc/execute!"
+                       "(installer/" "(exporter/" "CREATE " "ALTER "]]
+      (is (not (str/includes? observer forbidden))))))
+
 (deftest maintained-profile-and-failure-exit-source-contract
   ;; Source guard, not a substitute for separately owned real child exit tests.
   (let [source (slurp "bench/otel/exporter/chdb_ordinary_transport_benchmark.clj")]

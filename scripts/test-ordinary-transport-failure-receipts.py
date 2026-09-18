@@ -30,7 +30,10 @@ git(provider, "add", ".")
 git(provider, "commit", "-qm", "public provider fixture")
 revision = git(provider, "rev-parse", "HEAD")
 checks = 0
-for control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure", "success", "receipt-publication-failure"]:
+for control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure",
+                "record-phase-writer-failure", "non-record-writer-failure",
+                "registry-readback-failure", "registry-readback-receipt-write-failure",
+                "success", "receipt-publication-failure"]:
     work = ROOT / control
     invocation_ledger = ROOT / f"{control}-compiler-invocations"
     for name in ["scripts", "bench/otel/exporter", "src/otel/exporter", "tools", "native", "evidence"]:
@@ -55,6 +58,11 @@ elif "-e" in args and "doseq [lib" in args[-1]:
     print("\\n".join([{revision!r}] * 4))
 elif "-e" in args and "BENCH_FIXTURE" in args[-1]:
     mode, route = os.environ["TASK_MODE"], os.environ["TASK_ROUTE"]
+    print(":benchmark-stage :require :enter", flush=True)
+    print(":benchmark-stage :require :return", flush=True)
+    print(":benchmark-stage :fixture :enter", flush=True)
+    print(":benchmark-stage :fixture :return", flush=True)
+    print(":benchmark-stage :main :enter", flush=True)
     if mode == "writer":
         print(":sample-observation :index 0 :batch-rows 512 :latency-nanos 1000", flush=True)
     if {control!r} in ["partial-writer-failure", "child-receipt-write-failure"] and mode == "writer" and route == "candidate":
@@ -69,12 +77,30 @@ elif "-e" in args and "BENCH_FIXTURE" in args[-1]:
         sys.exit(37)
     if {control!r} == "late-child-failure" and mode == "reader" and route == "candidate":
         sys.exit(37)
+    if {control!r} in ["record-phase-writer-failure", "registry-readback-failure", "registry-readback-receipt-write-failure"] and mode == "writer" and route == "candidate":
+        print(":benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown", flush=True)
+        sys.exit(37)
+    if {control!r} == "non-record-writer-failure" and mode == "writer" and route == "candidate":
+        print(":benchmark-red-diagnostic :category :migration-failed :phase :statement :version 1 :statement-index 0", flush=True)
+        sys.exit(37)
+    if mode == "registry-readback":
+        if {control!r} == "registry-readback-failure":
+            sys.exit(53)
+        if {control!r} == "registry-readback-receipt-write-failure":
+            blocked = pathlib.Path(os.environ["TASK_GRAPH"]).with_suffix(".exit-status")
+            assert blocked.is_file() and blocked.read_text() == "running\\n"
+            blocked.unlink()
+            blocked.mkdir()
+        print(":registry-readback :version 1 :status :exact-one", flush=True)
+        print(":benchmark-stage :main :return", flush=True)
+        sys.exit(0)
     if mode == "writer":
         print(":payload-control serialization public")
         print(":payload-control preencoded public")
         print(f":writer-green :route :{{route}} :rows 25600")
     else:
         print(":fresh-reader-green :groups 1024 :rows 25600 :full-rows-equal true :exact-nanos true :typed-values-status true")
+    print(":benchmark-stage :main :return", flush=True)
 else:
     sys.exit(91)
 ''')
@@ -112,7 +138,9 @@ exec /usr/bin/sha256sum "$@"
              if line.startswith("EVIDENCE_ROOT=")]
     assert len(roots) == 1
     evidence = pathlib.Path(roots[0])
-    expected = 37 if control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure"] else 1 if control == "receipt-publication-failure" else 0
+    expected = 37 if control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure",
+                                 "record-phase-writer-failure", "non-record-writer-failure",
+                                 "registry-readback-failure", "registry-readback-receipt-write-failure"] else 1 if control == "receipt-publication-failure" else 0
     assert result.returncode == expected
     assert (evidence / "exit-status.txt").read_text().strip() == str(expected)
     assert (evidence / "loaded-source.after.sha256").is_file()
@@ -141,9 +169,40 @@ exec /usr/bin/sha256sum "$@"
     elif control == "receipt-publication-failure":
         assert (evidence / "primary-exit-status.txt").read_text().strip() == "0"
         assert comparison == "unqualified-evidence-publication-failed"
+    elif control in ["record-phase-writer-failure", "registry-readback-failure", "registry-readback-receipt-write-failure"]:
+        assert (evidence / "B1-writer.exit-status").read_text().strip() == "37"
+        assert (evidence / "primary-exit-status.txt").read_text().strip() == "37"
+        assert (evidence / "observed-child-failure.txt").read_text().strip() == "B1-writer 37"
+        assert not (evidence / "B1-reader.exit-status").exists()
+        assert not (evidence / "B2-writer.exit-status").exists()
+        if control == "record-phase-writer-failure":
+            readback = evidence / "B1-registry-readback.exit-status"
+            assert readback.read_text().strip() == "0"
+            log = (evidence / "B1-registry-readback.log").read_text()
+            assert ":registry-readback :version 1 :status :exact-one" in log
+            assert comparison == "unqualified-incomplete-or-failed"
+        elif control == "registry-readback-failure":
+            assert (evidence / "B1-registry-readback.exit-status").read_text().strip() == "53"
+            assert comparison == "unqualified-incomplete-or-failed"
+        else:
+            assert (evidence / "B1-registry-readback.exit-status").is_dir()
+            assert comparison == "unqualified-evidence-publication-failed"
+    elif control == "non-record-writer-failure":
+        assert (evidence / "B1-writer.exit-status").read_text().strip() == "37"
+        assert not (evidence / "B1-registry-readback.exit-status").exists()
+        assert not (evidence / "B1-reader.exit-status").exists()
+        assert not (evidence / "B2-writer.exit-status").exists()
+        assert comparison == "unqualified-incomplete-or-failed"
     else:
         assert comparison == "all-arms-compared-source-parity-passed"
         assert len(list(evidence.glob("*.exit-status"))) == 8
+    for label in ["A1-writer"] + (["B1-registry-readback"] if control in ["record-phase-writer-failure", "registry-readback-failure", "registry-readback-receipt-write-failure"] else []):
+        log = (evidence / f"{label}.log").read_text()
+        assert ":benchmark-stage :require :enter" in log
+        assert ":benchmark-stage :require :return" in log
+        assert ":benchmark-stage :fixture :enter" in log
+        assert ":benchmark-stage :fixture :return" in log
+        assert ":benchmark-stage :main :enter" in log
     assert (b"ORDINARY_TRANSPORT_ABBA_GREEN=" in result.stdout) == (expected == 0)
     checks += 1
     print(f"control={control} exit={result.returncode} pass=True evidence={evidence}")
@@ -159,5 +218,5 @@ assert invocation_ledger.read_bytes() == before
 assert b"CHILD_BEGIN=" not in result.stdout and b"EVIDENCE_ROOT=" not in result.stdout
 checks += 1
 print("control=unknown-cli-argument exit=64 compiler-invocations=0 pass=True")
-assert checks == 6
+assert checks == 10
 print(f"SYNTHETIC-RECEIPT-CONTROLS={checks} FAILURES=0 ROOT={ROOT}")
