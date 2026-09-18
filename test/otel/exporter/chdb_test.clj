@@ -72,14 +72,15 @@
                 unknown-and-malicious-data-cannot-leak
                 setup-markers-preserve-original-calls-and-outcomes
                 successful-setup-result-is-unchanged
+                registry-readback-is-closed-and-read-only-by-construction
                 maintained-profile-and-failure-exit-source-contract]
         actual (set (for [[name var] (ns-publics suite) :when (:test (meta var))] name))]
-    (check "ordinary transport diagnostics exact five-test inventory" (set names) actual)
+    (check "ordinary transport diagnostics exact six-test inventory" (set names) actual)
     (when (pos? @failures) (finish-checks!))
     (binding [test/*report-counters* (ref test/*initial-report-counters*)]
       (test/test-vars (mapv #(ns-resolve suite %) names))
       (check "ordinary transport diagnostics strict summary"
-             {:test 5 :pass 40 :fail 0 :error 0}
+             {:test 6 :pass 52 :fail 0 :error 0}
              (select-keys @test/*report-counters* [:test :pass :fail :error])))
     ;; Do not enter native gates after missing tests or a failing pure suite.
     (when (pos? @failures) (finish-checks!))))

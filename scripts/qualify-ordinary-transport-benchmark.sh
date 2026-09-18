@@ -164,7 +164,20 @@ printf '%s\n' "$driver_mode" > "$root/driver-mode.txt"
 sha256sum "$fixture" "$script" > "$root/harness-source.sha256"
 git status --porcelain=v1 > "$root/status.before"
 sha256sum src/otel/exporter/chdb.clj deps.edn > "$root/loaded-source.before.sha256"
-expression='(try (require (quote jdbc.chdb)) (when-not (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!)) (println :required-driver-row-api-missing) (System/exit 1)) (load-file (System/getenv "BENCH_FIXTURE")) ((ns-resolve (quote otel.exporter.chdb-ordinary-transport-benchmark) (quote -main)) (System/getenv "TASK_MODE") (System/getenv "TASK_ROUTE") (System/getenv "TASK_DB") "benchmark") (catch Throwable _ (println :ordinary-benchmark-launch-failed) (System/exit 1)))'
+expression='(try
+  (println :benchmark-stage :require :enter)
+  (require (quote jdbc.chdb))
+  (when-not (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!))
+    (println :required-driver-row-api-missing) (System/exit 1))
+  (println :benchmark-stage :require :return)
+  (println :benchmark-stage :fixture :enter)
+  (load-file (System/getenv "BENCH_FIXTURE"))
+  (println :benchmark-stage :fixture :return)
+  (println :benchmark-stage :main :enter)
+  ((ns-resolve (quote otel.exporter.chdb-ordinary-transport-benchmark) (quote -main))
+   (System/getenv "TASK_MODE") (System/getenv "TASK_ROUTE") (System/getenv "TASK_DB") "benchmark")
+  (println :benchmark-stage :main :return)
+  (catch Throwable _ (println :ordinary-benchmark-launch-failed) (System/exit 1)))'
 child() {
   local mode=$1 route=$2 db=$3 label=$4
   local cache status
@@ -189,7 +202,9 @@ child() {
     "$wrapper" "$jolt" -Srepro "${options[@]}" -A:test > "$root/$label.log" 2>&1
   status=$?
   set -e
-  if [[ "$status" != 0 ]]; then
+  if [[ "$status" != 0 && -z "$observed_child_failure" ]]; then
+    # The first terminal writer exit owns the primary result. A subsequent
+    # recovery-readback receipt may fail, but must never mask that writer.
     observed_child_failure=$status
     observed_child_label=$label
   fi
@@ -203,6 +218,29 @@ child() {
   printf 'CHILD_END=%s EXIT=%s\n' "$label" "$status"
   return "$status"
 }
+terminal-record-failure() {
+  local label=$1
+  [[ -f "$root/$label.exit-status" ]] || return 1
+  [[ "$(<"$root/$label.exit-status")" != 0 ]] || return 1
+  grep -Fxq ':benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown' \
+    "$root/$label.log"
+}
+observe-terminal-record-failure() {
+  local db=$1 label=$2 status
+  # A fresh, read-only child observes only the closed v1 registry cardinality.
+  # It never runs the full reader because setup did not complete.
+  if child registry-readback recovery "$db" "$label"; then
+    status=0
+  else
+    status=$?
+  fi
+  [[ "$status" == 0 ]] || return "$status"
+  if ! grep -Eq '^:registry-readback :version 1 :status :(absent|exact-one|duplicate|unavailable)$' \
+      "$root/$label.log"; then
+    child_receipt_failed=1
+    return 1
+  fi
+}
 if [[ "${JOLT_ORDINARY_PROVENANCE_ONLY:-0}" == 1 ]]; then
   child probe candidate "$root/probe-unused" provenance-only
   grep -Fxq ordinary-provenance-qualified "$root/provenance-only.log"
@@ -213,7 +251,18 @@ fi
 for arm in A1 B1 B2 A2; do
   case "$arm" in A*) route=legacy ;; B*) route=candidate ;; esac
   db=$(mktemp -d "$root/storage-$arm.XXXXXXXX")
-  child writer "$route" "$db" "$arm-writer"
+  if child writer "$route" "$db" "$arm-writer"; then
+    writer_status=0
+  else
+    writer_status=$?
+  fi
+  if [[ "$writer_status" != 0 ]]; then
+    if terminal-record-failure "$arm-writer"; then
+      # The original writer status remains primary even if this receipt fails.
+      observe-terminal-record-failure "$db" "$arm-registry-readback" || true
+    fi
+    exit "$writer_status"
+  fi
   grep -Fxq ":writer-green :route :$route :rows 25600" "$root/$arm-writer.log"
   grep '^:payload-control' "$root/$arm-writer.log" > "$root/$arm.payload-controls"
   [[ "$(wc -l < "$root/$arm.payload-controls")" == 2 ]]
