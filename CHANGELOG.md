@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Run the qualified artifact's unchanged ranged-append capability check from
+  its private artifact directory, independent of unrelated caller dependencies.
+  Retain the 30-second deadline and all provenance checks; application/native
+  integration remains a separate qualification gate.
+
 - Add closed, payload-free setup/migration diagnostics to the ordinary transport
   benchmark, preserving its assertions and failure exits; setup intermittency
   remains unresolved and this does not claim an encoder or compiler fix.

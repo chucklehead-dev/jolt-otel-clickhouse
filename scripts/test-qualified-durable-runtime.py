@@ -64,7 +64,16 @@ else:
 '''
 (MOCK / "gh").write_text(GH_SOURCE)
 (MOCK / "gh").chmod(0o755)
-BINARY = b'#!/bin/sh\nprintf "%s\\n" synthetic-runtime-executed > "$FIXTURE_EXEC_SENTINEL"\n'
+BINARY = b'''#!/usr/bin/python3
+import os, pathlib, sys
+pathlib.Path(os.environ["FIXTURE_EXEC_SENTINEL"]).write_text(str(pathlib.Path.cwd()))
+assert sys.argv[1:3] == ["-Srepro", "-e"] and len(sys.argv) == 4
+assert '(assert (= [98] (vec (.toByteArray out))))' in sys.argv[3]
+if (pathlib.Path.cwd() / "deps.edn").exists():
+    sys.exit(42)  # Synthetic caller graph would reject this runtime.
+if os.environ["OFFLINE_CONTROL"] == "unsupported-canary":
+    sys.exit(43)  # Protocol control, not a real runtime semantics proof.
+'''
 BINARY_HASH = hashlib.sha256(BINARY).hexdigest()
 LINES = [
     "schema=1", "repository=casselc/jolt",
@@ -76,7 +85,10 @@ LINES = [
     "chez_version=10.4.1", "runner_os=Linux", "runner_arch=X64",
     "require_buildlib=1", "gate=pass", "ranged_append_ascii=98",
 ]
-CONTROLS = ["valid", "wrong-archive", "wrong-binary", "wrong-run-attempt",
+CALLER = ROOT / "unrelated-caller"
+CALLER.mkdir()
+(CALLER / "deps.edn").write_text('{:jolt/min-version "999.0.0" :deps {unrelated/missing {:mvn/version "0.0.0"}}}')
+CONTROLS = ["valid", "unsupported-canary", "wrong-archive", "wrong-binary", "wrong-run-attempt",
             "wrong-workflow", "expired", "duplicate-members", "missing-pin",
             "duplicate-pin", "wrong-manifest-hash", "wrong-artifact-run"]
 failures = 0
@@ -112,7 +124,8 @@ for control in CONTROLS:
         "OFFLINE_CONTROL": control, "OFFLINE_ARCHIVE": str(archive),
         "OFFLINE_ACTUAL_ARCHIVE_HASH": actual_archive_hash, "FIXTURE_EXEC_SENTINEL": str(sentinel),
     }
-    result = subprocess.run(["bash", str(SCRIPT)], env=environment, capture_output=True, timeout=10)
+    result = subprocess.run(["bash", str(SCRIPT)], env=environment, cwd=CALLER,
+                            capture_output=True, timeout=10)
     log = result.stdout + result.stderr
     (ROOT / f"{control}.log").write_bytes(log)
     evidence = [line.removeprefix("QUALIFIED_RUNTIME_EVIDENCE_ROOT=")
@@ -123,7 +136,30 @@ for control in CONTROLS:
     executable = os.access(binary_path, os.X_OK)
     executed = sentinel.exists()
     if control == "valid":
-        passed = result.returncode == 0 and executed and executable
+        passed = (result.returncode == 0 and executed and executable
+                  and sentinel.read_text() == str(binary_path.parent)
+                  and f"QUALIFIED_RUNTIME_BIN={binary_path}".encode() in result.stdout)
+        # Exact historical boundary: same authenticated fixture, same canary,
+        # same caller and predicate, with ONLY the new cwd isolation removed.
+        historical_source = SCRIPT.read_text()
+        start = '(\ncd "$root"\ntimeout --signal=TERM'
+        end = "(println :qualified-runtime-ranged-append-pass))'\n)\nprintf"
+        assert historical_source.count(start) == historical_source.count(end) == 1
+        historical_source = historical_source.replace(start, 'timeout --signal=TERM', 1)
+        historical_source = historical_source.replace(end, end.replace("\n)\n", "\n"), 1)
+        historical_script = ROOT / "historical-caller-boundary.sh"
+        historical_script.write_text(historical_source)
+        historical = subprocess.run(["bash", str(historical_script)], env=environment,
+                                    cwd=CALLER, capture_output=True, timeout=10)
+        (ROOT / "historical-caller-boundary.log").write_bytes(historical.stdout + historical.stderr)
+        red = (historical.returncode == 42 and sentinel.read_text() == str(CALLER)
+               and b"QUALIFIED_RUNTIME_BIN=" not in historical.stdout)
+        passed = passed and red
+        print(f"caller-boundary-red exit={historical.returncode} pass={red}")
+    elif control == "unsupported-canary":
+        passed = (result.returncode == 43 and executed and executable
+                  and sentinel.read_text() == str(binary_path.parent)
+                  and b"QUALIFIED_RUNTIME_BIN=" not in result.stdout)
     else:
         passed = result.returncode != 0 and not executed and not executable
     if control == "wrong-archive":
@@ -133,7 +169,7 @@ for control in CONTROLS:
     failures += not passed
     print(f"control={control} exit={result.returncode} executed={executed} executable={executable} pass={passed}")
 print(f"SYNTHETIC-CONTROLS={len(CONTROLS)} FAILURES={failures} ROOT={ROOT}")
-assert len(CONTROLS) == 11 and failures == 0
+assert len(CONTROLS) == 12 and failures == 0
 
 # Selection controls do NOT substitute synthetic hashes for fixed public pins.
 # Correct profiles reach ZIP bytes, which must reject this synthetic archive
