@@ -14,8 +14,10 @@
             [otel.sdk.export :as export]))
 
 (def ^:private int64-max 9223372036854775807)
+(def ^:private observed-checks (atom 0))
 
 (defn- check! [label expected actual]
+  (swap! observed-checks inc)
   (if (= expected actual)
     (println "  ok  " label)
     (throw (ex-info label {:expected expected :actual actual}))))
@@ -100,6 +102,7 @@
    (get row (keyword (:status-column (get physical key))))])
 
 (defn -main [& _]
+  (reset! observed-checks 0)
   (println "typed metric direct native qualification")
   (with-open [connection (jdbc/connection "chdb::memory:")]
     (schema/ensure-schema! connection)
@@ -178,4 +181,7 @@
           (let [failed (install! store connection gauge-approved "otel_metrics_gauge")]
             (check! "native table-qualified wrong type fails without DDL"
                     [:failed 0] [(:status failed) (:ddl-count failed)]))))))
-  (println "all typed metric direct native checks passed"))
+  (when-not (= 10 @observed-checks)
+    (throw (ex-info "typed metric native check inventory changed"
+                    {:expected 10 :actual @observed-checks})))
+  (println "typed-metric-native-qualified :observed-checks" @observed-checks))
