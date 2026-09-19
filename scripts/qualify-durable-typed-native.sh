@@ -76,12 +76,12 @@ header=$(realpath "${JOLT_CHDB_HEADER:?set the matching chDB header}")
 [[ "$(dirname "$lib")" == "$(dirname "$header")" ]] || { echo mismatched-native-pair-directory; exit 1; }
 driver_mode=${JOLT_DURABLE_DRIVER_MODE:-root-pin}
 case "$driver_mode" in root-pin|reviewed-source) ;; *) echo invalid-driver-mode; exit 1 ;; esac
-binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set qualified binary SHA256}
+binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set selected-binary SHA256}
 wrapper_sha=${JOLT_EXPECTED_WRAPPER_SHA256:?set qualified wrapper SHA256}
 library_sha=${JOLT_CHDB_EXPECTED_LIBRARY_SHA256:?set qualified library SHA256}
 header_sha=${JOLT_CHDB_EXPECTED_HEADER_SHA256:?set matching header SHA256}
 for checksum in "$binary_sha" "$wrapper_sha" "$library_sha" "$header_sha"; do
-  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || { echo invalid-provenance-checksum; exit 1; }
+  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || { echo invalid-integrity-checksum; exit 1; }
 done
 jolt=$(realpath "$jolt")
 wrapper=$(realpath "$wrapper")
