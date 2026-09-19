@@ -25,39 +25,61 @@ dependency_source_clean() {
   return 0
 }
 
+reviewed_source_driver() {
+  local driver reviewed_revision
+  driver=$(realpath "${JOLT_CHDB_SOURCE_ROOT:?set the reviewed driver checkout}")
+  reviewed_revision=${JOLT_EXPECTED_DRIVER_REV:?set the exact reviewed driver revision}
+  [[ "$reviewed_revision" =~ ^[a-f0-9]{40}$ ]]
+  [[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
+  dependency_source_clean "$driver"
+  [[ "$(git -C "$driver" rev-parse HEAD)" == "$reviewed_revision" ]]
+  printf '%s\n' "$driver"
+}
+
+checked_reviewed_source() {
+  local script=$1 fixture=$2 revision=
+  revision=$(git -C "$fixture" rev-parse HEAD)
+  JOLT_CHDB_SOURCE_ROOT="$fixture" JOLT_EXPECTED_DRIVER_REV="$revision" \
+    bash "$script" --check-reviewed-source
+}
+
 run_cleanliness_controls() {
-  local fixture=
+  local script fixture=
+  script=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)/$(basename "${BASH_SOURCE[0]}")
   fixture=$(mktemp -d "${TMPDIR:-/tmp}/exporter-dependency-cleanliness.XXXXXX") || return 1
   trap 'rm -rf "$fixture"' RETURN
   git init -q "$fixture"
   git -C "$fixture" config user.name qualification
   git -C "$fixture" config user.email qualification@example.invalid
-  printf '%s\n' 'tracked fixture' >"$fixture/tracked.clj"
-  printf '%s\n' '*.clj' >"$fixture/.gitignore"
-  git -C "$fixture" add -f tracked.clj .gitignore
+  mkdir -p "$fixture/jdbc"
+  printf '%s\n' 'tracked fixture' >"$fixture/jdbc/chdb.clj"
+  printf '%s\n' 'jdbc/*.clj' >"$fixture/.gitignore"
+  git -C "$fixture" add -f jdbc/chdb.clj .gitignore
   git -C "$fixture" commit -qm fixture
 
   dependency_source_clean "$fixture" || { echo cleanliness-control-clean-failed; return 1; }
+  checked_reviewed_source "$script" "$fixture" || { echo reviewed-source-control-clean-failed; return 1; }
   : >"$fixture/.jolt-git-ok"
   dependency_source_clean "$fixture" || { echo cleanliness-control-sentinel-failed; return 1; }
+  checked_reviewed_source "$script" "$fixture" || { echo reviewed-source-control-sentinel-failed; return 1; }
   : >"$fixture/untracked.txt"
-  if dependency_source_clean "$fixture"; then
-    echo cleanliness-control-untracked-accepted
+  if checked_reviewed_source "$script" "$fixture"; then
+    echo reviewed-source-control-untracked-accepted
     return 1
   fi
   rm -f "$fixture/untracked.txt"
-  : >"$fixture/injected.clj"
-  if dependency_source_clean "$fixture"; then
-    echo cleanliness-control-ignored-source-accepted
+  : >"$fixture/jdbc/injected.clj"
+  if checked_reviewed_source "$script" "$fixture"; then
+    echo reviewed-source-control-ignored-local-jdbc-source-accepted
     return 1
   fi
-  rm -f "$fixture/injected.clj"
-  printf '%s\n' 'modified fixture' >"$fixture/tracked.clj"
-  if dependency_source_clean "$fixture"; then
-    echo cleanliness-control-tracked-change-accepted
+  rm -f "$fixture/jdbc/injected.clj"
+  printf '%s\n' 'modified fixture' >"$fixture/jdbc/chdb.clj"
+  if checked_reviewed_source "$script" "$fixture"; then
+    echo reviewed-source-control-tracked-change-accepted
     return 1
   fi
-  printf '%s\n' 'cleanliness-controls-qualified'
+  printf '%s\n' 'reviewed-source-cleanliness-controls-qualified'
 }
 
 if [[ "${1:-}" == --self-test-cleanliness ]]; then
@@ -70,6 +92,12 @@ fi
 if [[ "${1:-}" == --check-provider-cleanliness ]]; then
   [[ "$#" == 2 ]] || exit 1
   dependency_source_clean "$2"
+  exit
+fi
+
+if [[ "${1:-}" == --check-reviewed-source ]]; then
+  [[ "$#" == 1 ]] || exit 1
+  reviewed_source_driver >/dev/null
   exit
 fi
 
@@ -144,12 +172,8 @@ trap 'exit 143' TERM
 cd "$worktree"
 driver_options=()
 if [[ "$driver_mode" == reviewed-source ]]; then
-  driver=$(realpath "${JOLT_CHDB_SOURCE_ROOT:?set the reviewed driver checkout}")
-  reviewed_revision=${JOLT_EXPECTED_DRIVER_REV:?set the exact reviewed driver revision}
-  [[ "$reviewed_revision" =~ ^[a-f0-9]{40}$ ]]
-  [[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
-  [[ -z "$(git -C "$driver" status --porcelain=v1)" ]]
-  [[ "$(git -C "$driver" rev-parse HEAD)" == "$reviewed_revision" ]]
+  driver=$(reviewed_source_driver)
+  reviewed_revision=$JOLT_EXPECTED_DRIVER_REV
   driver_options=(-Sdeps "{:deps {io.github.chucklehead-dev/jolt-chdb {:local/root \"$driver\"}}}")
 fi
 printf '%s\n' "$driver_mode" >"$root/driver-mode.txt"
