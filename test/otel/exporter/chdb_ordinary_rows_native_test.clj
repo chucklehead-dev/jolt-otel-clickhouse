@@ -21,8 +21,13 @@
                      :otel.exporter.chdb/invalid-timestamp-nanos
                      :jdbc.chdb/invalid-json-rows
                      :otel.exporter.chdb/durable-writer-required}
+        ;; Exception data is untrusted diagnostic input.  A set lookup hashes
+        ;; its candidate, which can realize an arbitrary lazy collection.
+        ;; Restrict the closed category vocabulary to keywords before lookup.
         category (some #(let [candidate (:type (ex-data %))]
-                          (when (contains? categories candidate) candidate)) causes)
+                          (when (and (keyword? candidate)
+                                     (contains? categories candidate))
+                            candidate)) causes)
         jdbc-error? (boolean (some #(:jdbc/sql-error (ex-data %)) causes))
         ;; jdbc.chdb/with-owned-result supplies this exact owned prefix and
         ;; :jdbc/sql-error flag. Never search arbitrary payload-bearing text.
@@ -106,14 +111,34 @@
 
 (defn- diagnose-generic! [table rows]
   ;; Fixed candidate booleans only; never print actual generic maps or values.
-  (let [table-label (case table "otel_traces" :traces "otel_logs" :logs :other)
+  (let [table-label (if (string? table)
+                      (case table "otel_traces" :traces "otel_logs" :logs :other)
+                      :other)
         value (get (:generic (nth rows 3 nil)) "count")]
     (println :generic-fallback-diagnostic :table table-label
              :exact-four-rows (= 4 (count rows))
              :literal-bigintN (= "9223372036854775808N" value)
              :plaininteger (= "9223372036854775808" value))))
 
+(defn- diagnostic-shape-guard-checks [check]
+  ;; A lazy collection records realization.  This is a causal control: before
+  ;; the keyword/string guards, closed-set/case dispatch hashes the value.
+  (let [realized (atom 0)
+        unknown (lazy-seq
+                  (swap! realized inc)
+                  (list :not-a-diagnostic-category))]
+    (check "unknown diagnostic collection remains unclassified"
+           :unclassified
+           (:category (safe-error-summary
+                       (ex-info "untrusted diagnostic fixture" {:type unknown}))))
+    (check "unknown diagnostic collection is neither hashed nor realized"
+           0 @realized)
+    (diagnose-generic! unknown [])
+    (check "unknown diagnostic table label is neither hashed nor realized"
+           0 @realized)))
+
 (defn run-native! [check]
+  (diagnostic-shape-guard-checks check)
   ;; One actual memory anchor owns all native handles/schema. The installer uses
   ;; real DESCRIBE/ALTER operations; only its object-store backend is in memory.
   ;; No spy or with-redefs suppresses transport or manufactures native counts.

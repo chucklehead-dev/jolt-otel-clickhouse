@@ -18,6 +18,11 @@
   Retain only explicit synthetic fixture logs and step status on failure;
   native stores, WAL, databases and environment files are excluded.
 
+- Harden ordinary-native fixture diagnostics so unrecognized exception and
+  table-label values are shape-checked before closed-vocabulary lookup. This
+  prevents diagnostic-only handling from hashing or realizing arbitrary caller
+  collections; telemetry values and Durable WAL bytes are unchanged. Refs #27.
+
 - Add an opt-in ordinary transport ABBA benchmark with explicit provenance,
   bounded child processes and complete fresh-reader reconciliation. Refs #27.
 

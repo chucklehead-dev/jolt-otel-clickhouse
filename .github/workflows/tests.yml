@@ -100,8 +100,8 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
-            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 50 @n)) (println \"PASS ordinary native 50\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
-          test "$(grep -Fxc 'PASS ordinary native 50' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 53 @n)) (println \"PASS ordinary native 53\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
+          test "$(grep -Fxc 'PASS ordinary native 53' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
       - name: Qualify typed Durable WAL with a fresh reader
         id: durable_native
         timeout-minutes: 4
