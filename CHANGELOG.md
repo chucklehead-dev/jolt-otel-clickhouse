@@ -25,6 +25,11 @@
   fixture, and non-record main failures; they stop A/B/B/A and preserve the
   writer's primary exit without an observer, retry, or migration claim (#55).
 
+- Require the complete ordered cold-launch receipt, including `:require :enter`,
+  before the ordinary benchmark can classify a terminal v1 migration-record
+  failure and start its read-only observer. A synthetic forged-return control
+  proves a partial receipt cannot authorize observation (#55).
+
 - On an ordinary benchmark writer's terminal v1 registry record-phase failure,
   launch one fresh read-only child which reports only the closed registry
   cardinality observation. Preserve the original writer failure if that
