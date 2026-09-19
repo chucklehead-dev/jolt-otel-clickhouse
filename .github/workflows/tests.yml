@@ -39,6 +39,14 @@ jobs:
       - name: Assert Jolt version
         shell: bash
         run: test "$(jolt --version)" = "jolt v0.8.6"
+      - name: Reject ignored reviewed-source provider files
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/qualify-durable-typed-native.sh --self-test-cleanliness \
+            | tee "$RUNNER_TEMP/exporter-reviewed-source-cleanliness.log"
+          test "$(grep -Fxc 'reviewed-source-cleanliness-controls-qualified' "$RUNNER_TEMP/exporter-reviewed-source-cleanliness.log")" = 1
       - name: Install native test dependencies
         run: |
           set -euo pipefail

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Make the opt-in Durable `reviewed-source` driver preflight use the same
+  NUL-delimited, ignored-aware cleanliness receipt as resolved providers. A
+  shell control proves a clean reviewed checkout is accepted and an ignored
+  local `jdbc/*.clj` file is rejected before native work; root-pin and ordinary
+  release qualification paths are unchanged (#67).
+
 - Permit only Jolt's exact resolver cache sentinel while checking the resolved
   chDB and OTel source receipts for the typed Durable native qualifier. Tracked
   changes and every other untracked path still fail closed; the loaded source
