@@ -236,26 +236,29 @@ terminal-record-failure() {
   # a main return anywhere rejects the observation path.
   awk '
     BEGIN { phase = 0; failed = 0; diagnostic = 0; invalid = 0 }
-    $0 == ":benchmark-stage :require :return" {
+    $0 == ":benchmark-stage :require :enter" {
       if (phase != 0) invalid = 1; else phase = 1; next
     }
-    $0 == ":benchmark-stage :fixture :enter" {
+    $0 == ":benchmark-stage :require :return" {
       if (phase != 1) invalid = 1; else phase = 2; next
     }
-    $0 == ":benchmark-stage :fixture :return" {
+    $0 == ":benchmark-stage :fixture :enter" {
       if (phase != 2) invalid = 1; else phase = 3; next
     }
-    $0 == ":benchmark-stage :main :enter" {
+    $0 == ":benchmark-stage :fixture :return" {
       if (phase != 3) invalid = 1; else phase = 4; next
     }
+    $0 == ":benchmark-stage :main :enter" {
+      if (phase != 4) invalid = 1; else phase = 5; next
+    }
     $0 == ":benchmark-stage :main :failed" {
-      if (phase != 4 || failed) invalid = 1; else failed = 1; next
+      if (phase != 5 || failed) invalid = 1; else failed = 1; next
     }
     $0 == ":benchmark-stage :main :return" { invalid = 1; next }
     $0 == ":benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown" {
       if (!failed || diagnostic) invalid = 1; else diagnostic = 1; next
     }
-    END { exit !(phase == 4 && failed && diagnostic && !invalid) }
+    END { exit !(phase == 5 && failed && diagnostic && !invalid) }
   ' "$root/$label.log"
 }
 observe-terminal-record-failure() {

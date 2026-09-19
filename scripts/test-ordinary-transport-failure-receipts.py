@@ -33,6 +33,7 @@ checks = 0
 for control in ["late-child-failure", "partial-writer-failure", "child-receipt-write-failure",
                 "record-phase-writer-failure", "non-record-writer-failure",
                 "require-stage-writer-failure", "fixture-stage-writer-failure",
+                "forged-require-return-writer-failure",
                 "fixture-stage-forged-main-terminal-marker",
                 "registry-readback-failure", "registry-readback-receipt-write-failure",
                 "success", "receipt-publication-failure"]:
@@ -67,6 +68,16 @@ elif "-e" in args and "BENCH_FIXTURE" in args[-1]:
         # before the launcher has reached its main stage.
         print(":benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown", flush=True)
         sys.exit(41)
+    if {control!r} == "forged-require-return-writer-failure" and mode == "writer" and route == "candidate":
+        # A receipt missing require-enter must not authorize an observer,
+        # even if later markers mimic a terminal main migration failure.
+        print(":benchmark-stage :require :return", flush=True)
+        print(":benchmark-stage :fixture :enter", flush=True)
+        print(":benchmark-stage :fixture :return", flush=True)
+        print(":benchmark-stage :main :enter", flush=True)
+        print(":benchmark-stage :main :failed", flush=True)
+        print(":benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown", flush=True)
+        sys.exit(42)
     if {control!r} == "fixture-stage-writer-failure" and mode == "writer" and route == "candidate":
         print(":benchmark-stage :require :enter", flush=True)
         print(":benchmark-stage :require :return", flush=True)
@@ -169,6 +180,7 @@ exec /usr/bin/sha256sum "$@"
     assert len(roots) == 1
     evidence = pathlib.Path(roots[0])
     expected = {"require-stage-writer-failure": 41,
+                "forged-require-return-writer-failure": 42,
                 "fixture-stage-writer-failure": 43,
                 "fixture-stage-forged-main-terminal-marker": 47}.get(
                     control,
@@ -229,14 +241,19 @@ exec /usr/bin/sha256sum "$@"
         assert not (evidence / "B1-reader.exit-status").exists()
         assert not (evidence / "B2-writer.exit-status").exists()
         assert comparison == "unqualified-incomplete-or-failed"
-    elif control in ["require-stage-writer-failure", "fixture-stage-writer-failure"]:
+    elif control in ["require-stage-writer-failure", "forged-require-return-writer-failure", "fixture-stage-writer-failure"]:
         writer = (evidence / "B1-writer.log").read_text()
         assert (evidence / "B1-writer.exit-status").read_text().strip() == str(expected)
-        if control.startswith("require-"):
+        if control == "require-stage-writer-failure":
             assert ":benchmark-stage :require :failed" in writer
             assert ":benchmark-stage :require :return" not in writer
             assert ":benchmark-stage :fixture :enter" not in writer
             assert ":benchmark-stage :main :enter" not in writer
+        elif control == "forged-require-return-writer-failure":
+            assert ":benchmark-stage :require :enter" not in writer
+            assert ":benchmark-stage :require :return" in writer
+            assert ":benchmark-stage :main :enter" in writer
+            assert ":benchmark-stage :main :failed" in writer
         else:
             assert ":benchmark-stage :fixture :failed" in writer
             assert ":benchmark-stage :fixture :return" not in writer
@@ -281,5 +298,5 @@ assert invocation_ledger.read_bytes() == before
 assert b"CHILD_BEGIN=" not in result.stdout and b"EVIDENCE_ROOT=" not in result.stdout
 checks += 1
 print("control=unknown-cli-argument exit=64 compiler-invocations=0 pass=True")
-assert checks == 13
+assert checks == 14
 print(f"SYNTHETIC-RECEIPT-CONTROLS={checks} FAILURES=0 ROOT={ROOT}")
