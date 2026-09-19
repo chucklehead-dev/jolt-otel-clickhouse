@@ -116,8 +116,8 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
-            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 53 @n)) (println \"PASS ordinary native 53\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
-          test "$(grep -Fxc 'PASS ordinary native 53' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 55 @n)) (println \"PASS ordinary native 55\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
+          test "$(grep -Fxc 'PASS ordinary native 55' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
       - name: Official host rejects unsupported Durable before effects
         timeout-minutes: 2
         shell: bash
