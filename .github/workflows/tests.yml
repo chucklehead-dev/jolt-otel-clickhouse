@@ -109,6 +109,27 @@ jobs:
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
             "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 53 @n)) (println \"PASS ordinary native 53\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
           test "$(grep -Fxc 'PASS ordinary native 53' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+      # The root chDB pin deliberately rejects the released runtime here: its
+      # Durable writer needs the fixed strict decoder and ranged writer append.
+      # Keep the ordinary lane on released Jolt; bind this one to the exact
+      # compiler revision qualified by that same immutable root dependency.
+      - name: Install the root-qualified Durable Jolt compiler
+        id: durable_jolt
+        uses: chucklehead-dev/jolt-chdb/.github/actions/install-jolt-aspects@19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774
+      - name: Bind the root-qualified compiler to the Durable fixture
+        shell: bash
+        env:
+          DURABLE_JOLT_SOURCE_SHA: ${{ steps.durable_jolt.outputs.source-sha }}
+          DURABLE_JOLT_VERSION: ${{ steps.durable_jolt.outputs.version }}
+        run: |
+          set -euo pipefail
+          test "$DURABLE_JOLT_SOURCE_SHA" = "120643d6bc322800a700e870de5c8087ad6085fa"
+          test "$DURABLE_JOLT_VERSION" = "jolt v0.8.6-97-g120643d6"
+          binary=$(realpath "$(command -v jolt)")
+          test "$("$binary" --version)" = "$DURABLE_JOLT_VERSION"
+          printf 'JOLT_BIN=%s\n' "$binary" >> "$GITHUB_ENV"
+          printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+          printf 'JOLT_DURABLE_COMPILER_SOURCE_SHA=%s\n' "$DURABLE_JOLT_SOURCE_SHA" >> "$GITHUB_ENV"
       - name: Qualify typed Durable WAL with a fresh reader
         id: durable_native
         timeout-minutes: 4
@@ -132,12 +153,13 @@ jobs:
           ORDINARY_OUTCOME: ${{ steps.ordinary_native.outcome }}
           DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
           DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+          DURABLE_COMPILER_REVISION: ${{ steps.durable_jolt.outputs.source-sha }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/exporter-native-evidence"
           mkdir -p "$evidence"
-          printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\n' \
-            "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" > "$evidence/status.txt"
+          printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
+            "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
           # Never traverse or upload native stores, WAL, databases or env files.
           for kind in ordinary durable; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
