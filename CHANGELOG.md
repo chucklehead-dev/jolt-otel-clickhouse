@@ -2,16 +2,22 @@
 
 ## Unreleased
 
+- Repin the reviewed Durable capability consumer to immutable casselc/jolt
+  artifact `durable-runtime-bf8a5dde-linux-x64` from successful run
+  `35405706668`, retaining exact source/tree, archive, binary, and cache
+  identity checks. This selects a proven ranged-append capability only; it
+  makes no throughput, tail-latency, or compiler-change attribution.
+
+- Repin `casselc/data.json` to `e7f97a9b5ecf7fa00787375fff4176a082fe9b98`
+  and update the resolved-provider receipt. This is a separate dependency
+  change: measurements must retain the existing A-prime/B-prime/A/B/B/A
+  causal split rather than attribute integrated results to either JSON change.
+
 - On an ordinary benchmark writer's terminal v1 registry record-phase failure,
   launch one fresh read-only child which reports only the closed registry
   cardinality observation. Preserve the original writer failure if that
   observation or its receipt fails, and stop the A/B/B/A sequence without an
   in-process retry or migration claim (#55).
-
-- Repin the root `casselc/data.json` dependency to `97298fd8a67a6d4ee3eb1346d5e184beb9565b90`
-  and receipt-test one exact resolved provider/root, including old-SHA and
-  duplicate-provider negative controls. This is dependency provenance work;
-  it makes no throughput or other performance claim (#56).
 
 - Distinguish statement-phase migration failures from ambiguous registry-record
   result-consumption failures. Add a two-process native witness that injects

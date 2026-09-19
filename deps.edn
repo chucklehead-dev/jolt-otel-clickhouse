@@ -17,7 +17,7 @@
         metosin/malli {:mvn/version "0.20.1"}
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
-         :git/sha "97298fd8a67a6d4ee3eb1346d5e184beb9565b90"}}
+         :git/sha "e7f97a9b5ecf7fa00787375fff4176a082fe9b98"}}
  :aliases {:benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test

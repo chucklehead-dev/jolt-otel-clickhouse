@@ -170,9 +170,14 @@ with the caller's authenticated read permissions; permission or expired-artifact
 failures never select an alternate compiler. Artifacts expire after 90 days and
 must be deliberately rotated to another reviewed and qualified run.
 
-The initial shared artifact lane pins successful producer run `35188849252`,
-attempt `1`, at reviewed workflow commit `6bf745bf`. Consumer CI must still
-qualify cross-repository access and positive Durable replay on those bytes.
+The current shared artifact lane pins successful producer run `35405706668`,
+attempt `1`, at reviewed workflow commit `9ad6782eb0d7bf3b73a9fd6005e17cf606075c58`.
+Its accepted source/tree are respectively
+`bf8a5dde7bebb5658d218e9757ab1df0aa9c3b95` and
+`206fe5b4e539dc26ea5a8665aee3bb4ca7943834`. Consumer CI must still qualify
+cross-repository access and positive Durable replay on those exact bytes. This
+is a capability/provenance selection, not a throughput attribution or a claim
+about any unrecorded compiler behavior.
 Offline artifact controls exercise only public mock data, not real hosting or
 compiler capability; run them with `python3 scripts/test-qualified-durable-runtime.py`.
 

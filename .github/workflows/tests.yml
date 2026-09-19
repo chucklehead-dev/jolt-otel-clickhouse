@@ -153,12 +153,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           # Successful reviewed producer; consumer qualification remains a CI gate.
           # Rotate explicitly before expiry; no branch/latest fallback.
-          QUALIFIED_RUNTIME_RUN_ID: '35188849252'
+          QUALIFIED_RUNTIME_PROFILE: bf8
+          QUALIFIED_RUNTIME_RUN_ID: '35405706668'
           QUALIFIED_RUNTIME_RUN_ATTEMPT: '1'
-          QUALIFIED_RUNTIME_ARTIFACT_ID: '10483062488'
-          QUALIFIED_RUNTIME_WORKFLOW_SHA: '6bf745bf6101f2c3481d0ffe16401843c7675050'
-          QUALIFIED_RUNTIME_ARTIFACT_SHA256: '353670dda1447d96d46aa1e133e4910481caf2f328d159a9bde76ed863e41524'
-          QUALIFIED_RUNTIME_BINARY_SHA256: '31cff7ea89a652bd99848cf15686eb576d90d9ac3962ac07701fb6005e6eb458'
+          QUALIFIED_RUNTIME_ARTIFACT_ID: '10574710514'
+          QUALIFIED_RUNTIME_WORKFLOW_SHA: '9ad6782eb0d7bf3b73a9fd6005e17cf606075c58'
+          QUALIFIED_RUNTIME_ARTIFACT_SHA256: '2a8f547a83ef88b5afb653eedd28f25d8d1953e66e827b8361a96328cdae9961'
+          QUALIFIED_RUNTIME_BINARY_SHA256: 'f54b2f14ba06abbd4666a617762221b7c8da3e7b01e6578bdc39541cc729f102'
         run: |
           set -euo pipefail
           TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 120s \
@@ -175,7 +176,7 @@ jobs:
           {
             printf 'JOLT_BIN=%s\n' "$binary"
             printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$QUALIFIED_RUNTIME_BINARY_SHA256"
-            printf 'JOLT_CACHE_DIR=%s/.jolt-cache-durable-aea\n' "$GITHUB_WORKSPACE"
+            printf 'JOLT_CACHE_DIR=%s/.jolt-cache-durable-bf8a5dde\n' "$GITHUB_WORKSPACE"
           } >> "$GITHUB_ENV"
 
       - name: Qualify typed Durable WAL with a fresh reader
