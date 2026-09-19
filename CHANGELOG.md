@@ -7,6 +7,11 @@
   changes and every other untracked path still fail closed; the loaded source
   revisions and native qualification behavior are unchanged.
 
+- Harden the typed Durable native dependency receipt to reject ignored paths,
+  including ignored source that could shadow a resolved namespace. Focused
+  controls cover clean, exact-sentinel, untracked, ignored-source, and tracked
+  cases; loaded source revisions and native qualification behavior are unchanged.
+
 - Correct the clean dependency-receipt expectation for the published OTel
   revision selected by the root dependency graph. The test continues to reject
   a different repository or full revision; exporter behavior is unchanged.

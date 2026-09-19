@@ -1,5 +1,70 @@
 #!/usr/bin/env bash
 set -euo pipefail
+
+# The resolver may leave one cache marker at a fetched dependency root.  Do not
+# treat a generally clean-looking checkout as enough: an ignored source file
+# can still shadow a loaded namespace.  Read porcelain records as NUL-delimited
+# data so unusual filenames cannot make a second status entry look permitted.
+dependency_source_clean() {
+  local source_root=$1 receipt_file= record accepted=0
+  receipt_file=$(mktemp "${TMPDIR:-/tmp}/exporter-dependency-status.XXXXXX") || return 1
+  if ! git -C "$source_root" -c core.quotepath=true status --porcelain=v1 -z \
+      --untracked-files=all --ignored=matching >"$receipt_file"; then
+    rm -f "$receipt_file"
+    return 1
+  fi
+  while IFS= read -r -d '' record; do
+    if (( accepted == 0 )) && [[ "$record" == '?? .jolt-git-ok' ]]; then
+      accepted=1
+    else
+      rm -f "$receipt_file"
+      return 1
+    fi
+  done <"$receipt_file"
+  rm -f "$receipt_file"
+  return 0
+}
+
+run_cleanliness_controls() {
+  local fixture=
+  fixture=$(mktemp -d "${TMPDIR:-/tmp}/exporter-dependency-cleanliness.XXXXXX") || return 1
+  trap 'rm -rf "$fixture"' RETURN
+  git init -q "$fixture"
+  git -C "$fixture" config user.name qualification
+  git -C "$fixture" config user.email qualification@example.invalid
+  printf '%s\n' 'tracked fixture' >"$fixture/tracked.clj"
+  printf '%s\n' '*.clj' >"$fixture/.gitignore"
+  git -C "$fixture" add -f tracked.clj .gitignore
+  git -C "$fixture" commit -qm fixture
+
+  dependency_source_clean "$fixture" || { echo cleanliness-control-clean-failed; return 1; }
+  : >"$fixture/.jolt-git-ok"
+  dependency_source_clean "$fixture" || { echo cleanliness-control-sentinel-failed; return 1; }
+  : >"$fixture/untracked.txt"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-untracked-accepted
+    return 1
+  fi
+  rm -f "$fixture/untracked.txt"
+  : >"$fixture/injected.clj"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-ignored-source-accepted
+    return 1
+  fi
+  rm -f "$fixture/injected.clj"
+  printf '%s\n' 'modified fixture' >"$fixture/tracked.clj"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-tracked-change-accepted
+    return 1
+  fi
+  printf '%s\n' 'cleanliness-controls-qualified'
+}
+
+if [[ "${1:-}" == --self-test-cleanliness ]]; then
+  run_cleanliness_controls
+  exit $?
+fi
+
 # Linux-only bounded acceptance lane. Run under an outer 210s timeout.
 [[ "$(uname -s)" == Linux ]] || { echo unsupported-process-ownership-host; exit 1; }
 worktree=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -109,16 +174,9 @@ done
 [[ "${#driver_roots[@]}" == 1 && "${#sdk_roots[@]}" == 1 ]] || { echo ambiguous-source-provider; exit 1; }
 driver_revision=$(git -C "${driver_roots[0]}" rev-parse HEAD)
 sdk_revision=$(git -C "${sdk_roots[0]}" rev-parse HEAD)
-# The Jolt resolver writes this exact cache sentinel at a fetched dependency
-# root.  It is not source, cannot shadow a namespace below src/resources, and
-# is expected before this proof resolves the provider.  Keep rejecting every
-# tracked change and every other untracked path: accepting a generally dirty
-# dependency would make the revision receipt vacuous.
-dependency_source_clean() {
-  local root=$1 status
-  status=$(git -C "$root" status --porcelain=v1 --untracked-files=all)
-  [[ -z "$status" || "$status" == '?? .jolt-git-ok' ]]
-}
+# Only Jolt's one exact untracked cache sentinel may appear.  This includes
+# ignored paths in the receipt: otherwise an ignored .clj file could shadow
+# the resolved provider while the revision proof still appeared clean.
 dependency_source_clean "${driver_roots[0]}" && dependency_source_clean "${sdk_roots[0]}"
 if [[ "$driver_mode" == root-pin ]]; then expected_driver=${declared[0]}; else expected_driver=$reviewed_revision; fi
 [[ "$driver_revision" == "$expected_driver" && "$sdk_revision" == "${declared[1]}" ]] || { echo source-pin-mismatch; exit 1; }

@@ -31,6 +31,13 @@ jobs:
       - name: Assert Jolt version
         shell: bash
         run: test "$(jolt --version)" = "jolt v0.8.6"
+      - name: Reject dirty and ignored dependency providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/qualify-durable-typed-native.sh --self-test-cleanliness \
+            | tee "$RUNNER_TEMP/exporter-dependency-cleanliness.log"
+          test "$(grep -Fxc 'cleanliness-controls-qualified' "$RUNNER_TEMP/exporter-dependency-cleanliness.log")" = 1
       - name: Install native test dependencies
         run: |
           set -euo pipefail
