@@ -11,6 +11,7 @@
             [otel.exporter.chdb.attribute-projection :as projection]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
+            [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-test-support :as support]
             [otel.sdk.export :as export]))
 
@@ -49,13 +50,13 @@
                                           (get-in installation [:record :manifest :fields]))))]
     [(get row (:value-column physical)) (get row (:status-column physical))]))
 
-(defn- collected [attributes]
-  [{:scope {:name "typed-gauge"}
+(defn- collected [scope attributes]
+  [{:scope scope
     :metrics [{:type :gauge :name "queue.depth" :description "" :unit ""
                :data-points [{:value 2.0 :time-unix-nano 1000000000
                               :attributes attributes}]}]}])
 
-(defn- exported [descriptor-set target attributes]
+(defn- exported [descriptor-set target resource scope attributes]
   (let [received (atom nil)
         writer (support/call-with-qualified-native
                 #(exporter/exporter {:connection target :create-schema? false
@@ -68,7 +69,7 @@
                                                   (remove str/blank?
                                                           (str/split-lines payload)))})
                     {:count 1})]
-      (when-not (export/export-metrics! writer {:attributes {}} (collected attributes))
+      (when-not (export/export-metrics! writer resource (collected scope attributes))
         (throw (exporter/last-error writer))))
     @received))
 
@@ -98,20 +99,30 @@
              [(mapv #(pair (projector {:attributes {}}) installation %) ["queue.ready" "queue.depth"])
               (mapv #(pair (projector {:attributes {:queue.ready "false" :queue.depth 9223372036854775808}}) installation %)
                     ["queue.ready" "queue.depth"])])
-      (let [{:keys [table columns rows]} (exported capability target
+      (let [resource {:attributes {"service.tier" "gold"
+                                   "resource.generic" "kept-generic"}}
+            scope {:name "typed-gauge"
+                   :attributes {"runtime.pool" 7
+                                "scope.generic" "kept-generic"}}
+            {:keys [table columns rows]} (exported capability target resource scope
                                                    {:queue.ready false :queue.depth 9007199254740993})
             fields (projection/confirmed-gauge-fields capability target)
             typed-columns (vec (mapcat (fn [field] [(get-in field [:physical :value-column])
                                                      (get-in field [:physical :status-column])]) fields))
             row (first rows)]
         (check "typed gauge export targets only the gauge table" "otel_metrics_gauge" table)
-        (check "typed gauge insert names additive columns"
-               (into (get-in (support/exporter-state {}) [:typed-gauge-columns] []) typed-columns)
-               (vec (take-last (count typed-columns) columns)))
-        (check "typed gauge export retains generic Attributes fallback"
-               [{"queue.ready" "false" "queue.depth" "9007199254740993"}
-                [false 3] [9007199254740993 3]]
-               [(get row "Attributes") (pair row installation "queue.ready") (pair row installation "queue.depth")]))
+        (check "typed gauge insert uses only the gauge schema plus owned columns"
+               (into (get schema/clickstack-metric-insert-columns :gauge) typed-columns)
+               columns)
+        (check "export-metrics projects resource scope and point fields while retaining generic maps"
+               [{"resource.generic" "kept-generic" "service.tier" "gold"}
+                {"runtime.pool" "7" "scope.generic" "kept-generic"}
+                {"queue.ready" "false" "queue.depth" "9007199254740993"}
+                ["gold" 3] [7 3] [false 3] [9007199254740993 3]]
+               [(get row "ResourceAttributes") (get row "ScopeAttributes")
+                (get row "Attributes") (pair row installation "service.tier")
+                (pair row installation "runtime.pool") (pair row installation "queue.ready")
+                (pair row installation "queue.depth")]))
       (check "gauge capability cannot enter trace projection"
              :otel.exporter.chdb.attribute-projection/signal-mismatch
              (try (projection/trace-projector capability target) nil
