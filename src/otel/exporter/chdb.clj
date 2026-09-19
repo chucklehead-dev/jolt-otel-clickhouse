@@ -272,18 +272,13 @@
    "Exemplars.SpanId" []
    "Exemplars.TraceId" []})
 
-(def ^:private metric-insert-queries
-  (into {}
-        (map (fn [[kind columns]]
-               [kind (str "insert into " (get schema/metric-table-names kind)
-                          " (" (str/join ", " columns) ")")]))
-        schema/clickstack-metric-insert-columns))
-
-(defn- metric-rows [resource collected]
-  (for [{:keys [scope metrics]} collected
-        metric metrics
-        point (:data-points metric)]
-    (merge
+(defn- metric-rows
+  ([resource collected] (metric-rows resource collected nil))
+  ([resource collected typed-gauge-projector]
+   (for [{:keys [scope metrics]} collected
+         metric metrics
+         point (:data-points metric)]
+     (merge
      empty-metric-exemplars
      {"ResourceAttributes" (attrs (:attributes resource))
       "ResourceSchemaUrl" (or (:schema-url resource) "")
@@ -306,7 +301,10 @@
       ;; No-recorded-value flags are not modeled; zero is the canonical default.
       "Flags" 0}
      (case (:type metric)
-       :gauge {"Value" (double (:value point))}
+       :gauge (merge {"Value" (double (:value point))}
+                     (if typed-gauge-projector
+                       (typed-gauge-projector point)
+                       {}))
        :sum {"Value" (double (:value point))
              "AggregationTemporality" (temporality-code (:temporality metric))
              "IsMonotonic" (boolean (:monotonic? metric))}
@@ -316,15 +314,23 @@
                    "ExplicitBounds" (:explicit-bounds metric)
                    "Min" (double (or (:min point) 0.0))
                    "Max" (double (or (:max point) 0.0))
-                   "AggregationTemporality" (temporality-code (:temporality metric))}))))
+                   "AggregationTemporality" (temporality-code (:temporality metric))})))))
+
+(defn- metric-insert-columns [state type]
+  (into (get schema/clickstack-metric-insert-columns type)
+        (when (= type :gauge) (:typed-gauge-columns @state))))
+
+(defn- metric-insert-query [type columns]
+  (str "insert into " (get schema/metric-table-names type)
+       " (" (str/join ", " columns) ")"))
 
 (defn- export-metric-type! [connection state type rows]
   (let [selected (filter #(= type (:_type %)) rows)]
     (when (seq selected)
-      (insert-batch! connection state (get schema/metric-table-names type)
-                         (get schema/clickstack-metric-insert-columns type)
-                         (get metric-insert-queries type)
-                         (map #(dissoc % :_type) selected)))))
+      (let [columns (metric-insert-columns state type)]
+        (insert-batch! connection state (get schema/metric-table-names type)
+                         columns (metric-insert-query type columns)
+                         (map #(dissoc % :_type) selected))))))
 
 (defn- export-metric-rows! [connection state rows]
   (if (:durable? @state)
@@ -338,7 +344,7 @@
                      :let [selected (vec (map #(dissoc % :_type)
                                                (filter #(= type (:_type %)) rows)))]
                      :when (seq selected)
-                     :let [columns (get schema/clickstack-metric-insert-columns type)
+                     :let [columns (metric-insert-columns state type)
                            payload (ordinary-payload columns selected)]]
                  [(get schema/metric-table-names type) columns payload]))]
       (context/with-instrumentation-suppressed
@@ -461,7 +467,8 @@
                                       resource
                                       [{:scope scope
                                         :metrics
-                                        [(assoc metric :data-points [point])]}]))]]
+                                        [(assoc metric :data-points [point])]}]
+                                      (:typed-gauge-projector @state)))]]
                       (assoc row :_type (:type metric))))]
           (export-metric-rows! connection state rows)
           (complete-batch! connection state (boolean (seq rows))))
@@ -507,13 +514,17 @@
   Ordinary connections must expose the chDB driver context; startup rejects
   other drivers before schema mutation. Durable connections must explicitly
   opt into :durable? true; they never fall back from the ordinary row-data API.
-  :typed-span-descriptors and :typed-log-descriptors accept only opaque
+  :typed-span-descriptors, :typed-log-descriptors, and
+  :typed-gauge-descriptors accept only opaque
   capabilities returned in active `install-approved!` results. They project
   their respective attributes while the compatible generic maps remain
-  unchanged."
+  unchanged. Gauge descriptors are limited to point attributes on
+  `otel_metrics_gauge`; sum, histogram, resource, and scope descriptors are
+  intentionally unsupported."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
-            persistence-barrier typed-span-descriptors typed-log-descriptors]
+            persistence-barrier typed-span-descriptors typed-log-descriptors
+            typed-gauge-descriptors]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -522,7 +533,7 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
-   (when (and (or typed-span-descriptors typed-log-descriptors)
+   (when (and (or typed-span-descriptors typed-log-descriptors typed-gauge-descriptors)
               (nil? connection))
      (throw (ex-info "Typed descriptors require their explicit install connection"
                      {:type ::typed-descriptors-require-connection})))
@@ -534,6 +545,9 @@
          typed-log-projector (when typed-log-descriptors
                                (attribute-projection/log-projector
                                 typed-log-descriptors conn))
+         typed-gauge-projector (when typed-gauge-descriptors
+                                 (attribute-projection/gauge-projector
+                                  typed-gauge-descriptors conn))
          span-columns (into (into schema/clickstack-trace-insert-columns
                                   ["EventsJSON" "LinksJSON"])
                             (when typed-span-descriptors
@@ -545,6 +559,10 @@
                              (typed-columns
                               (attribute-projection/confirmed-log-fields
                                typed-log-descriptors conn))))
+         gauge-columns (vec (when typed-gauge-descriptors
+                              (typed-columns
+                               (attribute-projection/confirmed-gauge-fields
+                                typed-gauge-descriptors conn))))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (if durable?
@@ -581,8 +599,10 @@
                               :persistence-barrier barrier
                               :typed-span-projector typed-span-projector
                               :typed-log-projector typed-log-projector
+                              :typed-gauge-projector typed-gauge-projector
                               :span-insert-columns span-columns
                               :log-insert-columns log-columns
+                              :typed-gauge-columns gauge-columns
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t

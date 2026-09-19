@@ -45,8 +45,10 @@
   result)
 
 (defn- install! [connection signal]
-  (let [table (if (= signal :spans) "otel_traces" "otel_logs")
-        location (if (= signal :spans) :span-attributes :log-attributes)
+  (let [table (case signal :spans "otel_traces" :logs "otel_logs"
+                         :metrics "otel_metrics_gauge")
+        location (case signal :spans :span-attributes :logs :log-attributes
+                            :metrics :metric-attributes)
         approved (manifest/compile-manifest
                   {:dataset-id "ordinary-native" :application-id (name signal)
                    :lineage "native-v1" :version 1
@@ -66,8 +68,10 @@
                        :execute-ddl! #(jdbc/execute! connection %)})
         capability (:descriptor-set installation)]
     {:status (:status installation) :capability capability
-     :fields ((if (= signal :spans) projection/confirmed-span-fields
-                  projection/confirmed-log-fields) capability connection)}))
+     :fields ((case signal :spans projection/confirmed-span-fields
+                           :logs projection/confirmed-log-fields
+                           :metrics projection/confirmed-gauge-fields)
+              capability connection)}))
 
 (defn- span [name duration attributes]
   {:name name :kind :internal :start-time-unix-nano 0
@@ -120,18 +124,20 @@
   (with-open [connection (jdbc/connection "chdb::memory:")]
     (schema/ensure-schema! connection)
     (let [spans (install! connection :spans) records (install! connection :logs)
+          gauges (install! connection :metrics)
           writer (exporter/exporter {:connection connection :create-schema? false
                                      :signals #{:spans :logs :metrics}
                                      :typed-span-descriptors (:capability spans)
-                                     :typed-log-descriptors (:capability records)})
+                                     :typed-log-descriptors (:capability records)
+                                     :typed-gauge-descriptors (:capability gauges)})
           inputs [["a-zero? é\n\"\\" {"flag" false "count" 0}]
                   ["b-min" {"flag" true "count" int64-min}]
                   ["c-max" {"count" int64-max}]
                   ["d-invalid" {"count" 9223372036854775808N}]]
           ticks [0 1 1700000000123456789 0]]
       (try
-        (check "real typed span/log installations active" [:active :active]
-               [(:status spans) (:status records)])
+        (check "real typed span/log/gauge installations active" [:active :active :active]
+               [(:status spans) (:status records) (:status gauges)])
         (check "ordinary native spans accepted" true
                (diagnosed-result writer
                                  (export/export-spans!
@@ -194,8 +200,27 @@
                  (metric :sum "sum-zero" {:value 0.0})
                  (metric :histogram "hist-max" {:count uint64-max :sum 0.0
                                                 :bucket-counts [uint64-max 0]})]))
+        (check "ordinary native typed gauge accepted" true
+               (export/export-metrics!
+                writer {:attributes {}}
+                [(metric :gauge "typed-gauge"
+                         {:value 3.0 :attributes {"flag" false "count" int64-max}})]))
         (check "all five native tables independently reconcile tiny fixture"
-               [4 4 2 1 1] (row-counts connection))
+               [4 4 3 1 1] (row-counts connection))
+        (let [count-field (physical (:fields gauges) "count")
+              flag-field (physical (:fields gauges) "flag")
+              row (jdbc/fetch-one
+                   connection
+                   (str "SELECT Attributes AS generic, toString(`" (:value-column count-field)
+                        "`) AS typed_count, toTypeName(`" (:value-column count-field)
+                        "`) AS count_type, `" (:status-column count-field)
+                        "` AS count_status, `" (:value-column flag-field)
+                        "` AS typed_flag, `" (:status-column flag-field)
+                        "` AS flag_status FROM otel_metrics_gauge WHERE MetricName = 'typed-gauge'"))]
+          (check "typed gauge native exact Int64 and false readback"
+                 [{"flag" "false" "count" (str int64-max)} (str int64-max) "Int64" 3 false 3]
+                 [(:generic row) (:typed_count row) (:count_type row) (:count_status row)
+                  (:typed_flag row) (:flag_status row)]))
         (check "sum retains zero and Float64 type"
                [true "Float64"]
                (let [row (jdbc/fetch-one connection "SELECT Value AS value, toTypeName(Value) AS physical_type FROM otel_metrics_sum")]
@@ -214,7 +239,7 @@
         (check "finite Float64 maximum and subnormal exact readback"
                [["float-max" 1.7976931348623157E308 "Float64"] ["float-subnormal" 4.9E-324 "Float64"]]
                (mapv #(vector (:label %) (:value %) (:physical_type %))
-                     (jdbc/fetch connection "SELECT MetricName AS label, Value AS value, toTypeName(Value) AS physical_type FROM otel_metrics_gauge ORDER BY label")))
+                     (jdbc/fetch connection "SELECT MetricName AS label, Value AS value, toTypeName(Value) AS physical_type FROM otel_metrics_gauge WHERE MetricName != 'typed-gauge' ORDER BY label")))
         (doseq [invalid [Double/NaN Double/POSITIVE_INFINITY Double/NEGATIVE_INFINITY]]
           (let [before (row-counts connection)]
             (check "nonfinite actual metric batch rejected" false
