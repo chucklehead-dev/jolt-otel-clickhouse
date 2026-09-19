@@ -24,7 +24,11 @@
       :entries [{:signal :metrics :table "otel_metrics_gauge"
                  :location :metric-attributes :key "queue.ready" :type :boolean}
                 {:signal :metrics :table "otel_metrics_gauge"
-                 :location :metric-attributes :key "queue.depth" :type :int64}]}]}))
+                 :location :metric-attributes :key "queue.depth" :type :int64}
+                {:signal :metrics :table "otel_metrics_gauge"
+                 :location :resource-attributes :key "service.tier" :type :string}
+                {:signal :metrics :table "otel_metrics_gauge"
+                 :location :scope-attributes :key "runtime.pool" :type :int64}]}]}))
 
 (defn- installed [target]
   (let [approved (compiled) columns (registry/expected-columns (registry/prepare approved))
@@ -73,16 +77,22 @@
   (with-open [target (support/connection)]
     (let [installation (installed target) capability (:descriptor-set installation)
           target (::target installation) projector (projection/gauge-projector capability target)
-          valid (projector {:attributes {:queue.ready false :queue.depth 9007199254740993}})]
-      (check "only gauge point attributes join physical support"
-             [true false false false]
+          valid (projector {:resource {:attributes {"service.tier" "gold"}}
+                            :scope {:attributes {"runtime.pool" 7}}
+                            :point {:attributes {:queue.ready false
+                                                 :queue.depth 9007199254740993}}})]
+      (check "only bounded gauge and sum targets join physical support"
+             [true true true true false false]
              [(identity/physically-supported? identity/gauge-attribute-target)
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :resource-attributes))
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :scope-attributes))
-              (identity/physically-supported? (identity/target :metrics "otel_metrics_sum" :metric-attributes))])
-      (check "gauge typed values preserve false and exact Int64"
-             [[false 3] [9007199254740993 3]]
-             [(pair valid installation "queue.ready") (pair valid installation "queue.depth")])
+              (identity/physically-supported? (identity/target :metrics "otel_metrics_sum" :metric-attributes))
+              (identity/physically-supported? (identity/target :metrics "otel_metrics_sum" :resource-attributes))
+              (identity/physically-supported? (identity/target :metrics "otel_metrics_histogram" :metric-attributes))])
+      (check "gauge typed point resource and scope values preserve their locations"
+             [[false 3] [9007199254740993 3] ["gold" 3] [7 3]]
+             [(pair valid installation "queue.ready") (pair valid installation "queue.depth")
+              (pair valid installation "service.tier") (pair valid installation "runtime.pool")])
       (check "gauge absent and invalid status remain explicit"
              [[[false 1] [0 1]] [[false 4] [0 4]]]
              [(mapv #(pair (projector {:attributes {}}) installation %) ["queue.ready" "queue.depth"])

@@ -274,10 +274,12 @@
 
 (defn- metric-rows
   ([resource collected] (metric-rows resource collected nil))
-  ([resource collected typed-gauge-projector]
+  ([resource collected typed-metric-projectors]
    (for [{:keys [scope metrics]} collected
          metric metrics
-         point (:data-points metric)]
+         point (:data-points metric)
+         :let [typed-projector (get typed-metric-projectors (:type metric))
+               typed-context {:resource resource :scope scope :point point}]]
      (merge
      empty-metric-exemplars
      {"ResourceAttributes" (attrs (:attributes resource))
@@ -299,15 +301,18 @@
                        (or (:start-time-unix-nano point) 0))
       "TimeUnix" (metric-timestamp (or (:time-unix-nano point) 0))
       ;; No-recorded-value flags are not modeled; zero is the canonical default.
-      "Flags" 0}
+       "Flags" 0}
      (case (:type metric)
        :gauge (merge {"Value" (double (:value point))}
-                     (if typed-gauge-projector
-                       (typed-gauge-projector point)
+                     (if typed-projector
+                       (typed-projector typed-context)
                        {}))
-       :sum {"Value" (double (:value point))
-             "AggregationTemporality" (temporality-code (:temporality metric))
-             "IsMonotonic" (boolean (:monotonic? metric))}
+       :sum (merge {"Value" (double (:value point))
+                    "AggregationTemporality" (temporality-code (:temporality metric))
+                    "IsMonotonic" (boolean (:monotonic? metric))}
+                   (if typed-projector
+                     (typed-projector typed-context)
+                     {}))
        :histogram {"Count" (:count point)
                    "Sum" (double (:sum point))
                    "BucketCounts" (:bucket-counts point)
@@ -318,7 +323,7 @@
 
 (defn- metric-insert-columns [state type]
   (into (get schema/clickstack-metric-insert-columns type)
-        (when (= type :gauge) (:typed-gauge-columns @state))))
+        (get-in @state [:typed-metric-columns type] [])))
 
 (defn- metric-insert-query [type columns]
   (str "insert into " (get schema/metric-table-names type)
@@ -468,7 +473,7 @@
                                       [{:scope scope
                                         :metrics
                                         [(assoc metric :data-points [point])]}]
-                                      (:typed-gauge-projector @state)))]]
+                                      (:typed-metric-projectors @state)))]]
                       (assoc row :_type (:type metric))))]
           (export-metric-rows! connection state rows)
           (complete-batch! connection state (boolean (seq rows))))
@@ -514,17 +519,18 @@
   Ordinary connections must expose the chDB driver context; startup rejects
   other drivers before schema mutation. Durable connections must explicitly
   opt into :durable? true; they never fall back from the ordinary row-data API.
-  :typed-span-descriptors, :typed-log-descriptors, and
-  :typed-gauge-descriptors accept only opaque
+  :typed-span-descriptors, :typed-log-descriptors, :typed-gauge-descriptors,
+  and :typed-sum-descriptors accept only opaque
   capabilities returned in active `install-approved!` results. They project
   their respective attributes while the compatible generic maps remain
-  unchanged. Gauge descriptors are limited to point attributes on
-  `otel_metrics_gauge`; sum, histogram, resource, and scope descriptors are
+  unchanged. Gauge descriptors cover point, resource, and scope attributes on
+  `otel_metrics_gauge`; sum descriptors cover point attributes on
+  `otel_metrics_sum`. Sum resource/scope and all histogram descriptors remain
   intentionally unsupported."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
-            typed-gauge-descriptors]
+            typed-gauge-descriptors typed-sum-descriptors]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -533,7 +539,8 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
-   (when (and (or typed-span-descriptors typed-log-descriptors typed-gauge-descriptors)
+   (when (and (or typed-span-descriptors typed-log-descriptors typed-gauge-descriptors
+                  typed-sum-descriptors)
               (nil? connection))
      (throw (ex-info "Typed descriptors require their explicit install connection"
                      {:type ::typed-descriptors-require-connection})))
@@ -548,6 +555,9 @@
          typed-gauge-projector (when typed-gauge-descriptors
                                  (attribute-projection/gauge-projector
                                   typed-gauge-descriptors conn))
+         typed-sum-projector (when typed-sum-descriptors
+                               (attribute-projection/sum-projector
+                                typed-sum-descriptors conn))
          span-columns (into (into schema/clickstack-trace-insert-columns
                                   ["EventsJSON" "LinksJSON"])
                             (when typed-span-descriptors
@@ -563,6 +573,10 @@
                               (typed-columns
                                (attribute-projection/confirmed-gauge-fields
                                 typed-gauge-descriptors conn))))
+         sum-columns (vec (when typed-sum-descriptors
+                            (typed-columns
+                             (attribute-projection/confirmed-sum-fields
+                              typed-sum-descriptors conn))))
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (if durable?
@@ -599,10 +613,14 @@
                               :persistence-barrier barrier
                               :typed-span-projector typed-span-projector
                               :typed-log-projector typed-log-projector
-                              :typed-gauge-projector typed-gauge-projector
+                              :typed-metric-projectors
+                              (cond-> {}
+                                typed-gauge-projector (assoc :gauge typed-gauge-projector)
+                                typed-sum-projector (assoc :sum typed-sum-projector))
                               :span-insert-columns span-columns
                               :log-insert-columns log-columns
-                              :typed-gauge-columns gauge-columns
+                              :typed-metric-columns {:gauge gauge-columns
+                                                     :sum sum-columns}
                               :durable? durable?
                               :last-error nil}))
        (catch Throwable t
