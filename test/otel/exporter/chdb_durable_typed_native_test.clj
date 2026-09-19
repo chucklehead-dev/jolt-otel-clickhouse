@@ -27,9 +27,15 @@
   {:dataset-id "durable-native" :application-id (name signal)
    :lineage "native-v1" :version 1})
 
-(defn- table [signal] (if (= signal :spans) "otel_traces" "otel_logs"))
+(defn- table [signal]
+  (case signal
+    :spans "otel_traces"
+    :logs "otel_logs"
+    :metric-gauge "otel_metrics_gauge"
+    :metric-sum "otel_metrics_sum"))
 (defn- observe [connection signal]
-  [{:signal signal :table (table signal)
+  [{:signal (if (#{:metric-gauge :metric-sum} signal) :metrics signal)
+    :table (table signal)
     :columns (into {} (map (juxt :name :type))
                    (jdbc/fetch connection (str "DESCRIBE TABLE " (table signal))))}])
 
@@ -43,6 +49,28 @@
                                           :location (if (= signal :spans) :span-attributes :log-attributes)
                                           :key key :type type})
                                        [["flag" :boolean] ["count" :int64]])}])))
+
+(defn- metric-approved [signal entries]
+  (manifest/compile-manifest
+   (assoc (selector signal)
+          :fragments [{:schema manifest/reviewed-fragment-schema
+                       :authority :advice :source "advice/durable-metric-native-test.edn"
+                       :entries (mapv (fn [[location key type]]
+                                        {:signal :metrics :table (table signal)
+                                         :location location :key key :type type})
+                                      entries)}])))
+
+(defn- gauge-approved []
+  (metric-approved :metric-gauge
+                   [[:resource-attributes "resource.ready" :boolean]
+                    [:scope-attributes "scope.workers" :int64]
+                    [:metric-attributes "queue.ready" :boolean]
+                    [:metric-attributes "queue.count" :int64]]))
+
+(defn- sum-approved []
+  (metric-approved :metric-sum
+                   [[:metric-attributes "request.success" :boolean]
+                    [:metric-attributes "request.count" :int64]]))
 
 (def ticks [0 1 1700000000123456789 0])
 (def inputs [["a-zero" {"flag" false "count" 0}]
@@ -65,9 +93,22 @@
      :body name :severity-text "INFO" :severity-number 9
      :resource {:attributes {}} :scope {:name "native"} :attributes attributes}))
 
+(defn- metric-batch []
+  [{:scope {:name "durable-native" :attributes {"scope.workers" 7
+                                                  "scope.generic" "kept-generic"}}
+    :metrics [{:type :gauge :name "durable.typed.gauge" :description "" :unit "1"
+               :data-points [{:value 2.0 :time-unix-nano 1700000000000000000
+                              :attributes {"queue.ready" false "queue.count" 9223372036854775807
+                                           "point.generic" "kept-generic"}}]}
+              {:type :sum :name "durable.typed.sum" :description "" :unit "1"
+               :temporality :cumulative :monotonic? true
+               :data-points [{:value 3.0 :time-unix-nano 1700000000000000000
+                              :attributes {"request.success" false "request.count" 9223372036854775807
+                                           "point.generic" "kept-generic"}}]}]}])
+
 (defn- counts [connection]
   (mapv #(-> (jdbc/fetch-one connection (str "SELECT count() AS n FROM " %)) :n)
-        ["otel_traces" "otel_logs"]))
+        ["otel_traces" "otel_logs" "otel_metrics_gauge" "otel_metrics_sum" "otel_metrics_histogram"]))
 
 (defn- verify! [connection capability signal]
   (let [fields ((if (= signal :spans) projection/confirmed-span-fields projection/confirmed-log-fields)
@@ -94,6 +135,37 @@
                            {"count" "9223372036854775807"} {"count" "9223372036854775808N"}]
             (mapv :generic rows))))
 
+(defn- metric-pair [row fields key]
+  (let [physical (:physical (first (filter #(= key (:key %)) fields)))]
+    [(get row (keyword (:value-column physical)))
+     (get row (keyword (:status-column physical)))]))
+
+(defn- verify-metrics! [connection gauge-capability sum-capability]
+  (let [gauge-fields (projection/confirmed-gauge-fields gauge-capability connection)
+        sum-fields (projection/confirmed-sum-fields sum-capability connection)
+        gauge-row (jdbc/fetch-one connection
+                                  "SELECT ResourceAttributes AS resource, ScopeAttributes AS scope, Attributes AS attributes, * FROM otel_metrics_gauge WHERE MetricName='durable.typed.gauge'")
+        sum-row (jdbc/fetch-one connection
+                                "SELECT Attributes AS attributes, * FROM otel_metrics_sum WHERE MetricName='durable.typed.sum'")]
+    (check! :metric-gauge-recovered
+            [{"resource.ready" "false" "resource.generic" "kept-generic"}
+             {"scope.workers" "7" "scope.generic" "kept-generic"}
+             {"queue.ready" "false" "queue.count" "9223372036854775807"
+              "point.generic" "kept-generic"}
+             [[false 3] [7 3] [false 3] [9223372036854775807 3]]]
+            [(:resource gauge-row) (:scope gauge-row) (:attributes gauge-row)
+             [(metric-pair gauge-row gauge-fields "resource.ready")
+              (metric-pair gauge-row gauge-fields "scope.workers")
+              (metric-pair gauge-row gauge-fields "queue.ready")
+              (metric-pair gauge-row gauge-fields "queue.count")]])
+    (check! :metric-sum-recovered
+            [{"request.success" "false" "request.count" "9223372036854775807"
+              "point.generic" "kept-generic"}
+             [[false 3] [9223372036854775807 3]]]
+            [(:attributes sum-row)
+             [(metric-pair sum-row sum-fields "request.success")
+              (metric-pair sum-row sum-fields "request.count")]])))
+
 (defn- wait-file! [path timeout-ms]
   (let [deadline (+ (System/nanoTime) (* timeout-ms 1000000))]
     (loop []
@@ -118,22 +190,33 @@
                                  (merge options {:owner "typed-native" :instance "writer-1" :database "otel"
                                                  :lease-ttl-ms 900000 :heartbeat-interval-ms 300000})))]
         (schema/ensure-schema! connection)
-        (let [install (fn [signal]
-                        (let [result (installer/install-approved! catalog (approved signal)
+        (let [install (fn [signal declaration]
+                        (let [result (installer/install-approved! catalog declaration
                                         {:target connection :observe-columns #(observe connection signal)
                                          :execute-ddl! #(jdbc/execute! connection %)})]
                           (check! :installation-active :active (:status result))
                           (:descriptor-set result)))
-              spans (install :spans) records (install :logs)]
+              spans (install :spans (approved :spans))
+              records (install :logs (approved :logs))
+              gauges (install :metric-gauge (gauge-approved))
+              sums (install :metric-sum (sum-approved))]
           (check! :schema-checkpoint :committed (:status (durable/checkpoint! connection)))
           (let [primary (atom nil)
                 writer (exporter/exporter {:connection connection :durable? true :create-schema? false
-                                          :signals #{:spans :logs} :typed-span-descriptors spans
-                                          :typed-log-descriptors records})]
+                                          :signals #{:spans :logs :metrics}
+                                          :typed-span-descriptors spans
+                                          :typed-log-descriptors records
+                                          :typed-gauge-descriptors gauges
+                                          :typed-sum-descriptors sums})]
             (try
               (check! :spans-accepted true (export/export-spans! writer (mapv span-record (range 4))))
               (check! :logs-accepted true (logs/export-logs! writer (mapv log-record (range 4))))
-              (check! :writer-counts [4 4] (counts connection))
+              (check! :metrics-accepted true
+                      (export/export-metrics! writer
+                                              {:attributes {"resource.ready" false
+                                                            "resource.generic" "kept-generic"}}
+                                              (metric-batch)))
+              (check! :writer-counts [4 4 1 1 0] (counts connection))
               (let [head (:head (snapshot))]
                 (check! :base-present true (some? (get-in head ["manifest" "base"])))
                 (check! :wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
@@ -151,22 +234,30 @@
               (finally
                 ;; Independent shutdown attempts; an exception cannot skip the other facade.
                 (let [a (try (export/shutdown-exporter! writer) (catch Throwable _ false))
-                      b (try (logs/shutdown-log-exporter! writer) (catch Throwable _ false))]
+                      b (try (logs/shutdown-log-exporter! writer) (catch Throwable _ false))
+                      c (try (export/shutdown-metric-exporter! writer) (catch Throwable _ false))]
                   (if @primary
-                    (println :secondary-cleanup-confirmed (= [true true] [a b]))
-                    (check! :signal-shutdowns [true true] [a b]))))))))
+                    (println :secondary-cleanup-confirmed (= [true true true] [a b c]))
+                    (check! :signal-shutdowns [true true true] [a b c]))))))))
       "reader"
       (do
        (with-open [connection (jdbc/connection (durable/snapshot-dbspec options))]
         (let [head (:head (snapshot))]
           (check! :reader-base-present true (some? (get-in head ["manifest" "base"])))
           (check! :reader-wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
-        (check! :reader-counts [4 4] (counts connection))
+        (check! :reader-counts [4 4 1 1 0] (counts connection))
         (doseq [signal [:spans :logs]]
           (let [result (installer/acquire-active! catalog (selector signal)
                          {:target connection :observe-columns #(observe connection signal)})]
             (check! :reacquisition-active :active (:status result))
             (verify! connection (:descriptor-set result) signal)))
+        (let [gauges (installer/acquire-active! catalog (selector :metric-gauge)
+                                                {:target connection :observe-columns #(observe connection :metric-gauge)})
+              sums (installer/acquire-active! catalog (selector :metric-sum)
+                                              {:target connection :observe-columns #(observe connection :metric-sum)})]
+          (check! :metric-reacquisition-active [:active :active]
+                  [(:status gauges) (:status sums)])
+          (verify-metrics! connection (:descriptor-set gauges) (:descriptor-set sums)))
         (check! :event-nanoseconds ["0" "1" "1700000000123456789"]
                 (:ticks (jdbc/fetch-one connection "SELECT arrayMap(x -> toString(toUnixTimestamp64Nano(x)), `Events.Timestamp`) AS ticks FROM otel_traces WHERE notEmpty(`Events.Timestamp`)"))))
         ;; Acknowledge only after the reader connection has retired.

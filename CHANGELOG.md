@@ -7,8 +7,9 @@
   unchanged; sum resource/scope and every histogram target still reject before
   DDL or export. Direct native DDL/readback covers the owned columns,
   idempotence, and a real table-qualified wrong-type failure. A real OTLP JSON
-  loopback compares direct and receiver rows for both enabled metric tables;
-  Durable fresh-reader qualification remains separate (#8).
+  loopback compares direct and receiver rows for both enabled metric tables.
+  The existing fresh-reader WAL lane now also reads back those values, statuses,
+  and generic maps while the Durable writer remains alive (#8).
 
 - Make the opt-in Durable `reviewed-source` driver preflight use the same
   NUL-delimited, ignored-aware cleanliness receipt as resolved providers. A

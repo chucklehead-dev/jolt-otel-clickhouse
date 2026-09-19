@@ -214,8 +214,8 @@ jobs:
           [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
           test -d "$root" && test ! -L "$root"
           test "$(realpath "$root")" = "$root"
-          test "$(grep -Fxc ':observed-checks 20' "$root/writer.log")" = 1
-          test "$(grep -Fxc ':observed-checks 21' "$root/reader.log")" = 1
+          test "$(grep -Fxc ':observed-checks 23' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
       - name: Retain only synthetic native fixture logs and status
         if: always()
         shell: bash
