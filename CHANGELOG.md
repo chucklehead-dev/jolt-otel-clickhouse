@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Correct the clean dependency-receipt expectation for the published OTel
+  revision selected by the root dependency graph. The test continues to reject
+  a different repository or full revision; exporter behavior is unchanged.
+
 - Select the merged ordinary-row chDB driver and the published OTel numeric
   compatibility checkpoint for root-dependency qualification (Refs #27).
   The SDK checkpoint is a review-branch candidate, not merged SDK main;
