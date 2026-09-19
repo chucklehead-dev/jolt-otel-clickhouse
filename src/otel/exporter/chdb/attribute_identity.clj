@@ -49,6 +49,16 @@
               :signal :logs
               :table "otel_logs"))
 
+(def gauge-attribute-target
+  "The one metric target physically supported by the initial metric slice.
+
+  Metric resource/scope locations and the sum/histogram tables deliberately
+  remain outside `physically-supported-targets`: their distinct projection and
+  query contracts have not yet been qualified."
+  (sorted-map :location :metric-attributes
+              :signal :metrics
+              :table "otel_metrics_gauge"))
+
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
   [signal table location]
@@ -71,7 +81,7 @@
 
 (def physically-supported-targets
   "Target tuples with complete installer and exporter support today."
-  (conj trace-attribute-targets log-attribute-target))
+  (conj trace-attribute-targets log-attribute-target gauge-attribute-target))
 
 (defn trace-attribute-target? [value]
   (contains? trace-attribute-targets (target-of value)))
