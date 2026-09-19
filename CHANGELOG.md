@@ -5,9 +5,9 @@
 - Extend installer-capability-bound metric promotion to gauge resource and
   scope attributes and sum point attributes. The generic ClickStack maps stay
   unchanged; sum resource/scope and every histogram target still reject before
-  DDL or export. This core-only slice has pure projection/status evidence;
-  native DDL, OTLP loopback, and Durable fresh-reader qualification remain
-  separate (#8).
+  DDL or export. Direct native DDL/readback covers the owned columns,
+  idempotence, and a real table-qualified wrong-type failure; OTLP loopback
+  and Durable fresh-reader qualification remain separate (#8).
 
 - Make the opt-in Durable `reviewed-source` driver preflight use the same
   NUL-delimited, ignored-aware cleanliness receipt as resolved providers. A
