@@ -116,8 +116,8 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
-            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 52 @n)) (println \"PASS ordinary native 52\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
-          test "$(grep -Fxc 'PASS ordinary native 52' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+            "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 55 @n)) (println \"PASS ordinary native 55\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
+          test "$(grep -Fxc 'PASS ordinary native 55' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
       - name: Official host rejects unsupported Durable before effects
         timeout-minutes: 2
         shell: bash
@@ -146,38 +146,32 @@ jobs:
             | tee "$RUNNER_TEMP/exporter-official-capability-negative.log"
           test "$(grep -Fxc 'PASS official unsupported capability boundary 4' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
 
-      - name: Authenticate the shared capability runtime for positive Durable
-        timeout-minutes: 3
+      # The root chDB pin deliberately rejects the released runtime here: its
+      # Durable writer needs the fixed strict decoder and ranged writer append.
+      # Keep the ordinary lane on released Jolt; bind this one to the exact
+      # compiler revision qualified by that same immutable root dependency.
+      - name: Install the root-qualified Durable Jolt compiler
+        id: durable_jolt
+        uses: chucklehead-dev/jolt-chdb/.github/actions/install-jolt-aspects@19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774
+      - name: Bind the selected compiler executable to the Durable fixture
         shell: bash
         env:
-          GH_TOKEN: ${{ github.token }}
-          # Successful reviewed producer; consumer qualification remains a CI gate.
-          # Rotate explicitly before expiry; no branch/latest fallback.
-          QUALIFIED_RUNTIME_PROFILE: bf8
-          QUALIFIED_RUNTIME_RUN_ID: '35405706668'
-          QUALIFIED_RUNTIME_RUN_ATTEMPT: '1'
-          QUALIFIED_RUNTIME_ARTIFACT_ID: '10574710514'
-          QUALIFIED_RUNTIME_WORKFLOW_SHA: '9ad6782eb0d7bf3b73a9fd6005e17cf606075c58'
-          QUALIFIED_RUNTIME_ARTIFACT_SHA256: '2a8f547a83ef88b5afb653eedd28f25d8d1953e66e827b8361a96328cdae9961'
-          QUALIFIED_RUNTIME_BINARY_SHA256: 'f54b2f14ba06abbd4666a617762221b7c8da3e7b01e6578bdc39541cc729f102'
+          DURABLE_JOLT_SOURCE_SHA: ${{ steps.durable_jolt.outputs.source-sha }}
+          DURABLE_JOLT_VERSION: ${{ steps.durable_jolt.outputs.version }}
         run: |
           set -euo pipefail
-          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 120s \
-            bash scripts/fetch-qualified-durable-runtime.sh \
-            | tee "$RUNNER_TEMP/exporter-qualified-runtime.log"
-          test "$(grep -c '^QUALIFIED_RUNTIME_BIN=' "$RUNNER_TEMP/exporter-qualified-runtime.log")" = 1
-          binary=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/exporter-qualified-runtime.log")
-          [[ "$binary" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
-          test -f "$binary" && test ! -L "$binary"
-          test "$(realpath "$binary")" = "$binary"
-          test "$(sha256sum "$binary" | cut -d ' ' -f1)" = "$QUALIFIED_RUNTIME_BINARY_SHA256"
-          # The official aggregate/native50 already ran. Select this artifact
-          # only for the existing positive writer/fresh-reader fixture below.
-          {
-            printf 'JOLT_BIN=%s\n' "$binary"
-            printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$QUALIFIED_RUNTIME_BINARY_SHA256"
-            printf 'JOLT_CACHE_DIR=%s/.jolt-cache-durable-bf8a5dde\n' "$GITHUB_WORKSPACE"
-          } >> "$GITHUB_ENV"
+          test "$DURABLE_JOLT_SOURCE_SHA" = "120643d6bc322800a700e870de5c8087ad6085fa"
+          test "$DURABLE_JOLT_VERSION" = "jolt v0.8.6-97-g120643d6"
+          binary=$(realpath "$(command -v jolt)")
+          test "$("$binary" --version)" = "$DURABLE_JOLT_VERSION"
+          printf 'JOLT_BIN=%s\n' "$binary" >> "$GITHUB_ENV"
+          # This records the executable selected above and the qualification
+          # script rechecks it before launch, preventing a later path swap. It
+          # is deliberately not presented as a published-binary provenance
+          # digest: this workflow has no immutable release artifact for this
+          # untagged compiler revision.
+          printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
+          printf 'JOLT_DURABLE_COMPILER_SOURCE_SHA=%s\n' "$DURABLE_JOLT_SOURCE_SHA" >> "$GITHUB_ENV"
 
       - name: Qualify typed Durable WAL with a fresh reader
         id: durable_native
@@ -202,14 +196,15 @@ jobs:
           ORDINARY_OUTCOME: ${{ steps.ordinary_native.outcome }}
           DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
           DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+          DURABLE_COMPILER_REVISION: ${{ steps.durable_jolt.outputs.source-sha }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/exporter-native-evidence"
           mkdir -p "$evidence"
-          printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\n' \
-            "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" > "$evidence/status.txt"
+          printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
+            "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
           # Only public authentication diagnostics/boundary fixture output.
-          for kind in official-capability-negative qualified-runtime; do
+          for kind in official-capability-negative; do
             log="$RUNNER_TEMP/exporter-$kind.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
@@ -252,4 +247,3 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
             ${{ runner.temp }}/exporter-native-evidence/official-capability-negative.log
-            ${{ runner.temp }}/exporter-native-evidence/qualified-runtime.log

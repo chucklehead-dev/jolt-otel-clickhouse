@@ -1,20 +1,78 @@
 #!/usr/bin/env bash
 set -euo pipefail
-clean_provider() {
-  local status line
-  status=$(git -C "$1" status --porcelain=v1 --untracked-files=all) || return 1
-  while IFS= read -r line; do
-    # The pinned Jolt resolver creates this exact untracked cache marker.
-    # Tracked changes and every other untracked file remain disallowed.
-    [[ -z "$line" || "$line" == '?? .jolt-git-ok' ]] || return 1
-  done <<< "$status"
+
+# The resolver may leave one cache marker at a fetched dependency root.  Do not
+# treat a generally clean-looking checkout as enough: an ignored source file
+# can still shadow a loaded namespace.  Read porcelain records as NUL-delimited
+# data so unusual filenames cannot make a second status entry look permitted.
+dependency_source_clean() {
+  local source_root=$1 receipt_file= record accepted=0
+  receipt_file=$(mktemp "${TMPDIR:-/tmp}/exporter-dependency-status.XXXXXX") || return 1
+  if ! git -C "$source_root" -c core.quotepath=true status --porcelain=v1 -z \
+      --untracked-files=all --ignored=matching >"$receipt_file"; then
+    rm -f "$receipt_file"
+    return 1
+  fi
+  while IFS= read -r -d '' record; do
+    if (( accepted == 0 )) && [[ "$record" == '?? .jolt-git-ok' ]]; then
+      accepted=1
+    else
+      rm -f "$receipt_file"
+      return 1
+    fi
+  done <"$receipt_file"
+  rm -f "$receipt_file"
+  return 0
 }
-# Narrow shell-only control seam: no provenance/native/writer startup.
+
+run_cleanliness_controls() {
+  local fixture=
+  fixture=$(mktemp -d "${TMPDIR:-/tmp}/exporter-dependency-cleanliness.XXXXXX") || return 1
+  trap 'rm -rf "$fixture"' RETURN
+  git init -q "$fixture"
+  git -C "$fixture" config user.name qualification
+  git -C "$fixture" config user.email qualification@example.invalid
+  printf '%s\n' 'tracked fixture' >"$fixture/tracked.clj"
+  printf '%s\n' '*.clj' >"$fixture/.gitignore"
+  git -C "$fixture" add -f tracked.clj .gitignore
+  git -C "$fixture" commit -qm fixture
+
+  dependency_source_clean "$fixture" || { echo cleanliness-control-clean-failed; return 1; }
+  : >"$fixture/.jolt-git-ok"
+  dependency_source_clean "$fixture" || { echo cleanliness-control-sentinel-failed; return 1; }
+  : >"$fixture/untracked.txt"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-untracked-accepted
+    return 1
+  fi
+  rm -f "$fixture/untracked.txt"
+  : >"$fixture/injected.clj"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-ignored-source-accepted
+    return 1
+  fi
+  rm -f "$fixture/injected.clj"
+  printf '%s\n' 'modified fixture' >"$fixture/tracked.clj"
+  if dependency_source_clean "$fixture"; then
+    echo cleanliness-control-tracked-change-accepted
+    return 1
+  fi
+  printf '%s\n' 'cleanliness-controls-qualified'
+}
+
+if [[ "${1:-}" == --self-test-cleanliness ]]; then
+  run_cleanliness_controls
+  exit $?
+fi
+
+# Keep the existing narrow shell control entrypoint, but run the stricter
+# NUL-delimited receipt implementation that also rejects ignored source.
 if [[ "${1:-}" == --check-provider-cleanliness ]]; then
   [[ "$#" == 2 ]] || exit 1
-  clean_provider "$2"
+  dependency_source_clean "$2"
   exit
 fi
+
 # Linux-only bounded acceptance lane. Run under an outer 210s timeout.
 [[ "$(uname -s)" == Linux ]] || { echo unsupported-process-ownership-host; exit 1; }
 worktree=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -26,12 +84,12 @@ header=$(realpath "${JOLT_CHDB_HEADER:?set the matching chDB header}")
 [[ "$(dirname "$lib")" == "$(dirname "$header")" ]] || { echo mismatched-native-pair-directory; exit 1; }
 driver_mode=${JOLT_DURABLE_DRIVER_MODE:-root-pin}
 case "$driver_mode" in root-pin|reviewed-source) ;; *) echo invalid-driver-mode; exit 1 ;; esac
-binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set qualified binary SHA256}
+binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set selected-binary SHA256}
 wrapper_sha=${JOLT_EXPECTED_WRAPPER_SHA256:?set qualified wrapper SHA256}
 library_sha=${JOLT_CHDB_EXPECTED_LIBRARY_SHA256:?set qualified library SHA256}
 header_sha=${JOLT_CHDB_EXPECTED_HEADER_SHA256:?set matching header SHA256}
 for checksum in "$binary_sha" "$wrapper_sha" "$library_sha" "$header_sha"; do
-  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || { echo invalid-provenance-checksum; exit 1; }
+  [[ "$checksum" =~ ^[a-f0-9]{64}$ ]] || { echo invalid-integrity-checksum; exit 1; }
 done
 jolt=$(realpath "$jolt")
 wrapper=$(realpath "$wrapper")
@@ -90,7 +148,7 @@ if [[ "$driver_mode" == reviewed-source ]]; then
   reviewed_revision=${JOLT_EXPECTED_DRIVER_REV:?set the exact reviewed driver revision}
   [[ "$reviewed_revision" =~ ^[a-f0-9]{40}$ ]]
   [[ "$driver" != *'"'* && "$driver" != *'\'* && "$driver" != *$'\n'* ]]
-  clean_provider "$driver"
+  [[ -z "$(git -C "$driver" status --porcelain=v1)" ]]
   [[ "$(git -C "$driver" rev-parse HEAD)" == "$reviewed_revision" ]]
   driver_options=(-Sdeps "{:deps {io.github.chucklehead-dev/jolt-chdb {:local/root \"$driver\"}}}")
 fi
@@ -124,8 +182,10 @@ done
 [[ "${#driver_roots[@]}" == 1 && "${#sdk_roots[@]}" == 1 ]] || { echo ambiguous-source-provider; exit 1; }
 driver_revision=$(git -C "${driver_roots[0]}" rev-parse HEAD)
 sdk_revision=$(git -C "${sdk_roots[0]}" rev-parse HEAD)
-clean_provider "${driver_roots[0]}"
-clean_provider "${sdk_roots[0]}"
+# Only Jolt's one exact untracked cache sentinel may appear.  This includes
+# ignored paths in the receipt: otherwise an ignored .clj file could shadow
+# the resolved provider while the revision proof still appeared clean.
+dependency_source_clean "${driver_roots[0]}" && dependency_source_clean "${sdk_roots[0]}"
 if [[ "$driver_mode" == root-pin ]]; then expected_driver=${declared[0]}; else expected_driver=$reviewed_revision; fi
 [[ "$driver_revision" == "$expected_driver" && "$sdk_revision" == "${declared[1]}" ]] || { echo source-pin-mismatch; exit 1; }
 printf '%s\n' "$driver_revision" >"$root/driver-source.txt"

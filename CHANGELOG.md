@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Permit only Jolt's exact resolver cache sentinel while checking the resolved
+  chDB and OTel source receipts for the typed Durable native qualifier. Tracked
+  changes and every other untracked path still fail closed; the loaded source
+  revisions and native qualification behavior are unchanged.
+
+- Harden the typed Durable native dependency receipt to reject ignored paths,
+  including ignored source that could shadow a resolved namespace. Focused
+  controls cover clean, exact-sentinel, untracked, ignored-source, and tracked
+  cases; loaded source revisions and native qualification behavior are unchanged.
+
+- Correct the clean dependency-receipt expectation for the published OTel
+  revision selected by the root dependency graph. The test continues to reject
+  a different repository or full revision; exporter behavior is unchanged.
+
 - Add installer-capability-bound typed value/status promotion for gauge point
   attributes on `otel_metrics_gauge` only. The exporter retains generic
   `Attributes` and rejects metric resource/scope locations plus sum and

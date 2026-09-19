@@ -6,10 +6,10 @@ This repository is intended for
 The first publication pins only remotely reachable immutable dependencies:
 
 - `io.github.chucklehead-dev/jolt-chdb` is pinned to
-  `58f090caa31445bcf9403a15bdd01b1901a4e860` at
+  `19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774` at
   `https://github.com/chucklehead-dev/jolt-chdb.git`.
 - `io.github.casselc/otel` is pinned to the remotely reachable commit
-  `87d3ac1a9b26ec6c0bf0c44d3b5aff4c66ccb5a0` at
+  `0e701ceff526d159884fadae98dcca61272ef6e0` at
   `https://github.com/casselc/otel.git`. Its older compatibility-fork crypto
   declaration is excluded.
 - `jolt-lang/jolt-crypto` is selected directly from canonical upstream commit
@@ -28,6 +28,6 @@ The release gate is:
 
 1. verify that `deps.edn` contains no `:local/root` entries;
 2. install the chDB and Hegel native libraries using the commands in CI;
-3. run `jolt -Srepro -M:test` on Jolt v0.8.3;
+3. run `jolt -Srepro -M:test` on Jolt v0.8.6;
 4. verify the same workflow from a clean clone; and
 5. tag only the exact green commit and publish its full SHA for consumers.
