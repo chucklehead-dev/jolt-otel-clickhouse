@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Permit only Jolt's exact resolver cache sentinel while checking the resolved
+  chDB and OTel source receipts for the typed Durable native qualifier. Tracked
+  changes and every other untracked path still fail closed; the loaded source
+  revisions and native qualification behavior are unchanged.
+
 - Correct the clean dependency-receipt expectation for the published OTel
   revision selected by the root dependency graph. The test continues to reject
   a different repository or full revision; exporter behavior is unchanged.

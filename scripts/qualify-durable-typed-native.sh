@@ -109,7 +109,17 @@ done
 [[ "${#driver_roots[@]}" == 1 && "${#sdk_roots[@]}" == 1 ]] || { echo ambiguous-source-provider; exit 1; }
 driver_revision=$(git -C "${driver_roots[0]}" rev-parse HEAD)
 sdk_revision=$(git -C "${sdk_roots[0]}" rev-parse HEAD)
-[[ -z "$(git -C "${driver_roots[0]}" status --porcelain=v1)" && -z "$(git -C "${sdk_roots[0]}" status --porcelain=v1)" ]]
+# The Jolt resolver writes this exact cache sentinel at a fetched dependency
+# root.  It is not source, cannot shadow a namespace below src/resources, and
+# is expected before this proof resolves the provider.  Keep rejecting every
+# tracked change and every other untracked path: accepting a generally dirty
+# dependency would make the revision receipt vacuous.
+dependency_source_clean() {
+  local root=$1 status
+  status=$(git -C "$root" status --porcelain=v1 --untracked-files=all)
+  [[ -z "$status" || "$status" == '?? .jolt-git-ok' ]]
+}
+dependency_source_clean "${driver_roots[0]}" && dependency_source_clean "${sdk_roots[0]}"
 if [[ "$driver_mode" == root-pin ]]; then expected_driver=${declared[0]}; else expected_driver=$reviewed_revision; fi
 [[ "$driver_revision" == "$expected_driver" && "$sdk_revision" == "${declared[1]}" ]] || { echo source-pin-mismatch; exit 1; }
 printf '%s\n' "$driver_revision" >"$root/driver-source.txt"
