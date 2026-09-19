@@ -6,7 +6,7 @@ This repository is intended for
 The first publication pins only remotely reachable immutable dependencies:
 
 - `io.github.chucklehead-dev/jolt-chdb` is pinned to
-  `58f090caa31445bcf9403a15bdd01b1901a4e860` at
+  `19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774` at
   `https://github.com/chucklehead-dev/jolt-chdb.git`.
 - `io.github.casselc/otel` is pinned to the remotely reachable commit
   `0e701ceff526d159884fadae98dcca61272ef6e0` at
