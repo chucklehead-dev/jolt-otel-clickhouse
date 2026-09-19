@@ -91,8 +91,8 @@
         valid (projector (log-record {"job.name" "archive"
                                       :job.complete false
                                       "job.attempt" 9007199254740993}))]
-    (check "only the exact log-record target joins physical support"
-           [true false false false]
+    (check "log attributes and separately qualified gauge attributes support only their exact targets"
+           [true false false true false false]
            [(identity/physically-supported? identity/log-attribute-target)
             (identity/physically-supported?
              (identity/target :logs "otel_logs" :resource-attributes))
@@ -100,7 +100,11 @@
              (identity/target :logs "otel_logs" :scope-attributes))
             (identity/physically-supported?
              (identity/target :metrics "otel_metrics_gauge"
-                              :metric-attributes))])
+                              :metric-attributes))
+            (identity/physically-supported?
+             (identity/target :metrics "otel_metrics_sum" :metric-attributes))
+            (identity/physically-supported?
+             (identity/target :metrics "otel_metrics_histogram" :metric-attributes))])
     (check "log values retain scalar types and valid status"
            [["archive" 3] [false 3] [9007199254740993 3]]
            [(projected-pair valid installation "job.name")

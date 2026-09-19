@@ -22,7 +22,7 @@ The first publication pins only remotely reachable immutable dependencies:
 
 `org.clojure/data.json` is already pinned to the remotely reachable
 `casselc/data.json` commit
-`932444043c0c06f9e295ba4963419b2481e9dd07`.
+`e7f97a9b5ecf7fa00787375fff4176a082fe9b98`.
 
 The release gate is:
 

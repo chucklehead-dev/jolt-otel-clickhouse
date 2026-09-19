@@ -144,13 +144,42 @@ For explicit source-only review evidence, add
 `JOLT_CHDB_SOURCE_ROOT=/path/to/clean/reviewed/jolt-chdb` and
 `JOLT_EXPECTED_DRIVER_REV='<full-reviewed-driver-sha>'` to the same invocation.
 That opt-in mode overrides only the driver and does not qualify root resolution.
-The selected SDK review-branch checkpoint still requires final review; pinning
-a published commit does not establish merged SDK-main or hosted-CI qualification.
+The selected SDK checkpoint is merged SDK main. Published pins alone still do
+not establish a particular application's runtime/native or hosted-CI qualification.
 The gate verifies typed spans/logs and timestamps through fresh-reader WAL
 replay while the writer remains alive, rather than a shutdown checkpoint.
 Child environments strip credentials; evidence is retained without retries.
 An unconfirmed surviving process reports incomplete cleanup without signaling
 an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.
+
+Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
+do not provide that capability; the driver rejects them before storage effects.
+The ordinary exporter remains qualified separately on official 0.8.6. For
+Durable, select a reviewed compiler artifact containing casselc/jolt#73, not
+just a newer version string or a moving branch.
+
+The initial shared artifact supports Linux X64, not every platform supported
+by the ordinary exporter. `scripts/fetch-qualified-durable-runtime.sh` accepts
+only explicit producer run, attempt, workflow commit, artifact ID, archive and binary checksum
+pins. It checks the successful producer run and exact artifact, validates the
+archive/manifest/binary, restores executable mode only after verification, and
+checks ranged append before returning its binary path. CI keeps the official
+unsupported-host no-effect test separate from positive writer/fresh-reader
+replay on that supported artifact. Cross-repository artifact access must work
+with the caller's authenticated read permissions; permission or expired-artifact
+failures never select an alternate compiler. Artifacts expire after 90 days and
+must be deliberately rotated to another reviewed and qualified run.
+
+The current shared artifact lane pins successful producer run `35405706668`,
+attempt `1`, at reviewed workflow commit `9ad6782eb0d7bf3b73a9fd6005e17cf606075c58`.
+Its accepted source/tree are respectively
+`bf8a5dde7bebb5658d218e9757ab1df0aa9c3b95` and
+`206fe5b4e539dc26ea5a8665aee3bb4ca7943834`. Consumer CI must still qualify
+cross-repository access and positive Durable replay on those exact bytes. This
+is a capability/provenance selection, not a throughput attribution or a claim
+about any unrecorded compiler behavior.
+Offline artifact controls exercise only public mock data, not real hosting or
+compiler capability; run them with `python3 scripts/test-qualified-durable-runtime.py`.
 
 This is an at-least-once boundary: a failed or ambiguous attempt can have made
 local progress, so an SDK retry may produce duplicates. Durable's flush only
@@ -492,12 +521,31 @@ timestamps and promoted Boolean/Int64 values and statuses; payload digests and
 ordered columns must agree across arms.
 
 Set the same explicit Jolt/mandatory Chez wrapper, native library/header and
-four checksum variables shown for the Durable developer gate above, plus a
-clean `JOLT_CHDB_SOURCE_ROOT` and its full `JOLT_EXPECTED_DRIVER_REV`. The
-local override is required until the merged row API is pinned; it does not
-make an unmerged dependency publishable. The launcher enforces a 360-second
+four checksum variables shown for the Durable developer gate above, with
+no driver override. The default `JOLT_ORDINARY_DRIVER_MODE=root-pin` selects
+the declared released graph. Every writer and reader records its actual
+driver, SDK, JSON, crypto and canonical DB checkouts and revisions, rejects
+ambiguous/dirty or mismatched providers before native work, and compares those
+receipts across arms. This is a check of those providers, not every namespace
+in the graph (the separately known time-coordinate overlap is not qualified).
+For an explicitly exploratory driver checkout, set
+`JOLT_ORDINARY_DRIVER_MODE=reviewed-source`, a clean `JOLT_CHDB_SOURCE_ROOT`
+and its full `JOLT_EXPECTED_DRIVER_REV`; its receipt is labeled and does not
+qualify the ordinary root driver. Unknown command-line arguments are rejected
+before provider inspection or child startup. Metadata-only mode is an environment
+setting, not a `--provenance-only` flag. `JOLT_ORDINARY_PROVENANCE_ONLY=1` checks the
+selected child graph without loading the benchmark or making native writes.
+The launcher enforces a 360-second
 outer deadline and 60 seconds per child, strips child credentials and retains
-task-owned stores and aggregate evidence without retries. Both routes use the
+task-owned stores and aggregate evidence without retries. Each child has an
+explicit exit receipt; failure retains source-after checks and hashes of
+available public artifacts, with unfinished comparisons marked unqualified.
+Individual sample observations are flushed after each timed insert, so partial
+results survive a later failure. Logging is outside the latency interval but
+perturbs interbatch scheduling and GC; use the same observer in every arm and
+do not compare these numbers directly with an unobserved older run. Region
+CPU/GC/heap snapshots also include printing and flushing, not isolated insertion
+allocation or GC. Both routes use the
 current encoder/projector: this is a transport comparison, not a historical
 before/after baseline, p99/allocation qualification, or a Durable/S3 target claim.
 

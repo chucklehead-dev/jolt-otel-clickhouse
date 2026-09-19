@@ -65,6 +65,14 @@ if [[ "${1:-}" == --self-test-cleanliness ]]; then
   exit $?
 fi
 
+# Keep the existing narrow shell control entrypoint, but run the stricter
+# NUL-delimited receipt implementation that also rejects ignored source.
+if [[ "${1:-}" == --check-provider-cleanliness ]]; then
+  [[ "$#" == 2 ]] || exit 1
+  dependency_source_clean "$2"
+  exit
+fi
+
 # Linux-only bounded acceptance lane. Run under an outer 210s timeout.
 [[ "$(uname -s)" == Linux ]] || { echo unsupported-process-ownership-host; exit 1; }
 worktree=$(cd "$(dirname "$0")/.." && pwd -P)

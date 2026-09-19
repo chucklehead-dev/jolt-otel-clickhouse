@@ -16,6 +16,95 @@
   revision selected by the root dependency graph. The test continues to reject
   a different repository or full revision; exporter behavior is unchanged.
 
+- Add installer-capability-bound typed value/status promotion for gauge point
+  attributes on `otel_metrics_gauge` only. The exporter retains generic
+  `Attributes` and rejects metric resource/scope locations plus sum and
+  histogram capabilities; native in-memory chDB evidence proves exact Int64
+  and Boolean `false` readback (#8).
+
+- Repin the reviewed Durable capability consumer to immutable casselc/jolt
+  artifact `durable-runtime-bf8a5dde-linux-x64` from successful run
+  `35405706668`, retaining exact source/tree, archive, binary, and cache
+  identity checks. This selects a proven ranged-append capability only; it
+  makes no throughput, tail-latency, or compiler-change attribution.
+
+- Repin `casselc/data.json` to `e7f97a9b5ecf7fa00787375fff4176a082fe9b98`
+  and update the resolved-provider receipt. This is a separate dependency
+  change: measurements must retain the existing A-prime/B-prime/A/B/B/A
+  causal split rather than attribute integrated results to either JSON change.
+
+- Require a terminal `:main` stage marker as well as the exact closed v1
+  migration-record diagnostic before the ordinary benchmark launcher starts
+  its read-only registry observer. Synthetic controls cover nonzero require,
+  fixture, and non-record main failures; they stop A/B/B/A and preserve the
+  writer's primary exit without an observer, retry, or migration claim (#55).
+
+- Require the complete ordered cold-launch receipt, including `:require :enter`,
+  before the ordinary benchmark can classify a terminal v1 migration-record
+  failure and start its read-only observer. A synthetic forged-return control
+  proves a partial receipt cannot authorize observation (#55).
+
+- On an ordinary benchmark writer's terminal v1 registry record-phase failure,
+  launch one fresh read-only child which reports only the closed registry
+  cardinality observation. Preserve the original writer failure if that
+  observation or its receipt fails, and stop the A/B/B/A sequence without an
+  in-process retry or migration claim (#55).
+
+- Distinguish statement-phase migration failures from ambiguous registry-record
+  result-consumption failures. Add a two-process native witness that injects
+  after the v99 registry INSERT and independently reads the exact record; keep
+  record failure non-retriable in process and make no unrecorded-result claim
+  (#55).
+
+- Run the qualified artifact's unchanged ranged-append capability check from
+  its private artifact directory, independent of unrelated caller dependencies.
+  Retain the 30-second deadline and all provenance checks; application/native
+  integration remains a separate qualification gate.
+
+- Add closed, payload-free setup/migration diagnostics to the ordinary transport
+  benchmark, preserving its assertions and failure exits; setup intermittency
+  remains unresolved and this does not claim an encoder or compiler fix.
+
+- Add closed baseline/StringWriter profiles for one authenticated Durable
+  runtime artifact pair, preserving the existing AEA default. Reject mismatched
+  independent pins before provider access; keep archive, manifest and ranged
+  append guards unchanged. Offline selection controls do not qualify actual
+  runtime performance or repin any consumer.
+
+- Require explicit witnesses that each migration fault injection ran. Add
+  shell-only fake child controls for absolute executable selection under PATH
+  shadowing and unchanged parent failure accounting. These are test-boundary
+  checks, not native lifetime or performance qualification (#43).
+
+- Reject unknown benchmark launcher arguments before provider inspection or
+  child startup. Keep metadata-only mode explicitly environment-configured;
+  add a fake-compiler control proving a mistaken CLI flag cannot start work.
+
+- Default the opt-in ordinary transport benchmark to the declared root graph;
+  keep local driver overlays explicitly exploratory. Record and check each
+  writer/reader's selected providers before native work and compare graph
+  receipts across A/B/B/A arms. Add a provenance-only probe without native
+  writes. Retain individual sample observations and explicit child exits plus
+  available-artifact/source receipts on failure without qualifying unfinished
+  comparisons. Observation perturbs interbatch behavior even outside timing.
+  Refs #44. This does not qualify p99, allocation or Durable targets.
+
+- Separate official-runtime Durable rejection checks from positive replay on
+  an explicitly authenticated capability-runtime artifact. Validate producer,
+  archive and binary provenance before execution, and maintain offline controls
+  for malformed or stale artifact evidence. Shared-artifact qualification is
+  pending; an ordinary minimum compiler version is not a Durable capability
+  claim (#48).
+
+- Let the Durable native qualifier accept the pinned resolver's exact
+  untracked cache marker while still rejecting changed provider source or
+  other untracked files. Provider checks fail closed on Git errors.
+
+- Keep the SDK dependency test aligned with the reviewed merged SDK pin and
+  honor an explicitly selected absolute test executable. Treat SDK source and
+  resources as one canonical checkout, rejecting duplicate or distinct
+  providers without claiming whole-graph uniqueness (#45).
+
 - Select the merged ordinary-row chDB driver and the published OTel numeric
   compatibility checkpoint for root-dependency qualification (Refs #27).
   The SDK checkpoint is a review-branch candidate, not merged SDK main;
@@ -26,20 +115,11 @@
   explicit source-evidence mode and exact clean revision.
 
 - Add explicit bounded CI lanes for ordinary native typed rows/metric admission
-  and typed Durable WAL readback through a fresh process (Refs #27). The
-  ordinary lane selects released Jolt 0.8.6; the Durable lane selects the exact
-  compiler revision required by the immutable root chDB pin and checks its
-  source-revision receipt and version banner before it starts. The per-run
-  executable digest binds the fixture launch to that selected file; it is not
-  a published-binary provenance digest. An API-missing pin fails qualification
-  rather than skipping or using an unmerged override. Retain only explicit
-  synthetic fixture logs and step status on failure; native stores, WAL,
-  databases and environment files are excluded.
-
-- Harden ordinary-native fixture diagnostics so unrecognized exception and
-  table-label values are shape-checked before closed-vocabulary lookup. This
-  prevents diagnostic-only handling from hashing or realizing arbitrary caller
-  collections; telemetry values and Durable WAL bytes are unchanged. Refs #27.
+  and typed Durable WAL readback through a fresh process (Refs #27). Hosted CI
+  selects released Jolt 0.8.6 and the exact root driver pin; an API-missing pin
+  fails qualification rather than skipping or using an unmerged override.
+  Retain only explicit synthetic fixture logs and step status on failure;
+  native stores, WAL, databases and environment files are excluded.
 
 - Add an opt-in ordinary transport ABBA benchmark with explicit provenance,
   bounded child processes and complete fresh-reader reconciliation. Refs #27.

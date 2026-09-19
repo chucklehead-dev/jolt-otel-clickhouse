@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   test:
@@ -20,6 +21,13 @@ jobs:
       JOLT_CHDB_CACHE_DIR: ${{ github.workspace }}/.chdb-native
     steps:
       - uses: actions/checkout@v4
+      - name: Offline runtime artifact trust controls
+        timeout-minutes: 2
+        run: timeout 30s python3 scripts/test-qualified-durable-runtime.py
+      - name: Synthetic benchmark failure receipt controls
+        timeout-minutes: 2
+        # Fake compiler only: no performance run, native storage or credentials.
+        run: timeout 60s python3 scripts/test-ordinary-transport-failure-receipts.py
       - name: Install Jolt v0.8.6
         shell: bash
         run: |
@@ -31,18 +39,19 @@ jobs:
       - name: Assert Jolt version
         shell: bash
         run: test "$(jolt --version)" = "jolt v0.8.6"
-      - name: Reject dirty and ignored dependency providers
-        shell: bash
-        run: |
-          set -euo pipefail
-          bash scripts/qualify-durable-typed-native.sh --self-test-cleanliness \
-            | tee "$RUNNER_TEMP/exporter-dependency-cleanliness.log"
-          test "$(grep -Fxc 'cleanliness-controls-qualified' "$RUNNER_TEMP/exporter-dependency-cleanliness.log")" = 1
       - name: Install native test dependencies
         run: |
           set -euo pipefail
           jolt -Srepro -m jdbc.chdb.install
           jolt -Srepro -A:test -m hegel.install
+      - name: Fake child executable provenance controls
+        timeout-minutes: 2
+        shell: bash
+        # Parent loads native-related namespaces; child stubs invoke no Jolt.
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 60s jolt -Srepro -A:test -e \
+            "(require 'otel.exporter.chdb-child-provenance-test 'clojure.test) (let [r (clojure.test/run-tests 'otel.exporter.chdb-child-provenance-test) ok (and (= 1 (:test r)) (= 10 (:pass r)) (zero? (:fail r)) (zero? (:error r)))] (println :fake-child-provenance-result :qualified ok) (System/exit (if ok 0 1)))"
       - name: Test
         run: jolt -Srepro -M:test
       - name: Read the exact root driver pin
@@ -109,6 +118,34 @@ jobs:
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test -e \
             "(require 'otel.exporter.chdb-ordinary-rows-native-test) (let [n (atom 0)] (otel.exporter.chdb-ordinary-rows-native-test/run-native! (fn [_ expected actual] (swap! n inc) (when-not (= expected actual) (throw (ex-info \"ordinary native check failed\" {}))))) (assert (= 53 @n)) (println \"PASS ordinary native 53\"))" | tee "$RUNNER_TEMP/exporter-ordinary-native.log"
           test "$(grep -Fxc 'PASS ordinary native 53' "$RUNNER_TEMP/exporter-ordinary-native.log")" = 1
+      - name: Official host rejects unsupported Durable before effects
+        timeout-minutes: 2
+        shell: bash
+        env:
+          EXPECTED_DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
+        run: |
+          set -euo pipefail
+          test "$(git -C .qualification-driver rev-parse HEAD)" = "$EXPECTED_DRIVER_REVISION"
+          # Add only exact checked-out test support, never override driver code.
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro \
+            -Sdeps '{:aliases {:capability-negative {:extra-paths [".qualification-driver/test"]}}}' \
+            -A:test:capability-negative -e '
+              (require (quote jdbc.chdb-durable-writer-test))
+              (let [gate (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote run-capability-checks!))
+                    check (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote check))
+                    n (atom 0)]
+                (assert (and gate check (fn? (deref gate)) (fn? (deref check))))
+                (let [supported? (with-redefs-fn
+                                   {check (fn [_ expected actual]
+                                            (swap! n inc)
+                                            (assert (= expected actual)))}
+                                   (fn [] ((deref gate))))]
+                  (assert (false? supported?))
+                  (assert (= 4 @n))
+                  (println "PASS official unsupported capability boundary 4")))' \
+            | tee "$RUNNER_TEMP/exporter-official-capability-negative.log"
+          test "$(grep -Fxc 'PASS official unsupported capability boundary 4' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
+
       # The root chDB pin deliberately rejects the released runtime here: its
       # Durable writer needs the fixed strict decoder and ranged writer append.
       # Keep the ordinary lane on released Jolt; bind this one to the exact
@@ -135,6 +172,7 @@ jobs:
           # untagged compiler revision.
           printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
           printf 'JOLT_DURABLE_COMPILER_SOURCE_SHA=%s\n' "$DURABLE_JOLT_SOURCE_SHA" >> "$GITHUB_ENV"
+
       - name: Qualify typed Durable WAL with a fresh reader
         id: durable_native
         timeout-minutes: 4
@@ -165,6 +203,14 @@ jobs:
           mkdir -p "$evidence"
           printf 'ordinary-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
             "$ORDINARY_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
+          # Only public authentication diagnostics/boundary fixture output.
+          for kind in official-capability-negative; do
+            log="$RUNNER_TEMP/exporter-$kind.log"
+            if [[ -f "$log" && ! -L "$log" ]]; then
+              cp "$log" "$evidence/$kind.log"
+              sha256sum "$evidence/$kind.log" >> "$evidence/status.txt"
+            fi
+          done
           # Never traverse or upload native stores, WAL, databases or env files.
           for kind in ordinary durable; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
@@ -200,3 +246,4 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/durable.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
+            ${{ runner.temp }}/exporter-native-evidence/official-capability-negative.log

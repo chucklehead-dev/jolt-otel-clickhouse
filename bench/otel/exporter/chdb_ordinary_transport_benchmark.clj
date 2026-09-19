@@ -19,6 +19,26 @@
 (def base-nanos 1700000000123456789)
 (def limit (* 8 1024 1024))
 (defn require! [ok] (when-not ok (throw (ex-info "Benchmark control failed" {}))))
+(defn schema-failure-diagnostic [data]
+  ;; Closed public labels only: never return arbitrary type/message/SQL/data.
+  (let [category (case (:type data)
+                   :otel.exporter.chdb.schema/invalid-plan :invalid-plan
+                   :otel.exporter.chdb.schema/duplicate-version :duplicate-version
+                   :otel.exporter.chdb.schema/unknown-version :unknown-version
+                   :otel.exporter.chdb.schema/migration-drift :migration-drift
+                   :otel.exporter.chdb.schema/nonconsecutive-history :nonconsecutive-history
+                   :otel.exporter.chdb.schema/migration-failed :migration-failed
+                   :unknown)
+        phase (case (:phase data) :statement :statement :record :record :unknown)
+        version (:version data) index (:statement-index data)]
+    {:category category :phase phase
+     :version (if (and (integer? version) (<= 1 version 4)) version :unknown)
+     :statement-index (if (and (= phase :statement) (integer? index) (<= 0 index 127))
+                        index :unknown)}))
+
+(defn- emit-diagnostic! [& public-fields]
+  ;; Evidence I/O failure must not replace setup's original result/Throwable.
+  (try (apply println public-fields) (flush) (catch Throwable _ nil)))
 (defn digest [text] (#'manifest/sha256 text))
 
 (defn approved []
@@ -61,8 +81,16 @@
 (defn sample [f]
   (let [measured (:measured *profile*)
         before (counters)
-        times (mapv (fn [_] (let [start (System/nanoTime)]
-                             (f) (- (System/nanoTime) start))) (range measured))
+        times (mapv (fn [index]
+                      (let [start (System/nanoTime)
+                            _ (f)
+                            elapsed (- (System/nanoTime) start)]
+                        ;; Outside the timed interval, but perturbs interbatch
+                        ;; scheduling/GC. Preserve partial observations on failure.
+                        (println :sample-observation :index index
+                                 :batch-rows batch-size :latency-nanos elapsed)
+                        (flush)
+                        elapsed)) (range measured))
         after (counters)
         ordered (vec (sort times))
         total (reduce + 0 times)]
@@ -74,7 +102,10 @@
      :allocation-qualified false :tail-target-qualified false}))
 
 (defn setup [connection]
+  (emit-diagnostic! :benchmark-setup :schema :enter)
   (schema/ensure-schema! connection)
+  (emit-diagnostic! :benchmark-setup :schema :return)
+  (emit-diagnostic! :benchmark-setup :installer :enter)
   (let [installation (installer/install-approved!
                       (backend/memory-backend) (approved)
                       {:target connection
@@ -83,6 +114,7 @@
                                                                  (jdbc/fetch connection "DESCRIBE TABLE otel_traces"))})
                        :execute-ddl! #(jdbc/execute! connection %)})
         capability (:descriptor-set installation)]
+    (emit-diagnostic! :benchmark-setup :installer :return)
     (require! (= :active (:status installation)))
     {:projector (projection/trace-projector capability connection)
      :fields (projection/confirmed-span-fields capability connection)
@@ -129,6 +161,8 @@
                      :bytes (:bytes control) :sha256 (:digest control)
                      :columns-sha256 (digest (pr-str cols)))
             (dotimes [_ (:warmups *profile*)] (insert))
+            (println :region-start :route route :region (keyword region))
+            (flush)
             (println :region-result :route route :region (keyword region) :result (sample insert))))
         (require! (= (total-rows) (:n (jdbc/fetch-one connection "SELECT count() AS n FROM otel_traces"))))
         (println :writer-green :route route :rows (total-rows))
@@ -172,6 +206,31 @@
       (println :fresh-reader-green :groups 1024 :rows (total-rows)
                :full-rows-equal true :exact-nanos true :typed-values-status true))))
 
+(defn registry-readback-status [rows]
+  (case (count rows)
+    0 :absent
+    1 :exact-one
+    :duplicate))
+
+(defn registry-readback! [path]
+  "Test-only recovery observation for a terminal v1 registry-record failure.
+
+  This is deliberately not a recovery operation: it opens a fresh connection
+  and performs one bounded SELECT.  In particular it must not call schema
+  migration, setup, DDL, the attribute installer, an exporter, or retry the
+  failed writer.  The closed result is evidence only; it does not decide that
+  an ambiguous native result was acknowledged."
+  (let [status
+        (try
+          (with-open [connection (jdbc/connection (str "chdb:" path))]
+            (registry-readback-status
+             (jdbc/fetch connection
+                         "SELECT Version FROM otel_schema_migrations WHERE Version=1")))
+          (catch Throwable _ :unavailable))]
+    ;; Keep the readback receipt closed and payload-free.
+    (println :registry-readback :version 1 :status status)
+    (flush)))
+
 (defn -main [mode route path & [profile-name]]
   (try
     (native/ensure-loaded!)
@@ -187,11 +246,24 @@
         (case mode
           "writer" (writer! (case route "legacy" :legacy "candidate" :candidate :invalid) path)
           "reader" (reader! path)
+          "registry-readback" (registry-readback! path)
           (require! false))))
     (catch Throwable error
+      ;; The launcher distinguishes terminal require/fixture/main failures
+      ;; before deciding whether its read-only registry observation is safe.
+      ;; This benchmark body is always its launcher's :main stage.
+      (emit-diagnostic! :benchmark-stage :main :failed)
       (println :benchmark-red :class
                (cond (instance? java.sql.SQLException error) :sql-exception
                      (instance? clojure.lang.ExceptionInfo error) :exception-info
                      (instance? java.lang.IllegalArgumentException error) :illegal-argument
                      :else :other))
+      (try
+        (let [{:keys [category phase version statement-index]}
+              (schema-failure-diagnostic (ex-data error))]
+          (emit-diagnostic! :benchmark-red-diagnostic :category category :phase phase
+                            :version version :statement-index statement-index))
+        (catch Throwable _
+          (emit-diagnostic! :benchmark-red-diagnostic :category :unknown :phase :unknown
+                            :version :unknown :statement-index :unknown)))
       (System/exit 1))))

@@ -66,6 +66,21 @@
              ::signal-mismatch {}))
     fields))
 
+(defn confirmed-gauge-fields
+  "Return gauge point-attribute fields after capability and target confirmation.
+
+  This is intentionally not a generic metric projector: resource/scope
+  attributes and sum/histogram table descriptors are not physically supported
+  by this slice."
+  [descriptor-set target]
+  (let [fields (confirmed-fields descriptor-set target)]
+    (when-not (every? #(= identity/gauge-attribute-target
+                          (identity/target-of %))
+                      fields)
+      (fail! "typed gauge projection requires a gauge point-attribute capability"
+             ::signal-mismatch {}))
+    fields))
+
 (defn- attributes-at [span location]
   (case location
     :resource-attributes (get-in span [:resource :attributes])
@@ -109,6 +124,13 @@
   (let [fields (confirmed-log-fields descriptor-set target)]
     (fn [record]
       (project-fields fields #(when (= :log-attributes %) (:attributes record))))))
+
+(defn gauge-projector
+  "Compile one confirmed gauge point-attribute capability into a row projector."
+  [descriptor-set target]
+  (let [fields (confirmed-gauge-fields descriptor-set target)]
+    (fn [point]
+      (project-fields fields #(when (= :metric-attributes %) (:attributes point))))))
 
 (defn span-projector
   "Compile a legacy span-attribute-only capability into an attribute projector.
