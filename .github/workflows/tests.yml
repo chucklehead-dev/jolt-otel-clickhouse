@@ -136,6 +136,15 @@ jobs:
             -m otel.exporter.chdb-typed-metric-native-test \
             | tee "$RUNNER_TEMP/exporter-typed-metric-native.log"
           test "$(grep -Fxc 'typed-metric-native-qualified :observed-checks 10' "$RUNNER_TEMP/exporter-typed-metric-native.log")" = 1
+      - name: Qualify typed metric OTLP socket loopback
+        id: typed_metric_socket
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:typed-gauge-socket-test -M \
+            | tee "$RUNNER_TEMP/exporter-typed-metric-socket.log"
+          test "$(grep -Fxc 'typed-metric-socket-qualified :observed-checks 10' "$RUNNER_TEMP/exporter-typed-metric-socket.log")" = 1
       - name: Official host rejects unsupported Durable before effects
         timeout-minutes: 2
         shell: bash
@@ -213,6 +222,7 @@ jobs:
         env:
           ORDINARY_OUTCOME: ${{ steps.ordinary_native.outcome }}
           TYPED_METRIC_OUTCOME: ${{ steps.typed_metric_native.outcome }}
+          TYPED_METRIC_SOCKET_OUTCOME: ${{ steps.typed_metric_socket.outcome }}
           DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
           DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
           DURABLE_COMPILER_REVISION: ${{ steps.durable_jolt.outputs.source-sha }}
@@ -220,8 +230,8 @@ jobs:
           set -euo pipefail
           evidence="$RUNNER_TEMP/exporter-native-evidence"
           mkdir -p "$evidence"
-          printf 'ordinary-step=%s\ntyped-metric-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
-            "$ORDINARY_OUTCOME" "$TYPED_METRIC_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
+          printf 'ordinary-step=%s\ntyped-metric-step=%s\ntyped-metric-socket-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
+            "$ORDINARY_OUTCOME" "$TYPED_METRIC_OUTCOME" "$TYPED_METRIC_SOCKET_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
           # Only public authentication diagnostics/boundary fixture output.
           for kind in official-capability-negative; do
             log="$RUNNER_TEMP/exporter-$kind.log"
@@ -231,7 +241,7 @@ jobs:
             fi
           done
           # Never traverse or upload native stores, WAL, databases or env files.
-          for kind in ordinary typed-metric durable; do
+          for kind in ordinary typed-metric typed-metric-socket durable; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
@@ -263,6 +273,7 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/status.txt
             ${{ runner.temp }}/exporter-native-evidence/ordinary.log
             ${{ runner.temp }}/exporter-native-evidence/typed-metric.log
+            ${{ runner.temp }}/exporter-native-evidence/typed-metric-socket.log
             ${{ runner.temp }}/exporter-native-evidence/durable.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
