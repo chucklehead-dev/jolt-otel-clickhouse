@@ -116,7 +116,7 @@ jobs:
       - name: Install the root-qualified Durable Jolt compiler
         id: durable_jolt
         uses: chucklehead-dev/jolt-chdb/.github/actions/install-jolt-aspects@19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774
-      - name: Bind the root-qualified compiler to the Durable fixture
+      - name: Bind the selected compiler executable to the Durable fixture
         shell: bash
         env:
           DURABLE_JOLT_SOURCE_SHA: ${{ steps.durable_jolt.outputs.source-sha }}
@@ -128,6 +128,11 @@ jobs:
           binary=$(realpath "$(command -v jolt)")
           test "$("$binary" --version)" = "$DURABLE_JOLT_VERSION"
           printf 'JOLT_BIN=%s\n' "$binary" >> "$GITHUB_ENV"
+          # This records the executable selected above and the qualification
+          # script rechecks it before launch, preventing a later path swap. It
+          # is deliberately not presented as a published-binary provenance
+          # digest: this workflow has no immutable release artifact for this
+          # untagged compiler revision.
           printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
           printf 'JOLT_DURABLE_COMPILER_SOURCE_SHA=%s\n' "$DURABLE_JOLT_SOURCE_SHA" >> "$GITHUB_ENV"
       - name: Qualify typed Durable WAL with a fresh reader

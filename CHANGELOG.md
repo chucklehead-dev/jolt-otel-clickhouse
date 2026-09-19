@@ -28,11 +28,13 @@
 - Add explicit bounded CI lanes for ordinary native typed rows/metric admission
   and typed Durable WAL readback through a fresh process (Refs #27). The
   ordinary lane selects released Jolt 0.8.6; the Durable lane selects the exact
-  compiler revision required by the immutable root chDB pin, proving both the
-  compiler revision and binary hash before it starts. An API-missing pin fails
-  qualification rather than skipping or using an unmerged override. Retain
-  only explicit synthetic fixture logs and step status on failure; native
-  stores, WAL, databases and environment files are excluded.
+  compiler revision required by the immutable root chDB pin and checks its
+  source-revision receipt and version banner before it starts. The per-run
+  executable digest binds the fixture launch to that selected file; it is not
+  a published-binary provenance digest. An API-missing pin fails qualification
+  rather than skipping or using an unmerged override. Retain only explicit
+  synthetic fixture logs and step status on failure; native stores, WAL,
+  databases and environment files are excluded.
 
 - Harden ordinary-native fixture diagnostics so unrecognized exception and
   table-label values are shape-checked before closed-vocabulary lookup. This
