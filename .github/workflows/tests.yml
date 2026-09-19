@@ -143,8 +143,8 @@ jobs:
         run: |
           set -euo pipefail
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:typed-gauge-socket-test -M \
-            | tee "$RUNNER_TEMP/exporter-typed-metric-socket.log"
-          test "$(grep -Fxc 'typed-metric-socket-qualified :observed-checks 10' "$RUNNER_TEMP/exporter-typed-metric-socket.log")" = 1
+            | tee "$RUNNER_TEMP/exporter-typed-metric-socket-native.log"
+          test "$(grep -Fxc 'typed-metric-socket-qualified :observed-checks 10' "$RUNNER_TEMP/exporter-typed-metric-socket-native.log")" = 1
       - name: Official host rejects unsupported Durable before effects
         timeout-minutes: 2
         shell: bash
@@ -245,9 +245,16 @@ jobs:
             log="$RUNNER_TEMP/exporter-$kind-native.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
+              printf '%s-log=present\n' "$kind" >> "$evidence/status.txt"
               sha256sum "$evidence/$kind.log" >> "$evidence/status.txt"
             else printf '%s-log=missing\n' "$kind" >> "$evidence/status.txt"; fi
           done
+          if [[ "$TYPED_METRIC_SOCKET_OUTCOME" == success ]]; then
+            test -f "$RUNNER_TEMP/exporter-typed-metric-socket-native.log"
+            test ! -L "$RUNNER_TEMP/exporter-typed-metric-socket-native.log"
+            test "$(grep -Fxc 'typed-metric-socket-qualified :observed-checks 10' "$RUNNER_TEMP/exporter-typed-metric-socket-native.log")" = 1
+            test "$(grep -Fxc 'typed-metric-socket-log=present' "$evidence/status.txt")" = 1
+          fi
           log="$RUNNER_TEMP/exporter-durable-native.log"
           if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
             root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
