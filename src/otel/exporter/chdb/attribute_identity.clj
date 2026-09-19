@@ -50,14 +50,36 @@
               :table "otel_logs"))
 
 (def gauge-attribute-target
-  "The one metric target physically supported by the initial metric slice.
-
-  Metric resource/scope locations and the sum/histogram tables deliberately
-  remain outside `physically-supported-targets`: their distinct projection and
-  query contracts have not yet been qualified."
+  "The gauge point-attribute target."
   (sorted-map :location :metric-attributes
               :signal :metrics
               :table "otel_metrics_gauge"))
+
+(def gauge-resource-attribute-target
+  "The gauge resource-attribute target."
+  (sorted-map :location :resource-attributes
+              :signal :metrics
+              :table "otel_metrics_gauge"))
+
+(def gauge-scope-attribute-target
+  "The gauge instrumentation-scope-attribute target."
+  (sorted-map :location :scope-attributes
+              :signal :metrics
+              :table "otel_metrics_gauge"))
+
+(def sum-attribute-target
+  "The sum point-attribute target.
+
+  Sum resource/scope and every histogram target remain deliberately outside
+  the supported set until their distinct evidence is qualified."
+  (sorted-map :location :metric-attributes
+              :signal :metrics
+              :table "otel_metrics_sum"))
+
+(def gauge-attribute-targets
+  "The complete, table-qualified gauge target set supported by this slice."
+  #{gauge-attribute-target gauge-resource-attribute-target
+    gauge-scope-attribute-target})
 
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
@@ -81,7 +103,8 @@
 
 (def physically-supported-targets
   "Target tuples with complete installer and exporter support today."
-  (conj trace-attribute-targets log-attribute-target gauge-attribute-target))
+  (into (conj trace-attribute-targets log-attribute-target sum-attribute-target)
+        gauge-attribute-targets))
 
 (defn trace-attribute-target? [value]
   (contains? trace-attribute-targets (target-of value)))

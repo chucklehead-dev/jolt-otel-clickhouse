@@ -146,11 +146,33 @@ For explicit source-only review evidence, add
 That opt-in mode overrides only the driver and does not qualify root resolution.
 The selected SDK checkpoint is merged SDK main. Published pins alone still do
 not establish a particular application's runtime/native or hosted-CI qualification.
-The gate verifies typed spans/logs and timestamps through fresh-reader WAL
-replay while the writer remains alive, rather than a shutdown checkpoint.
+The gate verifies typed spans/logs plus bounded typed gauge and sum fields
+through fresh-reader WAL replay while the writer remains alive, rather than a
+shutdown checkpoint.
 Child environments strip credentials; evidence is retained without retries.
 An unconfirmed surviving process reports incomplete cleanup without signaling
 an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.
+
+### Typed attribute support
+
+Typed promotion is deliberately narrower than the generic ClickStack maps.
+Every accepted value remains in its original generic map as text for
+compatibility; an approved descriptor additionally writes an owned typed value
+column and its availability status. The current metric boundary is:
+
+| Metric table | Resource attributes | Scope attributes | Point attributes | Typed query API |
+| --- | --- | --- | --- | --- |
+| `otel_metrics_gauge` | supported | supported | supported | not provided |
+| `otel_metrics_sum` | not supported | not supported | supported | not provided |
+| `otel_metrics_histogram` | not supported | not supported | not supported | not provided |
+
+Unsupported targets are rejected before installer DDL or export; they do not
+silently fall back to typed columns. Direct native DDL/readback and OTLP JSON
+loopback tests cover the enabled gauge and sum targets. The fresh-reader
+Durable fixture is wired into the hosted Durable lane for the same values,
+statuses, and generic maps, but this documentation does not treat that new
+hosted run as qualified until it has actually passed. Direct fixture readback
+is test evidence, not a public typed-metric query surface.
 
 Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
 do not provide that capability; the driver rejects them before storage effects.

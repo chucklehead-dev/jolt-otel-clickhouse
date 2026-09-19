@@ -1,7 +1,8 @@
 (ns otel.exporter.chdb-typed-gauge-socket-native-test
-  "A real loopback OTLP/JSON boundary for the initially supported typed metric
-  surface: gauge point attributes only.  It intentionally does not imply typed
-  promotion for sums, histograms, resource, or scope attributes."
+  "Real loopback OTLP/JSON evidence for the bounded typed metric surface.
+
+  It covers gauge point/resource/scope and sum point descriptors. Sum
+  resource/scope, histograms, and Durable recovery remain outside this test."
   (:require [clojure.data.json :as json]
             [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
@@ -41,7 +42,9 @@
         {:value (json/read-str (String. encoded "UTF-8"))
          :encoded-bytes (alength encoded)}))))
 
-(defn- compiled []
+(def ^:private observed-checks (atom 0))
+
+(defn- gauge-compiled []
   (manifest/compile-manifest
    {:dataset-id "telemetry-prod" :application-id "gauge-socket"
     :lineage "gauge-socket-v1" :version 1
@@ -57,19 +60,33 @@
                 {:signal :metrics :table "otel_metrics_gauge"
                  :location :metric-attributes :key "queue.maximum" :type :int64}
                 {:signal :metrics :table "otel_metrics_gauge"
-                 :location :metric-attributes :key "queue.label" :type :string}]}]}))
+                 :location :metric-attributes :key "queue.label" :type :string}
+                {:signal :metrics :table "otel_metrics_gauge"
+                 :location :resource-attributes :key "resource.ready" :type :boolean}
+                {:signal :metrics :table "otel_metrics_gauge"
+                 :location :scope-attributes :key "scope.workers" :type :int64}]}]}))
 
-(defn- observe-columns [connection]
+(defn- sum-compiled []
+  (manifest/compile-manifest
+   {:dataset-id "telemetry-prod" :application-id "sum-socket"
+    :lineage "sum-socket-v1" :version 1
+    :fragments
+    [{:schema manifest/reviewed-fragment-schema :authority :advice
+      :source "advice/sum-socket.edn"
+      :entries [{:signal :metrics :table "otel_metrics_sum"
+                 :location :metric-attributes :key "request.success" :type :boolean}
+                {:signal :metrics :table "otel_metrics_sum"
+                 :location :metric-attributes :key "request.count" :type :int64}]}]}))
+
+(defn- observe-columns [connection table]
   [{:columns (into {} (map (juxt :name :type))
-                   (jdbc/fetch connection "DESCRIBE TABLE otel_metrics_gauge"))
-    :signal :metrics :table "otel_metrics_gauge"}])
+                   (jdbc/fetch connection (str "DESCRIBE TABLE " table)))
+    :signal :metrics :table table}])
 
-(defn- collected [name]
+(defn- collected [gauge-name sum-name]
   [{:scope {:name "typed-gauge-socket" :version "1"
-            ;; Deliberately generic: this must not be promoted by the gauge-only
-            ;; descriptor capability.
-            :attributes {"scope.generic" "kept-generic"}}
-    :metrics [{:type :gauge :name name :description "" :unit "{item}"
+            :attributes {"scope.workers" 7 "scope.generic" "kept-generic"}}
+    :metrics [{:type :gauge :name gauge-name :description "" :unit "{item}"
                :data-points
                [{:value 2.0 :time-unix-nano 1700000000000000000
                  :attributes {"queue.ready" false "queue.zero" 0
@@ -79,18 +96,26 @@
                               "queue.label" ""
                               "generic.empty-string" ""
                               "generic.bytes" (any/bytes [0 1 2 255])
+                              "generic.nested" {"kind" "nested" "count" 2}}}]}
+              {:type :sum :name sum-name :description "" :unit "1"
+               :temporality :cumulative :monotonic? true
+               :data-points
+               [{:value 3.0 :time-unix-nano 1700000000000000000
+                 :attributes {"request.success" false "request.count" int64-max
+                              "generic.bytes" (any/bytes [0 1 2 255])
                               "generic.nested" {"kind" "nested" "count" 2}}}]}]}])
 
 (defn- fields-by-key [installation]
   (into {} (map (juxt :key identity))
         (get-in installation [:record :manifest :fields])))
 
-(defn- rows [connection metric-name]
+(defn- rows [connection table metric-name]
   (jdbc/fetch connection
-              ["select * from otel_metrics_gauge where MetricName=? order by TimeUnix"
+              [(str "select * from " table " where MetricName=? order by TimeUnix")
                metric-name]))
 
 (defn- check! [label expected actual]
+  (swap! observed-checks inc)
   (if (= expected actual)
     (println "  ok  " label)
     (throw (ex-info label {:expected expected :actual actual}))))
@@ -101,26 +126,35 @@
      (get row (keyword (:status-column physical)))]))
 
 (defn -main [& _]
-  (println "typed gauge point attributes over a real OTLP socket")
+  (reset! observed-checks 0)
+  (println "typed metric attributes over a real OTLP socket")
   (with-open [connection (jdbc/connection "chdb::memory:")]
     (schema/ensure-schema! connection)
-    (let [installation (installer/install-approved!
-                        (backend/memory-backend) (compiled)
-                        {:target connection :observe-columns #(observe-columns connection)
-                         :execute-ddl! #(jdbc/execute! connection %)})
-          descriptor-set (:descriptor-set installation)
-          fields (fields-by-key installation)
+    (let [store (backend/memory-backend)
+          gauges (installer/install-approved!
+                  store (gauge-compiled)
+                  {:target connection
+                   :observe-columns #(observe-columns connection "otel_metrics_gauge")
+                   :execute-ddl! #(jdbc/execute! connection %)})
+          sums (installer/install-approved!
+                store (sum-compiled)
+                {:target connection
+                 :observe-columns #(observe-columns connection "otel_metrics_sum")
+                 :execute-ddl! #(jdbc/execute! connection %)})
+          gauge-fields (fields-by-key gauges)
+          sum-fields (fields-by-key sums)
           receiving (chdb-export/exporter
                      {:connection connection :create-schema? false :signals #{:metrics}
-                      :typed-gauge-descriptors descriptor-set})
+                      :typed-gauge-descriptors (:descriptor-set gauges)
+                      :typed-sum-descriptors (:descriptor-set sums)})
           listener (atom nil) client (atom nil)]
       (try
-        (let [metric-name "typed.gauge.socket"
+        (let [gauge-name "typed.gauge.socket" sum-name "typed.sum.socket"
               r (resource/resource {"service.name" "typed-gauge-socket"
-                                     ;; Explicitly generic for this bounded slice.
+                                     "resource.ready" false
                                      "resource.generic" "kept-generic"})
-              values (collected metric-name)]
-          (check! "direct typed gauge export succeeds" true
+              values (collected gauge-name sum-name)]
+          (check! "direct typed gauge and sum export succeeds" true
                   (export/export-metrics! receiving r values))
           (let [server (http-server/run-server
                         (receiver/handler {:parse-body parse-json-body
@@ -133,42 +167,62 @@
                           {:endpoint (str "http://127.0.0.1:" (:port server))
                            :timeout-ms 5000 :max-retries 0})]
             (reset! client outbound)
-            (check! "canonical gauge crosses the real loopback OTLP socket" true
+            (check! "canonical gauge and sum cross the real loopback OTLP socket" true
                     (export/export-metrics! outbound r values)))
-          (let [stored (rows connection metric-name) first-row (first stored)]
+          (let [gauge-stored (rows connection "otel_metrics_gauge" gauge-name)
+                sum-stored (rows connection "otel_metrics_sum" sum-name)
+                gauge-row (first gauge-stored) sum-row (first sum-stored)]
             (check! "direct and socket paths store identical physical gauge rows"
-                    [2 true] [(count stored) (every? #(= first-row %) stored)])
-            (check! "typed false, zero, signed Int64 boundaries, and present empty retain status"
-                    [[false 3] [0 3] [int64-min 3] [int64-max 3] ["" 2]]
-                    (mapv #(field-pair first-row fields %)
-                          ["queue.ready" "queue.zero" "queue.minimum"
-                           "queue.maximum" "queue.label"]))
-            (check! "generic empty string, bytes, nested value, resource and scope survive without promotion"
+                    [2 true] [(count gauge-stored) (every? #(= gauge-row %) gauge-stored)])
+            (check! "direct and socket paths store identical physical sum rows"
+                    [2 true] [(count sum-stored) (every? #(= sum-row %) sum-stored)])
+            (check! "gauge typed point resource scope values and statuses survive socket decode"
+                    [[false 3] [7 3] [false 3] [0 3] [int64-min 3] [int64-max 3] ["" 2]]
+                    (vec (concat [(field-pair gauge-row gauge-fields "resource.ready")
+                                  (field-pair gauge-row gauge-fields "scope.workers")]
+                                 (map #(field-pair gauge-row gauge-fields %)
+                                      ["queue.ready" "queue.zero" "queue.minimum"
+                                       "queue.maximum" "queue.label"]))))
+            (check! "sum typed point values and statuses survive socket decode"
+                    [[false 3] [int64-max 3]]
+                    (mapv #(field-pair sum-row sum-fields %)
+                          ["request.success" "request.count"]))
+            (check! "generic structured bytes maps and unpromoted resource scope fields survive"
                     [{"queue.ready" "false" "queue.zero" "0"
                       "queue.minimum" (str int64-min) "queue.maximum" (str int64-max)
                       "queue.label" "" "generic.empty-string" ""
                       "generic.bytes" "AAEC/w=="
                       "generic.nested" "{\"count\":2,\"kind\":\"nested\"}"}
-                     {"resource.generic" "kept-generic" "service.name" "typed-gauge-socket"}
-                     {"scope.generic" "kept-generic"}]
-                    [(:attributes first-row) (:resourceattributes first-row)
-                     (:scopeattributes first-row)]))
-          ;; A capability-free exporter is a mutation/bypass control: its generic
-          ;; attributes still persist, but it cannot synthesize typed status 3.
+                     {"request.success" "false" "request.count" (str int64-max)
+                      "generic.bytes" "AAEC/w=="
+                      "generic.nested" "{\"count\":2,\"kind\":\"nested\"}"}
+                     {"resource.generic" "kept-generic" "resource.ready" "false"
+                      "service.name" "typed-gauge-socket"}
+                     {"scope.generic" "kept-generic" "scope.workers" "7"}]
+                    [(:attributes gauge-row) (:attributes sum-row)
+                     (:resourceattributes gauge-row) (:scopeattributes gauge-row)]))
+          ;; A capability-free exporter is a mutation/bypass control: generic
+          ;; fields still persist, while every installed typed status is 0.
           (let [legacy (chdb-export/exporter {:connection connection :create-schema? false
                                               :signals #{:metrics}})
-                control "typed.gauge.without-capability"]
+                gauge-control "typed.gauge.without-capability"
+                sum-control "typed.sum.without-capability"]
             (try
-              (check! "capability-free gauge export succeeds" true
-                      (export/export-metrics! legacy (resource/resource {}) (collected control)))
-              (let [row (first (rows connection control))]
-                (check! "capability bypass leaves every typed column historical"
-                        [0 0 0 0 0]
-                        (mapv #(second (field-pair row fields %))
-                              ["queue.ready" "queue.zero" "queue.minimum"
-                               "queue.maximum" "queue.label"]))
-                (check! "capability bypass retains generic attributes"
-                        "AAEC/w==" (get (:attributes row) "generic.bytes")))
+              (check! "capability-free gauge and sum export succeeds" true
+                      (export/export-metrics! legacy (resource/resource {})
+                                              (collected gauge-control sum-control)))
+              (let [gauge-row (first (rows connection "otel_metrics_gauge" gauge-control))
+                    sum-row (first (rows connection "otel_metrics_sum" sum-control))]
+                (check! "capability bypass leaves gauge resource scope and point columns historical"
+                        [0 0 0 0 0 0 0]
+                        (mapv #(second (field-pair gauge-row gauge-fields %))
+                              ["resource.ready" "scope.workers" "queue.ready" "queue.zero"
+                               "queue.minimum" "queue.maximum" "queue.label"]))
+                (check! "capability bypass leaves sum point columns historical and retains bytes"
+                        [[0 0] "AAEC/w=="]
+                        [(mapv #(second (field-pair sum-row sum-fields %))
+                               ["request.success" "request.count"])
+                         (get (:attributes sum-row) "generic.bytes")]))
               (finally (export/shutdown-metric-exporter! legacy)))))
         (finally
           (when-let [outbound @client]
@@ -176,4 +230,7 @@
           (when-let [server @listener]
             (http-server/stop-server server))
           (export/shutdown-metric-exporter! receiving)))))
-  (println "all typed gauge socket/native checks passed"))
+  (when-not (= 10 @observed-checks)
+    (throw (ex-info "typed metric socket check inventory changed"
+                    {:expected 10 :actual @observed-checks})))
+  (println "typed-metric-socket-qualified :observed-checks" @observed-checks))

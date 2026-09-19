@@ -67,17 +67,31 @@
     fields))
 
 (defn confirmed-gauge-fields
-  "Return gauge point-attribute fields after capability and target confirmation.
+  "Return gauge fields after capability and target confirmation.
 
-  This is intentionally not a generic metric projector: resource/scope
-  attributes and sum/histogram table descriptors are not physically supported
-  by this slice."
+  Gauge point, resource, and instrumentation-scope attributes share one
+  physical table and one capability. Sum resource/scope and all histogram
+  targets are deliberately outside this bounded projection contract."
   [descriptor-set target]
   (let [fields (confirmed-fields descriptor-set target)]
-    (when-not (every? #(= identity/gauge-attribute-target
+    (when-not (every? #(contains? identity/gauge-attribute-targets
+                                   (identity/target-of %))
+                      fields)
+      (fail! "typed gauge projection requires a gauge-table capability"
+             ::signal-mismatch {}))
+    fields))
+
+(defn confirmed-sum-fields
+  "Return sum point-attribute fields after capability and target confirmation.
+
+  This intentionally rejects sum resource/scope descriptors and every
+  histogram descriptor before row projection."
+  [descriptor-set target]
+  (let [fields (confirmed-fields descriptor-set target)]
+    (when-not (every? #(= identity/sum-attribute-target
                           (identity/target-of %))
                       fields)
-      (fail! "typed gauge projection requires a gauge point-attribute capability"
+      (fail! "typed sum projection requires a sum point-attribute capability"
              ::signal-mismatch {}))
     fields))
 
@@ -125,12 +139,38 @@
     (fn [record]
       (project-fields fields #(when (= :log-attributes %) (:attributes record))))))
 
+(defn- metric-context [value]
+  ;; The public projector is also useful in pure tests. Preserve its previous
+  ;; point-only call shape while the exporter supplies the full context.
+  (if (and (contains? value :resource)
+           (contains? value :scope)
+           (contains? value :point))
+    value
+    {:point value}))
+
+(defn- metric-projector [fields]
+  (fn [value]
+    (let [{:keys [resource scope point]} (metric-context value)]
+      (project-fields
+       fields
+       (fn [location]
+         (case location
+           :resource-attributes (:attributes resource)
+           :scope-attributes (:attributes scope)
+           :metric-attributes (:attributes point)
+           nil))))))
+
 (defn gauge-projector
-  "Compile one confirmed gauge point-attribute capability into a row projector."
+  "Compile one confirmed gauge capability into a full metric row projector."
   [descriptor-set target]
   (let [fields (confirmed-gauge-fields descriptor-set target)]
-    (fn [point]
-      (project-fields fields #(when (= :metric-attributes %) (:attributes point))))))
+    (metric-projector fields)))
+
+(defn sum-projector
+  "Compile one confirmed sum point-attribute capability into a row projector."
+  [descriptor-set target]
+  (let [fields (confirmed-sum-fields descriptor-set target)]
+    (metric-projector fields)))
 
 (defn span-projector
   "Compile a legacy span-attribute-only capability into an attribute projector.

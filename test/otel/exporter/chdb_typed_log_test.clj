@@ -91,8 +91,8 @@
         valid (projector (log-record {"job.name" "archive"
                                       :job.complete false
                                       "job.attempt" 9007199254740993}))]
-    (check "log attributes and separately qualified gauge attributes support only their exact targets"
-           [true false false true false false]
+    (check "log and bounded metric attributes support only their exact targets"
+           [true false false true true false]
            [(identity/physically-supported? identity/log-attribute-target)
             (identity/physically-supported?
              (identity/target :logs "otel_logs" :resource-attributes))
