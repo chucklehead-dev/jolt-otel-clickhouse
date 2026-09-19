@@ -6,10 +6,11 @@ compatibility; they are awkward for numeric filters and aggregates. Frequently
 queried attributes can eventually be copied into dedicated typed columns while
 the existing text entry remains available.
 
-The manifest format is storage-independent and the current installer/exporter
-path supports resource, scope, and span attributes on `otel_traces`, plus
-log-record attributes on `otel_logs`. Every reviewed declaration names a closed
-signal, physical table, and attribute location before it can
+The manifest format is storage-independent. The current installer/exporter
+path supports resource, scope, and span attributes on `otel_traces`,
+log-record attributes on `otel_logs`, and a bounded metric slice: gauge
+resource/scope/point attributes plus sum point attributes. Every reviewed
+declaration names a closed signal, physical table, and attribute location before it can
 influence a checksum, field identifier, registry plan, or capability consumer.
 
 ```mermaid
@@ -130,6 +131,24 @@ say which consuming signal owns the resource, and metric inference does not say
 which metric-kind table owns the point, so those hints remain
 `:ambiguous-target` diagnostics until reviewed configuration supplies the exact
 target.
+
+### Current typed-target matrix
+
+An approved metric descriptor retains the compatible generic map and adds only
+its manifest-owned value/status columns. It is not a general metric schema or a
+typed metric query feature.
+
+| Table | Resource | Scope | Point | Current evidence |
+| --- | --- | --- | --- | --- |
+| `otel_metrics_gauge` | supported | supported | supported | direct native DDL/readback and OTLP JSON loopback; Durable fresh-reader fixture wired to hosted lane |
+| `otel_metrics_sum` | rejected | rejected | supported | direct native DDL/readback and OTLP JSON loopback; Durable fresh-reader fixture wired to hosted lane |
+| `otel_metrics_histogram` | rejected | rejected | rejected | no typed installer/exporter support |
+
+“Wired to hosted lane” is intentionally not a passing-hosted-run claim: the
+fixture must still run successfully on the documented Durable compiler before
+it contributes to release qualification. The direct Durable readback in that fixture is
+test-only; no public API exposes typed metric filtering, grouping, or
+aggregation yet.
 
 ## Determinism and conflicts
 
@@ -348,8 +367,9 @@ now explicit: one install attempt has exactly one manifest-owned physical
 signal/table target, which may contain several attribute locations, a
 schema-observed event names that target, and reconciliation requires a fresh
 envelope for that exact table. Pure reconciliation tests exercise all five
-closed tables; only resource, scope, and span attributes on the trace target and
-log-record attributes on the log target reach DDL. The joined
+closed tables; trace resource/scope/span, log-record, gauge
+resource/scope/point, and sum point attributes reach DDL only when their
+approved target is enabled. The joined
 catalog/DDL/publication model remains tracked by issue #8.
 Running that future model is
 intentionally deferred while the existing exhaustive Durable check owns machine
@@ -357,20 +377,20 @@ resources.
 
 Each value column reserves a `UInt8` status column with stable meanings for
 historical-untyped, absent, present-empty, valid, and invalid. The trace and log
-exporters write those statuses; reserving them in the shared plan prevents later
-signal-specific ingestion from inventing an ambiguous nullable contract.
+exporters, and the enabled gauge and sum paths, write those statuses; reserving
+them in the shared plan prevents later signal-specific ingestion from inventing
+an ambiguous nullable contract.
 
 The manifest carries the prerequisite signal/table/location identity. This
 physical registry seam accepts the three exact trace targets whose signal and
 table are `:spans` and `otel_traces`, with location `:resource-attributes`,
-`:scope-attributes`, or `:span-attributes`. They share one physical table
-authority while retaining disjoint field IDs and columns. Other valid targets
-are rejected except for the exact log target `{:signal :logs, :table
-"otel_logs", :location :log-attributes}`. Log resource/scope and every metric
-target compile into storage-independent plans and distinct field IDs, then fail with
-`:unsupported-target` if passed to `registry/prepare`. Later ingestion/query
-slices must implement their signal-specific row and table semantics before that
-allowlist expands.
+`:scope-attributes`, or `:span-attributes`; and the exact log target
+`{:signal :logs, :table "otel_logs", :location :log-attributes}`. It also
+accepts the metric targets in the matrix above: all three gauge locations and
+sum `:metric-attributes`. They share table authority while retaining disjoint
+field IDs and columns. Log resource/scope, sum resource/scope, and every
+histogram target compile into storage-independent plans and distinct field IDs,
+then fail with `:unsupported-target` if passed to `registry/prepare`.
 
 ## Export confirmed typed span values
 
@@ -619,8 +639,11 @@ Direct-export versus OTLP-receiver typed-row equivalence is qualified on the
 same process-local capability and connection. Resource, scope, and span fields
 are location-qualified; the same logical key may appear independently at all
 three locations. Log-record attributes are also qualified through a real
-loopback socket and native readback. Log resource/scope attributes, typed log
-queries, and all metric targets remain unsupported.
+loopback socket and native readback. Gauge resource/scope/point and sum point
+promotion now have direct native and OTLP loopback evidence, with the same
+Durable fresh-reader fixture wired to hosted qualification. Log resource/scope,
+sum resource/scope, every histogram target, typed log queries, and every typed
+metric query remain unsupported.
 Typed numeric queries are intentionally limited to exact Int64 `:eq`, `:gte`,
 and `:lt` trace filters plus range aggregation. Comparative map-conversion
 benchmarks, broader grouping and aggregate vocabularies, and other promoted

@@ -9,7 +9,9 @@
   idempotence, and a real table-qualified wrong-type failure. A real OTLP JSON
   loopback compares direct and receiver rows for both enabled metric tables.
   The existing fresh-reader WAL lane now also reads back those values, statuses,
-  and generic maps while the Durable writer remains alive (#8).
+  and generic maps while the Durable writer remains alive. That fixture is
+  wired to the hosted Durable lane, but a passing hosted run remains required
+  before this change claims Durable release qualification (#8).
 
 - Make the opt-in Durable `reviewed-source` driver preflight use the same
   NUL-delimited, ignored-aware cleanliness receipt as resolved providers. A
@@ -33,9 +35,9 @@
 
 - Add installer-capability-bound typed value/status promotion for gauge point
   attributes on `otel_metrics_gauge` only. The exporter retains generic
-  `Attributes` and rejects metric resource/scope locations plus sum and
-  histogram capabilities; native in-memory chDB evidence proves exact Int64
-  and Boolean `false` readback (#8).
+  `Attributes`; this initial point-only boundary is extended by the newer #8
+  entry above. Native in-memory chDB evidence proves exact Int64 and Boolean
+  `false` readback (#8).
 
 - Repin the reviewed Durable capability consumer to immutable casselc/jolt
   artifact `durable-runtime-bf8a5dde-linux-x64` from successful run
