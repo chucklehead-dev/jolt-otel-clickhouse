@@ -164,20 +164,27 @@ printf '%s\n' "$driver_mode" > "$root/driver-mode.txt"
 sha256sum "$fixture" "$script" > "$root/harness-source.sha256"
 git status --porcelain=v1 > "$root/status.before"
 sha256sum src/otel/exporter/chdb.clj deps.edn > "$root/loaded-source.before.sha256"
-expression='(try
+expression='(let [stage (atom :require)]
+ (try
   (println :benchmark-stage :require :enter)
   (require (quote jdbc.chdb))
   (when-not (ns-resolve (quote jdbc.chdb) (quote insert-json-rows!))
-    (println :required-driver-row-api-missing) (System/exit 1))
+    (println :required-driver-row-api-missing)
+    (throw (ex-info "required-driver-row-api-missing" {})))
   (println :benchmark-stage :require :return)
+  (reset! stage :fixture)
   (println :benchmark-stage :fixture :enter)
   (load-file (System/getenv "BENCH_FIXTURE"))
   (println :benchmark-stage :fixture :return)
+  (reset! stage :main)
   (println :benchmark-stage :main :enter)
   ((ns-resolve (quote otel.exporter.chdb-ordinary-transport-benchmark) (quote -main))
    (System/getenv "TASK_MODE") (System/getenv "TASK_ROUTE") (System/getenv "TASK_DB") "benchmark")
   (println :benchmark-stage :main :return)
-  (catch Throwable _ (println :ordinary-benchmark-launch-failed) (System/exit 1)))'
+  (catch Throwable _
+    (println :benchmark-stage @stage :failed)
+    (println :ordinary-benchmark-launch-failed)
+    (System/exit 1))))'
 child() {
   local mode=$1 route=$2 db=$3 label=$4
   local cache status
@@ -222,8 +229,34 @@ terminal-record-failure() {
   local label=$1
   [[ -f "$root/$label.exit-status" ]] || return 1
   [[ "$(<"$root/$label.exit-status")" != 0 ]] || return 1
-  grep -Fxq ':benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown' \
-    "$root/$label.log"
+  # Only a completed require/fixture path followed by a terminal main failure
+  # may authorize the read-only observer. Independent grep matches would let a
+  # fixture-stage log forge a later main marker/diagnostic without ever having
+  # entered main. The exact diagnostic must follow the terminal main marker;
+  # a main return anywhere rejects the observation path.
+  awk '
+    BEGIN { phase = 0; failed = 0; diagnostic = 0; invalid = 0 }
+    $0 == ":benchmark-stage :require :return" {
+      if (phase != 0) invalid = 1; else phase = 1; next
+    }
+    $0 == ":benchmark-stage :fixture :enter" {
+      if (phase != 1) invalid = 1; else phase = 2; next
+    }
+    $0 == ":benchmark-stage :fixture :return" {
+      if (phase != 2) invalid = 1; else phase = 3; next
+    }
+    $0 == ":benchmark-stage :main :enter" {
+      if (phase != 3) invalid = 1; else phase = 4; next
+    }
+    $0 == ":benchmark-stage :main :failed" {
+      if (phase != 4 || failed) invalid = 1; else failed = 1; next
+    }
+    $0 == ":benchmark-stage :main :return" { invalid = 1; next }
+    $0 == ":benchmark-red-diagnostic :category :migration-failed :phase :record :version 1 :statement-index :unknown" {
+      if (!failed || diagnostic) invalid = 1; else diagnostic = 1; next
+    }
+    END { exit !(phase == 4 && failed && diagnostic && !invalid) }
+  ' "$root/$label.log"
 }
 observe-terminal-record-failure() {
   local db=$1 label=$2 status
