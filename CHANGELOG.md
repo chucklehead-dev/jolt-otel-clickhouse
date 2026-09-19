@@ -13,6 +13,12 @@
   change: measurements must retain the existing A-prime/B-prime/A/B/B/A
   causal split rather than attribute integrated results to either JSON change.
 
+- Require a terminal `:main` stage marker as well as the exact closed v1
+  migration-record diagnostic before the ordinary benchmark launcher starts
+  its read-only registry observer. Synthetic controls cover nonzero require,
+  fixture, and non-record main failures; they stop A/B/B/A and preserve the
+  writer's primary exit without an observer, retry, or migration claim (#55).
+
 - On an ordinary benchmark writer's terminal v1 registry record-phase failure,
   launch one fresh read-only child which reports only the closed registry
   cardinality observation. Preserve the original writer failure if that

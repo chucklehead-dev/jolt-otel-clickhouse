@@ -249,6 +249,10 @@
           "registry-readback" (registry-readback! path)
           (require! false))))
     (catch Throwable error
+      ;; The launcher distinguishes terminal require/fixture/main failures
+      ;; before deciding whether its read-only registry observation is safe.
+      ;; This benchmark body is always its launcher's :main stage.
+      (emit-diagnostic! :benchmark-stage :main :failed)
       (println :benchmark-red :class
                (cond (instance? java.sql.SQLException error) :sql-exception
                      (instance? clojure.lang.ExceptionInfo error) :exception-info
