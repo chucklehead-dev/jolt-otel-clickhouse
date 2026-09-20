@@ -95,10 +95,12 @@
 
 (defn- collected
   ([gauge-name sum-name]
-   (collected gauge-name sum-name default-gauge-attributes))
+   (collected gauge-name sum-name default-gauge-attributes 7))
   ([gauge-name sum-name gauge-attributes]
+   (collected gauge-name sum-name gauge-attributes 7))
+  ([gauge-name sum-name gauge-attributes workers]
    [{:scope {:name "typed-gauge-socket" :version "1"
-             :attributes {"scope.workers" 7 "scope.generic" "kept-generic"}}
+             :attributes {"scope.workers" workers "scope.generic" "kept-generic"}}
      :metrics [{:type :gauge :name gauge-name :description "" :unit "{item}"
                 :data-points [{:value 2.0 :time-unix-nano 1700000000000000000
                                :attributes gauge-attributes}]}
@@ -239,11 +241,11 @@
                   (and (export/export-metrics!
                         @client r
                         (collected "typed.gauge.string.socket" "typed.sum.string.socket"
-                                   (assoc default-gauge-attributes "queue.label" "priority")))
+                                   (assoc default-gauge-attributes "queue.label" "priority") 6))
                        (export/export-metrics!
                         receiving r
                         (collected "typed.gauge.absent.direct" "typed.sum.absent.direct"
-                                   (dissoc default-gauge-attributes "queue.label")))
+                                   (dissoc default-gauge-attributes "queue.label") 8))
                        (export/export-metrics!
                         receiving r
                         (collected "typed.gauge.invalid.direct" "typed.sum.invalid.direct"
@@ -264,10 +266,12 @@
                                             :prefix "pri" 1700000000000000000 1700000001000000000))
                 contains (query (gauge-query (get gauge-fields "queue.label")
                                               :contains "iori" 1700000000000000000 1700000001000000000))
+                hostile (query (gauge-query (get gauge-fields "queue.label")
+                                             :contains "priority' OR 1=1 --" 1700000000000000000 1700000001000000000))
                 half-open (query (gauge-query (get gauge-fields "queue.ready")
                                                :eq false 1699999999000000000 1700000000000000000))]
             (check! "real socket/direct rows prove every gauge filter grammar and half-open seconds"
-                    [#{false} #{7} #{7} #{7} ["" ""] ["priority"] ["priority"] []]
+                    [#{false} #{7} #{7 8} #{6 7} ["" ""] ["priority"] ["priority"] [] []]
                     [(set (map :attribute-value (:matches resource)))
                      (set (map :attribute-value (:matches scope-eq)))
                      (set (map :attribute-value (:matches scope-gte)))
@@ -275,6 +279,7 @@
                      (sort (map :attribute-value (:matches empty-label)))
                      (mapv :attribute-value (:matches prefix))
                      (mapv :attribute-value (:matches contains))
+                     (mapv :attribute-value (:matches hostile))
                      (mapv :attribute-value (:matches half-open))]))
           ;; A capability-free exporter is a mutation/bypass control: generic
           ;; fields still persist, while every installed typed status is 0.

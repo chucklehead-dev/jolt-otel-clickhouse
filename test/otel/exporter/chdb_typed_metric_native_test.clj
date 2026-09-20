@@ -85,18 +85,20 @@
                                  (field-columns physical)))
        " FROM " table " LIMIT 1"))
 
-(defn- metric-batch []
-  [{:scope {:name "typed-native" :attributes {"runtime.workers" 7
-                                                  "scope.generic" "kept-generic"}}
-    :metrics [{:type :gauge :name "typed.gauge" :description "" :unit "1"
-               :data-points [{:value 2.0 :time-unix-nano 1000000000
-                              :attributes {"queue.ready" false "queue.count" int64-max
-                                           "point.generic" "kept-generic"}}]}
-              {:type :sum :name "typed.sum" :description "" :unit "1"
-               :temporality :cumulative :monotonic? true
-               :data-points [{:value 3.0 :time-unix-nano 1000000000
-                              :attributes {"request.success" false "request.count" int64-max
-                                           "point.generic" "kept-generic"}}]}]}])
+(defn- metric-batch
+  ([] (metric-batch 7))
+  ([workers]
+   [{:scope {:name "typed-native"
+             :attributes {"runtime.workers" workers "scope.generic" "kept-generic"}}
+     :metrics [{:type :gauge :name "typed.gauge" :description "" :unit "1"
+                :data-points [{:value 2.0 :time-unix-nano 1000000000
+                               :attributes {"queue.ready" false "queue.count" int64-max
+                                            "point.generic" "kept-generic"}}]}
+               {:type :sum :name "typed.sum" :description "" :unit "1"
+                :temporality :cumulative :monotonic? true
+                :data-points [{:value 3.0 :time-unix-nano 1000000000
+                               :attributes {"request.success" false "request.count" int64-max
+                                            "point.generic" "kept-generic"}}]}]}]))
 
 (defn- value-status [row physical key]
   [(get row (keyword (:value-column (get physical key))))
@@ -111,11 +113,11 @@
   ([installation key value]
    (gauge-request installation key :eq value))
   ([installation key operator value]
-  (let [field (first (filter #(= key (:key %))
-                             (get-in installation [:record :manifest :fields])))]
-    {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
-     :start-unix-nano 0 :end-unix-nano 2000000000
-     :operator operator :value value :limit 10 :max-text-length 64})))
+   (let [field (first (filter #(= key (:key %))
+                              (get-in installation [:record :manifest :fields])))]
+     {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
+      :start-unix-nano 0 :end-unix-nano 2000000000
+      :operator operator :value value :limit 10 :max-text-length 64})))
 
 (defn- gauge-coverage-request [installation key]
   (select-keys (gauge-request installation key nil)
@@ -194,7 +196,7 @@
                       [(get types (keyword (:value-column ready)))
                        (get types (keyword (:status-column ready)))
                        (get types (keyword (:value-column count)))
-                       (get types (keyword (:status-column count)))])))
+                       (get types (keyword (:status-column count)))]))
             (let [request (gauge-request gauges "queue.ready" false)
                   result (metric-explorer/typed-gauge-filtered-points
                           connection (:descriptor-set gauges) request)]
@@ -225,14 +227,14 @@
                     [(export/export-metrics! writer
                                               {:attributes {"service.ready" false
                                                             "service.tier" ""}}
-                                              (metric-batch))
+                                              (metric-batch 6))
                      (export/export-metrics! writer
                                               {:attributes {"service.ready" false}}
-                                              (metric-batch))
+                                              (metric-batch 8))
                      (export/export-metrics! writer
                                               {:attributes {"service.ready" false
                                                             "service.tier" 7}}
-                                              (metric-batch))])
+                                              (metric-batch 7))])
             (let [legacy (exporter/exporter {:connection connection :create-schema? false
                                              :signals #{:metrics}})]
               (try
@@ -251,23 +253,25 @@
                   int64-lt (query (gauge-request gauges "runtime.workers" :lt 8))
                   string-eq (query (gauge-request gauges "service.tier" :eq "gold"))
                   string-prefix (query (gauge-request gauges "service.tier" :prefix "go"))
-                  string-contains (query (gauge-request gauges "service.tier" :contains "ol"))]
+                  string-contains (query (gauge-request gauges "service.tier" :contains "ol"))
+                  hostile (query (gauge-request gauges "service.tier" :contains "gold' OR 1=1 --"))]
               (check! "direct native filters cover Boolean metric Int64 scope and String resource locations"
-                      [#{false} #{7} #{7} #{7} ["gold"] ["gold"] ["gold"]]
+                      [#{false} #{7} #{7 8} #{6 7} ["gold"] ["gold"] ["gold"] []]
                       [(set (map :attribute-value (:matches boolean)))
                        (set (map :attribute-value (:matches int64-eq)))
                        (set (map :attribute-value (:matches int64-gte)))
                        (set (map :attribute-value (:matches int64-lt)))
                        (mapv :attribute-value (:matches string-eq))
                        (mapv :attribute-value (:matches string-prefix))
-                       (mapv :attribute-value (:matches string-contains))]))
+                       (mapv :attribute-value (:matches string-contains))
+                       (mapv :attribute-value (:matches hostile))]))
             (check! "direct native String coverage distinguishes all six availability states"
                     {:valid 1 :present-empty 1 :absent 1 :invalid 1
                      :historical-untyped-fallback 1
                      :historical-untyped-unavailable 1 :total 6}
                     (:coverage (metric-explorer/typed-gauge-coverage
                                 connection (:descriptor-set gauges)
-                                (gauge-coverage-request gauges "service.tier"))))
+                                (gauge-coverage-request gauges "service.tier")))))
           (finally (export/shutdown-metric-exporter! writer)))
         ;; This is a real table-qualified DESCRIBE failure path, not a forged
         ;; observation. A wrong existing type must mark the same registry
