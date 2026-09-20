@@ -40,6 +40,9 @@
            :typed-log-explorer-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-typed-log-explorer-runner"]}
+           :typed-metric-explorer-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-metric-explorer-runner"]}
            :test {:extra-paths ["test" "bench"]
                   :extra-deps
                   {io.github.casselc/jolt-http

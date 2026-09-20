@@ -11,6 +11,7 @@
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
+            [otel.exporter.chdb.typed-metric-explorer :as metric-explorer]
             [otel.sdk.export :as export]))
 
 (def ^:private int64-max 9223372036854775807)
@@ -84,22 +85,43 @@
                                  (field-columns physical)))
        " FROM " table " LIMIT 1"))
 
-(defn- metric-batch []
-  [{:scope {:name "typed-native" :attributes {"runtime.workers" 7
-                                                  "scope.generic" "kept-generic"}}
-    :metrics [{:type :gauge :name "typed.gauge" :description "" :unit "1"
-               :data-points [{:value 2.0 :time-unix-nano 1000000000
-                              :attributes {"queue.ready" false "queue.count" int64-max
-                                           "point.generic" "kept-generic"}}]}
-              {:type :sum :name "typed.sum" :description "" :unit "1"
-               :temporality :cumulative :monotonic? true
-               :data-points [{:value 3.0 :time-unix-nano 1000000000
-                              :attributes {"request.success" false "request.count" int64-max
-                                           "point.generic" "kept-generic"}}]}]}])
+(defn- metric-batch
+  ([] (metric-batch 7))
+  ([workers]
+   [{:scope {:name "typed-native"
+             :attributes {"runtime.workers" workers "scope.generic" "kept-generic"}}
+     :metrics [{:type :gauge :name "typed.gauge" :description "" :unit "1"
+                :data-points [{:value 2.0 :time-unix-nano 1000000000
+                               :attributes {"queue.ready" false "queue.count" int64-max
+                                            "point.generic" "kept-generic"}}]}
+               {:type :sum :name "typed.sum" :description "" :unit "1"
+                :temporality :cumulative :monotonic? true
+                :data-points [{:value 3.0 :time-unix-nano 1000000000
+                               :attributes {"request.success" false "request.count" int64-max
+                                            "point.generic" "kept-generic"}}]}]}]))
 
 (defn- value-status [row physical key]
   [(get row (keyword (:value-column (get physical key))))
    (get row (keyword (:status-column (get physical key))))])
+
+(defn- schema-binding [field]
+  {:attribute-key (:key field) :attribute-location (:location field)
+   :attribute-type (:type field) :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- gauge-request
+  ([installation key value]
+   (gauge-request installation key :eq value))
+  ([installation key operator value]
+   (let [field (first (filter #(= key (:key %))
+                              (get-in installation [:record :manifest :fields])))]
+     {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
+      :start-unix-nano 0 :end-unix-nano 2000000000
+      :operator operator :value value :limit 10 :max-text-length 64})))
+
+(defn- gauge-coverage-request [installation key]
+  (select-keys (gauge-request installation key nil)
+               [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
 
 (defn -main [& _]
   (reset! observed-checks 0)
@@ -109,6 +131,7 @@
     (let [store (backend/memory-backend)
           gauge-approved (approved "gauge" "otel_metrics_gauge"
                                    [[:resource-attributes "service.ready" :boolean]
+                                    [:resource-attributes "service.tier" :string]
                                     [:scope-attributes "runtime.workers" :int64]
                                     [:metric-attributes "queue.ready" :boolean]
                                     [:metric-attributes "queue.count" :int64]])
@@ -122,7 +145,7 @@
       (check! "real gauge and sum installer DDL activates both capabilities"
               [:active :active] [(:status gauges) (:status sums)])
       (check! "first native installs emit exactly owned additive DDL"
-              [8 4] [(:ddl-count gauges) (:ddl-count sums)])
+              [10 4] [(:ddl-count gauges) (:ddl-count sums)])
       (check! "native observed gauge columns retain exact owned types"
               (expected-column-types gauges)
               (select-keys (observed-columns connection "otel_metrics_gauge")
@@ -143,17 +166,20 @@
           (check! "direct native gauge and sum export succeeds" true
                   (export/export-metrics! writer
                                           {:attributes {"service.ready" false
+                                                        "service.tier" "gold"
                                                         "resource.generic" "kept-generic"}}
                                           (metric-batch)))
           (let [gauge-row (jdbc/fetch-one connection (typed-select "otel_metrics_gauge" gauge-physical))
                 sum-row (jdbc/fetch-one connection (typed-select "otel_metrics_sum" sum-physical))]
             (check! "native gauge retains generic maps and projects all three locations"
-                    [{"service.ready" "false" "resource.generic" "kept-generic"}
+                    [{"service.ready" "false" "service.tier" "gold"
+                      "resource.generic" "kept-generic"}
                      {"runtime.workers" "7" "scope.generic" "kept-generic"}
                      {"queue.ready" "false" "queue.count" (str int64-max) "point.generic" "kept-generic"}
-                     [[false 3] [7 3] [false 3] [int64-max 3]]]
+                     [[false 3] ["gold" 3] [7 3] [false 3] [int64-max 3]]]
                     [(:resource gauge-row) (:scope gauge-row) (:attributes gauge-row)
                      [(value-status gauge-row gauge-physical "service.ready")
+                      (value-status gauge-row gauge-physical "service.tier")
                       (value-status gauge-row gauge-physical "runtime.workers")
                       (value-status gauge-row gauge-physical "queue.ready")
                       (value-status gauge-row gauge-physical "queue.count")]])
@@ -170,7 +196,82 @@
                       [(get types (keyword (:value-column ready)))
                        (get types (keyword (:status-column ready)))
                        (get types (keyword (:value-column count)))
-                       (get types (keyword (:status-column count)))])))
+                       (get types (keyword (:status-column count)))]))
+            (let [request (gauge-request gauges "queue.ready" false)
+                  result (metric-explorer/typed-gauge-filtered-points
+                          connection (:descriptor-set gauges) request)]
+              (check! "native gauge discovery and typed Boolean filter read back the installed row"
+                      [[[:metric-attributes :boolean]
+                        [:metric-attributes :int64]
+                        [:resource-attributes :boolean]
+                        [:resource-attributes :string]
+                        [:scope-attributes :int64]]
+                       {:valid 1 :present-empty 0 :absent 0 :invalid 0
+                        :historical-untyped-fallback 0
+                        :historical-untyped-unavailable 0 :total 1}
+                       [false 3 "typed.gauge" 2]]
+                      [(->> (metric-explorer/typed-gauge-fields connection (:descriptor-set gauges))
+                            (mapv (fn [{:keys [schema-binding]}]
+                                    [(:attribute-location schema-binding)
+                                     (:attribute-type schema-binding)]))
+                            sort vec)
+                       (:coverage result)
+                       (let [row (first (:matches result))]
+                         [(:attribute-value row) (:typed-status row)
+                          (:metric-name row) (:metric-value row)])]))
+            ;; Exercise the direct path's three locations and all stored
+            ;; availability states. These rows are deliberately exported, not
+            ;; forged with SQL, so the query observes real value/status pairs.
+            (check! "direct typed gauge export emits empty absent and invalid resource String states"
+                    [true true true]
+                    [(export/export-metrics! writer
+                                              {:attributes {"service.ready" false
+                                                            "service.tier" ""}}
+                                              (metric-batch 6))
+                     (export/export-metrics! writer
+                                              {:attributes {"service.ready" false}}
+                                              (metric-batch 8))
+                     (export/export-metrics! writer
+                                              {:attributes {"service.ready" false
+                                                            "service.tier" 7}}
+                                              (metric-batch 7))])
+            (let [legacy (exporter/exporter {:connection connection :create-schema? false
+                                             :signals #{:metrics}})]
+              (try
+                (check! "direct capability-free rows retain fallback and unavailable resource states"
+                        [true true]
+                        [(export/export-metrics! legacy {:attributes {"service.tier" "legacy"}}
+                                                (metric-batch))
+                         (export/export-metrics! legacy {:attributes {}}
+                                                (metric-batch))])
+                (finally (export/shutdown-metric-exporter! legacy))))
+            (let [query #(metric-explorer/typed-gauge-filtered-points
+                          connection (:descriptor-set gauges) %)
+                  boolean (query (gauge-request gauges "queue.ready" false))
+                  int64-eq (query (gauge-request gauges "runtime.workers" :eq 7))
+                  int64-gte (query (gauge-request gauges "runtime.workers" :gte 7))
+                  int64-lt (query (gauge-request gauges "runtime.workers" :lt 8))
+                  string-eq (query (gauge-request gauges "service.tier" :eq "gold"))
+                  string-prefix (query (gauge-request gauges "service.tier" :prefix "go"))
+                  string-contains (query (gauge-request gauges "service.tier" :contains "ol"))
+                  hostile (query (gauge-request gauges "service.tier" :contains "gold' OR 1=1 --"))]
+              (check! "direct native filters cover Boolean metric Int64 scope and String resource locations"
+                      [#{false} #{7} #{7 8} #{6 7} ["gold"] ["gold"] ["gold"] []]
+                      [(set (map :attribute-value (:matches boolean)))
+                       (set (map :attribute-value (:matches int64-eq)))
+                       (set (map :attribute-value (:matches int64-gte)))
+                       (set (map :attribute-value (:matches int64-lt)))
+                       (mapv :attribute-value (:matches string-eq))
+                       (mapv :attribute-value (:matches string-prefix))
+                       (mapv :attribute-value (:matches string-contains))
+                       (mapv :attribute-value (:matches hostile))]))
+            (check! "direct native String coverage distinguishes all six availability states"
+                    {:valid 1 :present-empty 1 :absent 1 :invalid 1
+                     :historical-untyped-fallback 1
+                     :historical-untyped-unavailable 1 :total 6}
+                    (:coverage (metric-explorer/typed-gauge-coverage
+                                connection (:descriptor-set gauges)
+                                (gauge-coverage-request gauges "service.tier")))))
           (finally (export/shutdown-metric-exporter! writer)))
         ;; This is a real table-qualified DESCRIBE failure path, not a forged
         ;; observation. A wrong existing type must mark the same registry
@@ -181,7 +282,7 @@
           (let [failed (install! store connection gauge-approved "otel_metrics_gauge")]
             (check! "native table-qualified wrong type fails without DDL"
                     [:failed 0] [(:status failed) (:ddl-count failed)]))))))
-  (when-not (= 10 @observed-checks)
+  (when-not (= 15 @observed-checks)
     (throw (ex-info "typed metric native check inventory changed"
-                    {:expected 10 :actual @observed-checks})))
+                    {:expected 15 :actual @observed-checks})))
   (println "typed-metric-native-qualified :observed-checks" @observed-checks))

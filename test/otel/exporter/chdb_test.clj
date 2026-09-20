@@ -23,6 +23,7 @@
             [otel.exporter.chdb-typed-gauge-test :as typed-gauge-test]
             [otel.exporter.chdb-typed-sum-test :as typed-sum-test]
             [otel.exporter.chdb-typed-log-explorer-test :as typed-log-explorer-test]
+            [otel.exporter.chdb-typed-metric-explorer-test :as typed-metric-explorer-test]
             [otel.exporter.chdb-typed-log-socket-native-test :as typed-log-socket-test]
             [otel.exporter.chdb-benchmark :as benchmark]
             [otel.exporter.chdb-dependency-test :as dependency-test]
@@ -107,7 +108,8 @@
                      'otel.exporter.chdb.attribute-registry-store
                      'otel.exporter.chdb.schema
                      'otel.exporter.chdb.explorer
-                     'otel.exporter.chdb.typed-log-explorer]]
+                     'otel.exporter.chdb.typed-log-explorer
+                     'otel.exporter.chdb.typed-metric-explorer]]
     (let [expression (str "(require '" source-ns ")"
                           "(println :clean-source-load '" source-ns ")")
           child (process/process
@@ -787,6 +789,7 @@
   (typed-gauge-test/run check)
   (typed-sum-test/run check)
   (typed-log-explorer-test/run check)
+  (typed-metric-explorer-test/run check)
   (typed-query-native-test/run check)
   (typed-log-socket-test/-main)
   (run-clean-source-load-check)
