@@ -84,27 +84,31 @@
                    (jdbc/fetch connection (str "DESCRIBE TABLE " table)))
     :signal :metrics :table table}])
 
-(defn- collected [gauge-name sum-name]
-  [{:scope {:name "typed-gauge-socket" :version "1"
-            :attributes {"scope.workers" 7 "scope.generic" "kept-generic"}}
-    :metrics [{:type :gauge :name gauge-name :description "" :unit "{item}"
-               :data-points
-               [{:value 2.0 :time-unix-nano 1700000000000000000
-                 :attributes {"queue.ready" false "queue.zero" 0
-                              "queue.minimum" int64-min "queue.maximum" int64-max
-                              ;; This is a present empty string, distinct from
-                              ;; an absent descriptor key (status 2, not 1).
-                              "queue.label" ""
-                              "generic.empty-string" ""
-                              "generic.bytes" (any/bytes [0 1 2 255])
-                              "generic.nested" {"kind" "nested" "count" 2}}}]}
-              {:type :sum :name sum-name :description "" :unit "1"
-               :temporality :cumulative :monotonic? true
-               :data-points
-               [{:value 3.0 :time-unix-nano 1700000000000000000
-                 :attributes {"request.success" false "request.count" int64-max
-                              "generic.bytes" (any/bytes [0 1 2 255])
-                              "generic.nested" {"kind" "nested" "count" 2}}}]}]}])
+(def ^:private default-gauge-attributes
+  {"queue.ready" false "queue.zero" 0
+   "queue.minimum" int64-min "queue.maximum" int64-max
+   ;; This is a present empty string, distinct from an absent descriptor key.
+   "queue.label" ""
+   "generic.empty-string" ""
+   "generic.bytes" (any/bytes [0 1 2 255])
+   "generic.nested" {"kind" "nested" "count" 2}})
+
+(defn- collected
+  ([gauge-name sum-name]
+   (collected gauge-name sum-name default-gauge-attributes))
+  ([gauge-name sum-name gauge-attributes]
+   [{:scope {:name "typed-gauge-socket" :version "1"
+             :attributes {"scope.workers" 7 "scope.generic" "kept-generic"}}
+     :metrics [{:type :gauge :name gauge-name :description "" :unit "{item}"
+                :data-points [{:value 2.0 :time-unix-nano 1700000000000000000
+                               :attributes gauge-attributes}]}
+               {:type :sum :name sum-name :description "" :unit "1"
+                :temporality :cumulative :monotonic? true
+                :data-points
+                [{:value 3.0 :time-unix-nano 1700000000000000000
+                  :attributes {"request.success" false "request.count" int64-max
+                               "generic.bytes" (any/bytes [0 1 2 255])
+                               "generic.nested" {"kind" "nested" "count" 2}}}]}]}]))
 
 (defn- fields-by-key [installation]
   (into {} (map (juxt :key identity))
@@ -131,11 +135,17 @@
    :attribute-type (:type field) :field-id (:id field)
    :manifest-version (get-in field [:identity :version])})
 
-(defn- gauge-query [field]
-  {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
-   :start-unix-nano 1700000000000000000
-   :end-unix-nano 1700000001000000000
-   :operator :eq :value false :limit 10 :max-text-length 64})
+(defn- gauge-query
+  ([field]
+   (gauge-query field :eq false 1700000000000000000 1700000001000000000))
+  ([field operator value start end]
+   {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
+    :start-unix-nano start :end-unix-nano end
+    :operator operator :value value :limit 10 :max-text-length 64}))
+
+(defn- gauge-coverage [field]
+  (select-keys (gauge-query field)
+               [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
 
 (defn -main [& _]
   (reset! observed-checks 0)
@@ -223,6 +233,49 @@
                      [false false]]
                     [(:coverage result)
                      (mapv :attribute-value (:matches result))]))
+          ;; Keep the operator evidence on real native rows. The priority row
+          ;; crosses the socket; absent and invalid rows cross the direct path.
+          (check! "socket and direct paths admit typed String and status controls" true
+                  (and (export/export-metrics!
+                        @client r
+                        (collected "typed.gauge.string.socket" "typed.sum.string.socket"
+                                   (assoc default-gauge-attributes "queue.label" "priority")))
+                       (export/export-metrics!
+                        receiving r
+                        (collected "typed.gauge.absent.direct" "typed.sum.absent.direct"
+                                   (dissoc default-gauge-attributes "queue.label")))
+                       (export/export-metrics!
+                        receiving r
+                        (collected "typed.gauge.invalid.direct" "typed.sum.invalid.direct"
+                                   (assoc default-gauge-attributes "queue.label" 42)))))
+          (let [query #(metric-explorer/typed-gauge-filtered-points
+                        connection (:descriptor-set gauges) %)
+                resource (query (gauge-query (get gauge-fields "resource.ready")
+                                              :eq false 1700000000000000000 1700000001000000000))
+                scope-eq (query (gauge-query (get gauge-fields "scope.workers")
+                                              :eq 7 1700000000000000000 1700000001000000000))
+                scope-gte (query (gauge-query (get gauge-fields "scope.workers")
+                                               :gte 7 1700000000000000000 1700000001000000000))
+                scope-lt (query (gauge-query (get gauge-fields "scope.workers")
+                                              :lt 8 1700000000000000000 1700000001000000000))
+                empty-label (query (gauge-query (get gauge-fields "queue.label")
+                                                 :eq "" 1700000000000000000 1700000001000000000))
+                prefix (query (gauge-query (get gauge-fields "queue.label")
+                                            :prefix "pri" 1700000000000000000 1700000001000000000))
+                contains (query (gauge-query (get gauge-fields "queue.label")
+                                              :contains "iori" 1700000000000000000 1700000001000000000))
+                half-open (query (gauge-query (get gauge-fields "queue.ready")
+                                               :eq false 1699999999000000000 1700000000000000000))]
+            (check! "real socket/direct rows prove every gauge filter grammar and half-open seconds"
+                    [#{false} #{7} #{7} #{7} ["" ""] ["priority"] ["priority"] []]
+                    [(set (map :attribute-value (:matches resource)))
+                     (set (map :attribute-value (:matches scope-eq)))
+                     (set (map :attribute-value (:matches scope-gte)))
+                     (set (map :attribute-value (:matches scope-lt)))
+                     (sort (map :attribute-value (:matches empty-label)))
+                     (mapv :attribute-value (:matches prefix))
+                     (mapv :attribute-value (:matches contains))
+                     (mapv :attribute-value (:matches half-open))]))
           ;; A capability-free exporter is a mutation/bypass control: generic
           ;; fields still persist, while every installed typed status is 0.
           (let [legacy (chdb-export/exporter {:connection connection :create-schema? false
@@ -233,6 +286,11 @@
               (check! "capability-free gauge and sum export succeeds" true
                       (export/export-metrics! legacy (resource/resource {})
                                               (collected gauge-control sum-control)))
+              (check! "capability-free row without the String key persists" true
+                      (export/export-metrics! legacy (resource/resource {})
+                                             (collected "typed.gauge.unavailable"
+                                                        "typed.sum.unavailable"
+                                                        (dissoc default-gauge-attributes "queue.label"))))
               (let [gauge-row (first (rows connection "otel_metrics_gauge" gauge-control))
                     sum-row (first (rows connection "otel_metrics_sum" sum-control))]
                 (check! "capability bypass leaves gauge resource scope and point columns historical"
@@ -246,13 +304,21 @@
                                ["request.success" "request.count"])
                          (get (:attributes sum-row) "generic.bytes")]))
               (finally (export/shutdown-metric-exporter! legacy)))))
+          (let [coverage (metric-explorer/typed-gauge-coverage
+                          connection (:descriptor-set gauges)
+                          (gauge-coverage (get gauge-fields "queue.label")))]
+            (check! "real gauge coverage distinguishes all six availability states"
+                    {:valid 1 :present-empty 2 :absent 1 :invalid 1
+                     :historical-untyped-fallback 1
+                     :historical-untyped-unavailable 1 :total 7}
+                    (:coverage coverage)))
         (finally
           (when-let [outbound @client]
             (export/shutdown-metric-exporter! outbound))
           (when-let [server @listener]
             (http-server/stop-server server))
           (export/shutdown-metric-exporter! receiving)))))
-  (when-not (= 11 @observed-checks)
+  (when-not (= 15 @observed-checks)
     (throw (ex-info "typed metric socket check inventory changed"
-                    {:expected 11 :actual @observed-checks})))
+                    {:expected 15 :actual @observed-checks})))
   (println "typed-metric-socket-qualified :observed-checks" @observed-checks))
