@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add installer-capability-bound typed gauge schema discovery, Boolean/String/
+  Int64 filtering, and six-way availability coverage. Queries use only fixed
+  gauge-table identifiers and JDBC-bound caller scalars; generic maps remain
+  the compatibility fallback. Sum/histogram querying, metric aggregation, and
+  saved-query persistence remain unsupported (#8).
+
 - Extend installer-capability-bound metric promotion to gauge resource and
   scope attributes and sum point attributes. The generic ClickStack maps stay
   unchanged; sum resource/scope and every histogram target still reject before

@@ -14,6 +14,7 @@
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
+            [otel.exporter.chdb.typed-metric-explorer :as metric-explorer]
             [otel.exporter.otlp :as otlp-export]
             [otel.otlp.http-receiver :as receiver]
             [otel.resource :as resource]
@@ -125,6 +126,17 @@
     [(get row (keyword (:value-column physical)))
      (get row (keyword (:status-column physical)))]))
 
+(defn- schema-binding [field]
+  {:attribute-key (:key field) :attribute-location (:location field)
+   :attribute-type (:type field) :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- gauge-query [field]
+  {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
+   :start-unix-nano 1700000000000000000
+   :end-unix-nano 1700000001000000000
+   :operator :eq :value false :limit 10 :max-text-length 64})
+
 (defn -main [& _]
   (reset! observed-checks 0)
   (println "typed metric attributes over a real OTLP socket")
@@ -201,6 +213,16 @@
                      {"scope.generic" "kept-generic" "scope.workers" "7"}]
                     [(:attributes gauge-row) (:attributes sum-row)
                      (:resourceattributes gauge-row) (:scopeattributes gauge-row)]))
+          (let [result (metric-explorer/typed-gauge-filtered-points
+                        connection (:descriptor-set gauges)
+                        (gauge-query (get gauge-fields "queue.ready")))]
+            (check! "receiver-produced gauge rows support typed query and coverage"
+                    [{:valid 2 :present-empty 0 :absent 0 :invalid 0
+                      :historical-untyped-fallback 0
+                      :historical-untyped-unavailable 0 :total 2}
+                     [false false]]
+                    [(:coverage result)
+                     (mapv :attribute-value (:matches result))]))
           ;; A capability-free exporter is a mutation/bypass control: generic
           ;; fields still persist, while every installed typed status is 0.
           (let [legacy (chdb-export/exporter {:connection connection :create-schema? false
@@ -230,7 +252,7 @@
           (when-let [server @listener]
             (http-server/stop-server server))
           (export/shutdown-metric-exporter! receiving)))))
-  (when-not (= 10 @observed-checks)
+  (when-not (= 11 @observed-checks)
     (throw (ex-info "typed metric socket check inventory changed"
-                    {:expected 10 :actual @observed-checks})))
+                    {:expected 11 :actual @observed-checks})))
   (println "typed-metric-socket-qualified :observed-checks" @observed-checks))

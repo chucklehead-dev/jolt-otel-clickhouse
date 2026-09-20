@@ -11,6 +11,7 @@
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
+            [otel.exporter.chdb.typed-metric-explorer :as metric-explorer]
             [otel.sdk.export :as export]))
 
 (def ^:private int64-max 9223372036854775807)
@@ -101,6 +102,18 @@
   [(get row (keyword (:value-column (get physical key))))
    (get row (keyword (:status-column (get physical key))))])
 
+(defn- schema-binding [field]
+  {:attribute-key (:key field) :attribute-location (:location field)
+   :attribute-type (:type field) :field-id (:id field)
+   :manifest-version (get-in field [:identity :version])})
+
+(defn- gauge-request [installation key value]
+  (let [field (first (filter #(= key (:key %))
+                             (get-in installation [:record :manifest :fields])))]
+    {:schema-binding (schema-binding field) :signal :metrics :metric-kind :gauge
+     :start-unix-nano 0 :end-unix-nano 2000000000
+     :operator :eq :value value :limit 10 :max-text-length 64}))
+
 (defn -main [& _]
   (reset! observed-checks 0)
   (println "typed metric direct native qualification")
@@ -171,6 +184,27 @@
                        (get types (keyword (:status-column ready)))
                        (get types (keyword (:value-column count)))
                        (get types (keyword (:status-column count)))])))
+            (let [request (gauge-request gauges "queue.ready" false)
+                  result (metric-explorer/typed-gauge-filtered-points
+                          connection (:descriptor-set gauges) request)]
+              (check! "native gauge discovery and typed Boolean filter read back the installed row"
+                      [[[:metric-attributes :boolean]
+                        [:metric-attributes :int64]
+                        [:resource-attributes :boolean]
+                        [:scope-attributes :int64]]
+                       {:valid 1 :present-empty 0 :absent 0 :invalid 0
+                        :historical-untyped-fallback 0
+                        :historical-untyped-unavailable 0 :total 1}
+                       [false 3 "typed.gauge" 2]]
+                      [(->> (metric-explorer/typed-gauge-fields connection (:descriptor-set gauges))
+                            (mapv (fn [{:keys [schema-binding]}]
+                                    [(:attribute-location schema-binding)
+                                     (:attribute-type schema-binding)]))
+                            sort vec)
+                       (:coverage result)
+                       (let [row (first (:matches result))]
+                         [(:attribute-value row) (:typed-status row)
+                          (:metric-name row) (:metric-value row)])]))
           (finally (export/shutdown-metric-exporter! writer)))
         ;; This is a real table-qualified DESCRIBE failure path, not a forged
         ;; observation. A wrong existing type must mark the same registry
@@ -181,7 +215,7 @@
           (let [failed (install! store connection gauge-approved "otel_metrics_gauge")]
             (check! "native table-qualified wrong type fails without DDL"
                     [:failed 0] [(:status failed) (:ddl-count failed)]))))))
-  (when-not (= 10 @observed-checks)
+  (when-not (= 11 @observed-checks)
     (throw (ex-info "typed metric native check inventory changed"
-                    {:expected 10 :actual @observed-checks})))
+                    {:expected 11 :actual @observed-checks})))
   (println "typed-metric-native-qualified :observed-checks" @observed-checks))

@@ -135,20 +135,20 @@ target.
 ### Current typed-target matrix
 
 An approved metric descriptor retains the compatible generic map and adds only
-its manifest-owned value/status columns. It is not a general metric schema or a
-typed metric query feature.
+its manifest-owned value/status columns. It is not a general metric schema;
+the bounded gauge query API below is the sole typed metric query surface.
 
 | Table | Resource | Scope | Point | Current evidence |
 | --- | --- | --- | --- | --- |
-| `otel_metrics_gauge` | supported | supported | supported | direct native DDL/readback and OTLP JSON loopback; Durable fresh-reader fixture wired to hosted lane |
+| `otel_metrics_gauge` | supported | supported | supported | direct native DDL/readback, OTLP JSON loopback, and bounded typed query; Durable fresh-reader fixture wired to hosted lane |
 | `otel_metrics_sum` | rejected | rejected | supported | direct native DDL/readback and OTLP JSON loopback; Durable fresh-reader fixture wired to hosted lane |
 | `otel_metrics_histogram` | rejected | rejected | rejected | no typed installer/exporter support |
 
 “Wired to hosted lane” is intentionally not a passing-hosted-run claim: the
 fixture must still run successfully on the documented Durable compiler before
 it contributes to release qualification. The direct Durable readback in that fixture is
-test-only; no public API exposes typed metric filtering, grouping, or
-aggregation yet.
+test-only for sum/histogram fields. Gauge filtering and coverage are public;
+typed metric grouping and aggregation remain unsupported.
 
 ## Determinism and conflicts
 
@@ -641,9 +641,11 @@ are location-qualified; the same logical key may appear independently at all
 three locations. Log-record attributes are also qualified through a real
 loopback socket and native readback. Gauge resource/scope/point and sum point
 promotion now have direct native and OTLP loopback evidence, with the same
-Durable fresh-reader fixture wired to hosted qualification. Log resource/scope,
-sum resource/scope, every histogram target, typed log queries, and every typed
-metric query remain unsupported.
+Durable fresh-reader fixture wired to hosted qualification. Gauge fields also
+have a bounded, capability-bound discovery/filter/coverage API; sum and
+histogram fields do not. Log resource/scope, sum resource/scope, every
+histogram target, and metric typed queries beyond the gauge boundary remain
+unsupported.
 Typed numeric queries are intentionally limited to exact Int64 `:eq`, `:gte`,
 and `:lt` trace filters plus range aggregation. Comparative map-conversion
 benchmarks, broader grouping and aggregate vocabularies, and other promoted
@@ -659,3 +661,34 @@ database-side ownership or a shared schema lease. A later catalog writer can
 likewise supersede a returned generation, so consumers must retain the result's
 record/snapshot identity rather than treating the bare descriptor vector as an
 eternal capability.
+
+### Query typed gauge fields
+
+`otel.exporter.chdb.typed-metric-explorer` reads only an
+installer-confirmed descriptor capability bound to the same connection. It
+does not install columns, infer fields from telemetry, or accept table/column
+names from callers.
+
+```clojure
+(def fields (typed-metric-explorer/typed-gauge-fields connection descriptors))
+;; Each entry has :signal :metrics, :metric-kind :gauge, a stable
+;; :schema-binding, and the operators valid for that field's scalar type.
+
+(typed-metric-explorer/typed-gauge-filtered-points
+ connection descriptors
+ {:signal :metrics :metric-kind :gauge
+  :schema-binding (:schema-binding (first fields))
+  :start-unix-nano start :end-unix-nano end
+  :operator :eq :value false :limit 100})
+```
+
+The API supports Boolean `:eq`, Int64 `:eq`/`:gte`/`:lt`, and String
+`:eq`/`:prefix`/`:contains` over the three installed gauge locations. Results
+include a six-way coverage map: valid, present-empty, absent, invalid,
+historical-untyped-with-fallback, and historical-untyped-unavailable. Only
+valid values match Boolean and Int64 predicates; present-empty and valid String
+values may match String predicates. Gauge timestamps are stored at
+second-resolution and rows have no point identifier, so returned rows are
+ordered observations rather than a unique-point claim. Sum/histogram queries,
+typed metric aggregation, and saved-query persistence remain outside this
+slice.
