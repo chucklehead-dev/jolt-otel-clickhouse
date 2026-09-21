@@ -70,8 +70,7 @@
   "Return gauge fields after capability and target confirmation.
 
   Gauge point, resource, and instrumentation-scope attributes share one
-  physical table and one capability. Sum resource/scope and all histogram
-  targets are deliberately outside this bounded projection contract."
+  physical table and one capability."
   [descriptor-set target]
   (let [fields (confirmed-fields descriptor-set target)]
     (when-not (every? #(contains? identity/gauge-attribute-targets
@@ -85,14 +84,24 @@
   "Return sum fields after capability and target confirmation.
 
   Sum point, resource, and instrumentation-scope attributes share one
-  physical table and one capability. Histogram targets remain deliberately
-  outside this bounded projection contract."
+  physical table and one capability."
   [descriptor-set target]
   (let [fields (confirmed-fields descriptor-set target)]
     (when-not (every? #(contains? identity/sum-attribute-targets
                                    (identity/target-of %))
                       fields)
       (fail! "typed sum projection requires a sum-table capability"
+             ::signal-mismatch {}))
+    fields))
+
+(defn confirmed-histogram-fields
+  "Return explicit-histogram fields after capability and target confirmation."
+  [descriptor-set target]
+  (let [fields (confirmed-fields descriptor-set target)]
+    (when-not (every? #(contains? identity/histogram-attribute-targets
+                                   (identity/target-of %))
+                      fields)
+      (fail! "typed histogram projection requires a histogram-table capability"
              ::signal-mismatch {}))
     fields))
 
@@ -171,6 +180,12 @@
   "Compile one confirmed sum capability into a full metric row projector."
   [descriptor-set target]
   (let [fields (confirmed-sum-fields descriptor-set target)]
+    (metric-projector fields)))
+
+(defn histogram-projector
+  "Compile one confirmed explicit-histogram capability into a metric row projector."
+  [descriptor-set target]
+  (let [fields (confirmed-histogram-fields descriptor-set target)]
     (metric-projector fields)))
 
 (defn span-projector

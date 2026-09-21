@@ -1,9 +1,8 @@
 (ns otel.exporter.chdb.typed-metric-explorer
   "Bounded schema-bound queries over installer-confirmed typed metric fields.
 
-  This is deliberately a query surface for the already-supported gauge and sum
-  tables, not a second schema installer. Histogram fields are rejected before
-  any JDBC work."
+  This is deliberately a query surface for installed metric tables, not a
+  second schema installer."
   (:require [db.jdbc]
             [jdbc.core :as jdbc]
             [otel.context :as context]
@@ -26,6 +25,9 @@
 (def sum-filter-capability
   (assoc filter-capability :metric-kinds [:sum]))
 
+(def histogram-filter-capability
+  (assoc filter-capability :metric-kinds [:histogram]))
+
 (def max-filter-value-length 256)
 
 (def ^:private filter-request-keys
@@ -39,7 +41,7 @@
 (def ^:private metric-locations
   #{:resource-attributes :scope-attributes :metric-attributes})
 (def ^:private safe-column
-  (re-pattern "a[sv]_m[gs]_(rs|sc|mt)_[a-z0-9_]+_[0-9a-f]{16}"))
+  (re-pattern "a[sv]_m[ghs]_(rs|sc|mt)_[a-z0-9_]+_[0-9a-f]{16}"))
 (def ^:private int64-min -9223372036854775808)
 (def ^:private int64-max 9223372036854775807)
 (def ^:private coverage-keys
@@ -51,6 +53,7 @@
 
 (defn supported-typed-gauge-filters [] filter-capability)
 (defn supported-typed-sum-filters [] sum-filter-capability)
+(defn supported-typed-histogram-filters [] histogram-filter-capability)
 
 (defn- fail! [type message data]
   (throw (ex-info message (assoc data :attribute-explorer/error true :type type))))
@@ -96,9 +99,11 @@
                                  identity/gauge-attribute-targets]
                          :sum [(projection/confirmed-sum-fields descriptor-set connection)
                                identity/sum-attribute-targets]
+                         :histogram [(projection/confirmed-histogram-fields descriptor-set connection)
+                                     identity/histogram-attribute-targets]
                          (fail! ::unsupported-metric-kind
-                                "typed metric queries support gauges and sums only"
-                                {:supported-metric-kinds [:gauge :sum]}))]
+                                "typed metric queries support gauges, sums, and histograms only"
+                                {:supported-metric-kinds [:gauge :sum :histogram]}))]
     (when-not (every? #(contains? targets (identity/target-of %)) fields)
       (fail! ::invalid-target "typed metric capability has an invalid target" {}))
     fields))
@@ -131,6 +136,18 @@
            :operators (get-in sum-filter-capability [:operators (:type field)])})
         (metric-fields! connection descriptor-set :sum)))
 
+(defn typed-histogram-fields
+  "Discover exact queryable schema bindings in a confirmed histogram capability."
+  [connection descriptor-set]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed histogram discovery requires the installed target connection" {}))
+  (mapv (fn [field]
+          {:signal :metrics :metric-kind :histogram
+           :schema-binding (binding field)
+           :operators (get-in histogram-filter-capability [:operators (:type field)])})
+        (metric-fields! connection descriptor-set :histogram)))
+
 (defn- field! [connection descriptor-set options]
   (when (nil? connection)
     (fail! ::invalid-connection
@@ -140,9 +157,9 @@
            {:supported-signals [:metrics]}))
   (let [metric-kind (:metric-kind options)
         actual (:schema-binding options)]
-    (when-not (contains? #{:gauge :sum} metric-kind)
-      (fail! ::unsupported-metric-kind "typed metric queries support gauges and sums only"
-             {:supported-metric-kinds [:gauge :sum]}))
+    (when-not (contains? #{:gauge :sum :histogram} metric-kind)
+      (fail! ::unsupported-metric-kind "typed metric queries support gauges, sums, and histograms only"
+             {:supported-metric-kinds [:gauge :sum :histogram]}))
     (when-not (valid-binding? actual)
       (fail! ::invalid-binding "typed gauge schema binding is invalid" {}))
     (let [field (some #(when (= actual (binding %)) %)
@@ -222,7 +239,13 @@
 
 (defn- metric-table [metric-kind]
   (case metric-kind :gauge "otel_metrics_gauge" :sum "otel_metrics_sum"
-        (fail! ::unsupported-metric-kind "typed metric queries support gauges and sums only" {})))
+        :histogram "otel_metrics_histogram"
+        (fail! ::unsupported-metric-kind "typed metric queries support gauges, sums, and histograms only" {})))
+
+(defn- metric-value-column [metric-kind]
+  ;; Explicit histograms have no scalar Value column. Count is a stable stored
+  ;; point field and keeps this bounded explorer out of bucket reconstruction.
+  (case metric-kind :histogram "Count" "Value"))
 
 (defn- match-sql [{:keys [field metric-kind] :as request}]
   (let [{:keys [value status]} (columns! field)
@@ -232,7 +255,7 @@
          "       leftUTF8(MetricUnit, ?) AS metricunit,\n"
          "       leftUTF8(ServiceName, ?) AS servicename,\n"
          "       leftUTF8(ScopeName, ?) AS scopename,\n"
-         "       Value AS metricvalue,\n"
+         "       " (metric-value-column metric-kind) " AS metricvalue,\n"
          "       " (if string? (str "leftUTF8(" value ", ?)") value)
          " AS attributevalue, " status " AS typedstatus\n"
          "FROM " (metric-table metric-kind) "\n"
@@ -315,6 +338,11 @@
   [connection descriptor-set options]
   (typed-coverage connection descriptor-set options :sum))
 
+(defn typed-histogram-coverage
+  "Return six-way bounded coverage for one exact typed histogram schema binding."
+  [connection descriptor-set options]
+  (typed-coverage connection descriptor-set options :histogram))
+
 (defn- finite-number? [value]
   (and (number? value)
        (let [n (double value)]
@@ -380,3 +408,12 @@
   "Return bounded typed sum matches plus availability coverage."
   [connection descriptor-set options]
   (filtered-points connection descriptor-set options :sum))
+
+(defn typed-histogram-filtered-points
+  "Return bounded typed histogram matches plus availability coverage.
+
+  The returned metric value is the stored histogram count. This is bounded
+  attribute discovery/readback only; it does not reconstruct buckets or add
+  histogram aggregation semantics."
+  [connection descriptor-set options]
+  (filtered-points connection descriptor-set options :histogram))

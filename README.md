@@ -146,7 +146,7 @@ For explicit source-only review evidence, add
 That opt-in mode overrides only the driver and does not qualify root resolution.
 The selected SDK checkpoint is merged SDK main. Published pins alone still do
 not establish a particular application's runtime/native or hosted-CI qualification.
-The gate verifies typed spans/logs plus bounded typed gauge and sum fields
+The gate verifies typed spans/logs plus bounded typed gauge, sum, and histogram fields
 through fresh-reader WAL replay while the writer remains alive, rather than a
 shutdown checkpoint.
 Child environments strip credentials; evidence is retained without retries.
@@ -164,16 +164,16 @@ column and its availability status. The current metric boundary is:
 | --- | --- | --- | --- | --- |
 | `otel_metrics_gauge` | supported | supported | supported | bounded discovery/filter/coverage |
 | `otel_metrics_sum` | supported | supported | supported | bounded discovery/filter/coverage |
-| `otel_metrics_histogram` | not supported | not supported | not supported | not provided |
+| `otel_metrics_histogram` | supported | supported | supported | bounded discovery/filter/coverage |
 
 Unsupported targets are rejected before installer DDL or export; they do not
 silently fall back to typed columns. Direct native DDL/readback and OTLP JSON
-loopback tests cover the enabled gauge and sum targets. The fresh-reader
+loopback tests cover the enabled gauge, sum, and histogram targets. The fresh-reader
 Durable fixture is wired into the hosted Durable lane for the same values,
 statuses, and generic maps, but this documentation does not treat that new
 hosted run as qualified until it has actually passed. Direct fixture readback
-is test evidence. Gauge and sum query capabilities are separately bound to
-their exact installed descriptor sets; neither makes histogram columns
+is test evidence. Each metric-kind query capability is separately bound to
+its exact installed descriptor set; it cannot make another table's columns
 queryable.
 
 Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
