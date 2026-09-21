@@ -89,7 +89,8 @@
   ([] (metric-batch 7))
   ([workers]
    [{:scope {:name "typed-native"
-             :attributes {"runtime.workers" workers "scope.generic" "kept-generic"}}
+             :attributes {"runtime.workers" workers "sum.scope.workers" workers
+                          "scope.generic" "kept-generic"}}
      :metrics [{:type :gauge :name "typed.gauge" :description "" :unit "1"
                 :data-points [{:value 2.0 :time-unix-nano 1000000000
                                :attributes {"queue.ready" false "queue.count" int64-max
@@ -136,7 +137,9 @@
                                     [:metric-attributes "queue.ready" :boolean]
                                     [:metric-attributes "queue.count" :int64]])
           sum-approved (approved "sum" "otel_metrics_sum"
-                                 [[:metric-attributes "request.success" :boolean]
+                                 [[:resource-attributes "sum.resource.ready" :boolean]
+                                  [:scope-attributes "sum.scope.workers" :int64]
+                                  [:metric-attributes "request.success" :boolean]
                                   [:metric-attributes "request.count" :int64]])
           gauges (install! store connection gauge-approved "otel_metrics_gauge")
           sums (install! store connection sum-approved "otel_metrics_sum")
@@ -145,7 +148,7 @@
       (check! "real gauge and sum installer DDL activates both capabilities"
               [:active :active] [(:status gauges) (:status sums)])
       (check! "first native installs emit exactly owned additive DDL"
-              [10 4] [(:ddl-count gauges) (:ddl-count sums)])
+              [10 8] [(:ddl-count gauges) (:ddl-count sums)])
       (check! "native observed gauge columns retain exact owned types"
               (expected-column-types gauges)
               (select-keys (observed-columns connection "otel_metrics_gauge")
@@ -167,14 +170,17 @@
                   (export/export-metrics! writer
                                           {:attributes {"service.ready" false
                                                         "service.tier" "gold"
+                                                        "sum.resource.ready" false
                                                         "resource.generic" "kept-generic"}}
                                           (metric-batch)))
           (let [gauge-row (jdbc/fetch-one connection (typed-select "otel_metrics_gauge" gauge-physical))
                 sum-row (jdbc/fetch-one connection (typed-select "otel_metrics_sum" sum-physical))]
             (check! "native gauge retains generic maps and projects all three locations"
                     [{"service.ready" "false" "service.tier" "gold"
+                      "sum.resource.ready" "false"
                       "resource.generic" "kept-generic"}
-                     {"runtime.workers" "7" "scope.generic" "kept-generic"}
+                     {"runtime.workers" "7" "sum.scope.workers" "7"
+                      "scope.generic" "kept-generic"}
                      {"queue.ready" "false" "queue.count" (str int64-max) "point.generic" "kept-generic"}
                      [[false 3] ["gold" 3] [7 3] [false 3] [int64-max 3]]]
                     [(:resource gauge-row) (:scope gauge-row) (:attributes gauge-row)
@@ -183,11 +189,16 @@
                       (value-status gauge-row gauge-physical "runtime.workers")
                       (value-status gauge-row gauge-physical "queue.ready")
                       (value-status gauge-row gauge-physical "queue.count")]])
-            (check! "native sum retains generic point map and projects typed values"
-                    [{"request.success" "false" "request.count" (str int64-max) "point.generic" "kept-generic"}
-                     [[false 3] [int64-max 3]]]
-                    [(:attributes sum-row)
-                     [(value-status sum-row sum-physical "request.success")
+            (check! "native sum retains generic maps and projects all three locations"
+                    [{"service.ready" "false" "service.tier" "gold"
+                      "sum.resource.ready" "false" "resource.generic" "kept-generic"}
+                     {"runtime.workers" "7" "sum.scope.workers" "7" "scope.generic" "kept-generic"}
+                     {"request.success" "false" "request.count" (str int64-max) "point.generic" "kept-generic"}
+                     [[false 3] [7 3] [false 3] [int64-max 3]]]
+                    [(:resource sum-row) (:scope sum-row) (:attributes sum-row)
+                     [(value-status sum-row sum-physical "sum.resource.ready")
+                      (value-status sum-row sum-physical "sum.scope.workers")
+                      (value-status sum-row sum-physical "request.success")
                       (value-status sum-row sum-physical "request.count")]])
             (check! "native typed value and status columns have exact types"
                     ["Bool" "UInt8" "Int64" "UInt8"]

@@ -82,16 +82,17 @@
     fields))
 
 (defn confirmed-sum-fields
-  "Return sum point-attribute fields after capability and target confirmation.
+  "Return sum fields after capability and target confirmation.
 
-  This intentionally rejects sum resource/scope descriptors and every
-  histogram descriptor before row projection."
+  Sum point, resource, and instrumentation-scope attributes share one
+  physical table and one capability. Histogram targets remain deliberately
+  outside this bounded projection contract."
   [descriptor-set target]
   (let [fields (confirmed-fields descriptor-set target)]
-    (when-not (every? #(= identity/sum-attribute-target
-                          (identity/target-of %))
+    (when-not (every? #(contains? identity/sum-attribute-targets
+                                   (identity/target-of %))
                       fields)
-      (fail! "typed sum projection requires a sum point-attribute capability"
+      (fail! "typed sum projection requires a sum-table capability"
              ::signal-mismatch {}))
     fields))
 
@@ -167,7 +168,7 @@
     (metric-projector fields)))
 
 (defn sum-projector
-  "Compile one confirmed sum point-attribute capability into a row projector."
+  "Compile one confirmed sum capability into a full metric row projector."
   [descriptor-set target]
   (let [fields (confirmed-sum-fields descriptor-set target)]
     (metric-projector fields)))

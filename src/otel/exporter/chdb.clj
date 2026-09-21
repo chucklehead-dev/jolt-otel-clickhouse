@@ -524,9 +524,9 @@
   capabilities returned in active `install-approved!` results. They project
   their respective attributes while the compatible generic maps remain
   unchanged. Gauge descriptors cover point, resource, and scope attributes on
-  `otel_metrics_gauge`; sum descriptors cover point attributes on
-  `otel_metrics_sum`. Sum resource/scope and all histogram descriptors remain
-  intentionally unsupported."
+  `otel_metrics_gauge`; sum descriptors cover point, resource, and scope
+  attributes on `otel_metrics_sum`. Histogram descriptors remain intentionally
+  unsupported."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors

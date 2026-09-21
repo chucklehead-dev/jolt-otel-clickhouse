@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend installer-capability-bound typed promotion to sum resource, scope,
+  and point attributes on `otel_metrics_sum`. Generic ClickStack maps remain
+  unchanged; direct native and real loopback OTLP readback cover all three
+  locations. Histogram promotion and sum query discovery remain unsupported
+  (#8).
+
 - Add installer-capability-bound typed gauge schema discovery, Boolean/String/
   Int64 filtering, and six-way availability coverage. Queries use only fixed
   gauge-table identifiers and JDBC-bound caller scalars; generic maps remain

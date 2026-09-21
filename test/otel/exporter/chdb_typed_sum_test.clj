@@ -1,5 +1,5 @@
 (ns otel.exporter.chdb-typed-sum-test
-  "Pure bounded contract for typed sum point attributes.
+  "Pure bounded contract for typed sum attributes.
 
   Native DDL and loopback/readback evidence deliberately remain a subsequent
   slice; this verifies only capability ownership, row projection, and the
@@ -25,6 +25,10 @@
     [{:schema manifest/reviewed-fragment-schema :authority :advice
       :source "advice/sum-worker.edn"
       :entries [{:signal :metrics :table "otel_metrics_sum"
+                 :location :resource-attributes :key "service.ready" :type :boolean}
+                {:signal :metrics :table "otel_metrics_sum"
+                 :location :scope-attributes :key "scope.workers" :type :int64}
+                {:signal :metrics :table "otel_metrics_sum"
                  :location :metric-attributes :key "request.success" :type :boolean}
                 {:signal :metrics :table "otel_metrics_sum"
                  :location :metric-attributes :key "request.count" :type :int64}]}]}))
@@ -49,7 +53,7 @@
     [(get row (:value-column physical)) (get row (:status-column physical))]))
 
 (defn- collected [attributes]
-  [{:scope {:name "typed-sum"}
+  [{:scope {:name "typed-sum" :attributes {"scope.workers" 7}}
     :metrics [{:type :sum :name "request.count" :description "" :unit "1"
                :temporality :cumulative :monotonic? true
                :data-points [{:value 2.0 :time-unix-nano 1000000000
@@ -68,7 +72,8 @@
                                                   (remove str/blank?
                                                           (str/split-lines payload)))})
                     {:count 1})]
-      (when-not (export/export-metrics! writer {:attributes {}} (collected attributes))
+      (when-not (export/export-metrics! writer {:attributes {"service.ready" false}}
+                                       (collected attributes))
         (throw (exporter/last-error writer))))
     @received))
 
@@ -87,15 +92,19 @@
     (catch Throwable error (:type (ex-data error)))))
 
 (defn run [check]
-  (println "confirmed typed sum point projection")
+  (println "confirmed typed sum projection")
   (with-open [target (support/connection)]
     (let [installation (installed target) capability (:descriptor-set installation)
           target (::target installation) projector (projection/sum-projector capability target)
-          valid (projector {:attributes {:request.success false
-                                         :request.count 9007199254740993}})]
-      (check "sum point values preserve false and exact Int64"
-             [[false 3] [9007199254740993 3]]
-             [(pair valid installation "request.success")
+          valid (projector {:resource {:attributes {"service.ready" false}}
+                            :scope {:attributes {"scope.workers" 7}}
+                            :point {:attributes {:request.success false
+                                                 :request.count 9007199254740993}}})]
+      (check "sum values preserve resource scope false and exact Int64"
+             [[false 3] [7 3] [false 3] [9007199254740993 3]]
+             [(pair valid installation "service.ready")
+              (pair valid installation "scope.workers")
+              (pair valid installation "request.success")
               (pair valid installation "request.count")])
       (check "sum absent and invalid status remain explicit"
              [[[false 1] [0 1]] [[false 4] [0 4]]]
@@ -115,25 +124,27 @@
         (check "typed sum export targets only the sum table" "otel_metrics_sum" table)
         (check "typed sum insert names additive columns"
                typed-columns (vec (take-last (count typed-columns) columns)))
-        (check "typed sum export retains generic Attributes fallback"
+        (check "typed sum export retains generic maps and projects all locations"
                [{"request.success" "false" "request.count" "9007199254740993"}
-                [false 3] [9007199254740993 3]]
-               [(get row "Attributes") (pair row installation "request.success")
+                [false 3] [7 3] [false 3] [9007199254740993 3]]
+               [(get row "Attributes") (pair row installation "service.ready")
+                (pair row installation "scope.workers")
+                (pair row installation "request.success")
                 (pair row installation "request.count")]))
       (check "sum capability cannot enter gauge projection"
              :otel.exporter.chdb.attribute-projection/signal-mismatch
              (try (projection/gauge-projector capability target) nil
                   (catch Throwable error (:type (ex-data error)))))
-      (check "sum resource target remains rejected before installation"
-             false
-             (identity/physically-supported?
-              (identity/target :metrics "otel_metrics_sum" :resource-attributes)))
-      (check "sum resource scope and every histogram target reject before installation"
-             (vec (repeat 5 :otel.exporter.chdb.attribute-registry/unsupported-target))
+      (check "sum resource and scope targets are physically supported"
+             [true true]
+             [(identity/physically-supported?
+               (identity/target :metrics "otel_metrics_sum" :resource-attributes))
+              (identity/physically-supported?
+               (identity/target :metrics "otel_metrics_sum" :scope-attributes))])
+      (check "every histogram target rejects before installation"
+             (vec (repeat 3 :otel.exporter.chdb.attribute-registry/unsupported-target))
              (mapv (fn [[table location]] (unsupported-target-error table location))
-                   [["otel_metrics_sum" :resource-attributes]
-                    ["otel_metrics_sum" :scope-attributes]
-                    ["otel_metrics_histogram" :metric-attributes]
+                   [["otel_metrics_histogram" :metric-attributes]
                     ["otel_metrics_histogram" :resource-attributes]
                     ["otel_metrics_histogram" :scope-attributes]])))))
 
