@@ -177,8 +177,10 @@
                 sum-row (jdbc/fetch-one connection (typed-select "otel_metrics_sum" sum-physical))]
             (check! "native gauge retains generic maps and projects all three locations"
                     [{"service.ready" "false" "service.tier" "gold"
+                      "sum.resource.ready" "false"
                       "resource.generic" "kept-generic"}
-                     {"runtime.workers" "7" "scope.generic" "kept-generic"}
+                     {"runtime.workers" "7" "sum.scope.workers" "7"
+                      "scope.generic" "kept-generic"}
                      {"queue.ready" "false" "queue.count" (str int64-max) "point.generic" "kept-generic"}
                      [[false 3] ["gold" 3] [7 3] [false 3] [int64-max 3]]]
                     [(:resource gauge-row) (:scope gauge-row) (:attributes gauge-row)
@@ -188,7 +190,8 @@
                       (value-status gauge-row gauge-physical "queue.ready")
                       (value-status gauge-row gauge-physical "queue.count")]])
             (check! "native sum retains generic maps and projects all three locations"
-                    [{"sum.resource.ready" "false" "resource.generic" "kept-generic"}
+                    [{"service.ready" "false" "service.tier" "gold"
+                      "sum.resource.ready" "false" "resource.generic" "kept-generic"}
                      {"runtime.workers" "7" "sum.scope.workers" "7" "scope.generic" "kept-generic"}
                      {"request.success" "false" "request.count" (str int64-max) "point.generic" "kept-generic"}
                      [[false 3] [7 3] [false 3] [int64-max 3]]]
