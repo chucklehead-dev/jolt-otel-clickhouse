@@ -2,10 +2,16 @@
 
 ## Unreleased
 
+- Extend installer-capability-bound typed promotion and bounded explorer
+  readback to explicit histogram resource, scope, and point attributes. The
+  explorer exposes only schema-bound Boolean/String/Int64 filters, stored
+  count readback, and six-way coverage; it does not add bucket reconstruction,
+  aggregation, grouping, DDL redesign, or cross-process capabilities (#73).
+
 - Extend the installer-capability-bound metric explorer to promoted sum
   resource, scope, and point attributes. It provides the same bounded
   discovery, Boolean/String/Int64 filters, stored-point readback, and six-way
-  coverage as gauges, while histogram querying, aggregation, grouping,
+  coverage as gauges, while aggregation, grouping,
   saved-query persistence, and schema changes remain out of scope (#8).
 
 - Extend installer-capability-bound typed promotion to sum resource, scope,

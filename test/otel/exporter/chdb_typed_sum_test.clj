@@ -33,6 +33,15 @@
                 {:signal :metrics :table "otel_metrics_sum"
                  :location :metric-attributes :key "request.count" :type :int64}]}]}))
 
+(defn- histogram-compiled []
+  (manifest/compile-manifest
+   {:dataset-id "telemetry-prod" :application-id "histogram-crossing-control"
+    :lineage "histogram-crossing-control-v1" :version 1
+    :fragments [{:schema manifest/reviewed-fragment-schema :authority :advice
+                 :source "advice/histogram-crossing-control.edn"
+                 :entries [{:signal :metrics :table "otel_metrics_histogram"
+                            :location :metric-attributes :key "histogram.tier" :type :string}]}]}))
+
 (defn- installed [target]
   (let [approved (compiled) columns (registry/expected-columns (registry/prepare approved))
         observed (atom {}) index (atom 0)]
@@ -41,6 +50,21 @@
       (backend/memory-backend) approved
       {:target target
        :observe-columns #(vector {:signal :metrics :table "otel_metrics_sum"
+                                  :columns @observed})
+       :execute-ddl! (fn [_]
+                       (let [{:keys [name type]} (nth columns @index)]
+                         (swap! index inc) (swap! observed assoc name type)))})
+     ::target target)))
+
+(defn- installed-histogram [target]
+  (let [approved (histogram-compiled)
+        columns (registry/expected-columns (registry/prepare approved))
+        observed (atom {}) index (atom 0)]
+    (assoc
+     (installer/install-approved!
+      (backend/memory-backend) approved
+      {:target target
+       :observe-columns #(vector {:signal :metrics :table "otel_metrics_histogram"
                                   :columns @observed})
        :execute-ddl! (fn [_]
                        (let [{:keys [name type]} (nth columns @index)]
@@ -141,12 +165,16 @@
                (identity/target :metrics "otel_metrics_sum" :resource-attributes))
               (identity/physically-supported?
                (identity/target :metrics "otel_metrics_sum" :scope-attributes))])
-      (check "every histogram target rejects before installation"
-             (vec (repeat 3 :otel.exporter.chdb.attribute-registry/unsupported-target))
-             (mapv (fn [[table location]] (unsupported-target-error table location))
-                   [["otel_metrics_histogram" :metric-attributes]
-                    ["otel_metrics_histogram" :resource-attributes]
-                    ["otel_metrics_histogram" :scope-attributes]])))))
+      (check "histogram targets are physically supported for their own capability"
+             [true true true]
+             (mapv #(identity/physically-supported?
+                     (identity/target :metrics "otel_metrics_histogram" %))
+                   [:metric-attributes :resource-attributes :scope-attributes]))
+      (let [histogram-capability (:descriptor-set (installed-histogram target))]
+        (check "histogram capability cannot enter sum projection"
+               :otel.exporter.chdb.attribute-projection/signal-mismatch
+               (try (projection/sum-projector histogram-capability target) nil
+                    (catch Throwable error (:type (ex-data error)))))))))
 
 (defn -main [& _]
   (let [failures (atom 0)]

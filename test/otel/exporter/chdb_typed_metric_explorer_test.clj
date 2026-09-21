@@ -8,22 +8,20 @@
             [otel.exporter.chdb.typed-metric-explorer :as metric-explorer]))
 
 (defn- installed [metric-kind]
-  (let [approved (manifest/compile-manifest
+  (let [table (case metric-kind
+                :gauge "otel_metrics_gauge"
+                :sum "otel_metrics_sum"
+                :histogram "otel_metrics_histogram")
+        approved (manifest/compile-manifest
                   {:dataset-id "telemetry-prod" :application-id "metric-query"
                    :lineage "metric-query-v1" :version 7
                    :fragments [{:schema manifest/reviewed-fragment-schema
                                 :authority :advice :source "advice/metric-query.edn"
-                                :entries [{:signal :metrics :table (if (= metric-kind :sum)
-                                                                     "otel_metrics_sum"
-                                                                     "otel_metrics_gauge")
+                                :entries [{:signal :metrics :table table
                                            :location :resource-attributes :key "service.tier" :type :string}
-                                          {:signal :metrics :table (if (= metric-kind :sum)
-                                                                     "otel_metrics_sum"
-                                                                     "otel_metrics_gauge")
+                                          {:signal :metrics :table table
                                            :location :scope-attributes :key "runtime.pool" :type :int64}
-                                          {:signal :metrics :table (if (= metric-kind :sum)
-                                                                     "otel_metrics_sum"
-                                                                     "otel_metrics_gauge")
+                                          {:signal :metrics :table table
                                            :location :metric-attributes :key "queue.ready" :type :boolean}]}]})
         columns (registry/expected-columns (registry/prepare approved))
         observed (atom {}) next-column (atom 0) target (atom metric-kind)
@@ -31,9 +29,7 @@
                       (backend/memory-backend) approved
                       {:target target
                        :observe-columns #(vector {:columns @observed :signal :metrics
-                                                   :table (if (= metric-kind :sum)
-                                                            "otel_metrics_sum"
-                                                            "otel_metrics_gauge")})
+                                                   :table table})
                        :execute-ddl! (fn [_]
                                        (let [{:keys [name type]} (nth columns @next-column)]
                                          (swap! next-column inc)
@@ -185,7 +181,43 @@
       (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage])]
         (thrown-data #(metric-explorer/typed-gauge-filtered-points
                        target descriptors (request :sum ready false :eq))))
-      (check "gauge operation rejects a sum capability before query" 0 @queries))))
+      (check "gauge operation rejects a sum capability before query" 0 @queries)))
+  (let [installation (installed :histogram)
+        descriptors (:descriptor-set installation)
+        target (::target installation)
+        ready (field installation "queue.ready")
+        coverage {:valid 1 :presentempty 0 :absent 0 :invalid 0
+                  :historicalfallback 0 :historicalunavailable 0
+                  :unknownstatus 0 :total 1}
+        match {:timestampunixnano 1700000000000000000
+               :metricname "queue.latency" :metricunit "ms" :metricvalue 3
+               :servicename "worker" :scopename "queue" :attributevalue false
+               :typedstatus 3}
+        calls (atom [])
+        result (with-redefs [jdbc/fetch
+                             (fn [_ sqlvec options]
+                               (swap! calls conj [sqlvec options])
+                               (if (= 1 (:max-rows options)) [coverage] [match]))]
+                 (metric-explorer/typed-histogram-filtered-points
+                  target descriptors (request :histogram ready false :eq)))]
+    (check "histogram capability is a closed table-bound filter surface"
+           (assoc (metric-explorer/supported-typed-gauge-filters) :metric-kinds [:histogram])
+           (metric-explorer/supported-typed-histogram-filters))
+    (check "histogram discovery returns only histogram schema bindings"
+           #{[:resource-attributes :string] [:scope-attributes :int64]
+             [:metric-attributes :boolean]}
+           (set (map (fn [{:keys [schema-binding]}]
+                       [(:attribute-location schema-binding) (:attribute-type schema-binding)])
+                     (metric-explorer/typed-histogram-fields target descriptors))))
+    (check "histogram readback uses Count and its fixed table"
+           [3 true]
+           [(get-in result [:matches 0 :metric-value])
+            (boolean (some #(str/includes? (first (first %)) "FROM otel_metrics_histogram") @calls))])
+    (let [queries (atom 0)]
+      (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage])]
+        (thrown-data #(metric-explorer/typed-sum-filtered-points
+                       target descriptors (request :histogram ready false :eq))))
+      (check "sum operation rejects a histogram capability before query" 0 @queries))))
 
 (defn -main [& _]
   (let [failures (atom 0)]

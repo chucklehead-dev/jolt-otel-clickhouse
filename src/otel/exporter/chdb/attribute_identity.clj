@@ -85,6 +85,21 @@
               :signal :metrics
               :table "otel_metrics_sum"))
 
+(def histogram-attribute-target
+  "The explicit-histogram point-attribute target."
+  (sorted-map :location :metric-attributes :signal :metrics
+              :table "otel_metrics_histogram"))
+
+(def histogram-resource-attribute-target
+  "The explicit-histogram resource-attribute target."
+  (sorted-map :location :resource-attributes :signal :metrics
+              :table "otel_metrics_histogram"))
+
+(def histogram-scope-attribute-target
+  "The explicit-histogram instrumentation-scope-attribute target."
+  (sorted-map :location :scope-attributes :signal :metrics
+              :table "otel_metrics_histogram"))
+
 (def gauge-attribute-targets
   "The complete, table-qualified gauge target set supported by this slice."
   #{gauge-attribute-target gauge-resource-attribute-target
@@ -94,6 +109,11 @@
   "The complete, table-qualified sum target set supported by this slice."
   #{sum-attribute-target sum-resource-attribute-target
     sum-scope-attribute-target})
+
+(def histogram-attribute-targets
+  "The complete, table-qualified explicit-histogram target set."
+  #{histogram-attribute-target histogram-resource-attribute-target
+    histogram-scope-attribute-target})
 
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
@@ -117,7 +137,8 @@
 
 (def physically-supported-targets
   "Target tuples with complete installer and exporter support today."
-  (into (into (conj trace-attribute-targets log-attribute-target)
+  (into (into (into (conj trace-attribute-targets log-attribute-target)
+                    histogram-attribute-targets)
               sum-attribute-targets)
         gauge-attribute-targets))
 

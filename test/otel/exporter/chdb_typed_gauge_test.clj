@@ -82,8 +82,8 @@
                             :scope {:attributes {"runtime.pool" 7}}
                             :point {:attributes {:queue.ready false
                                                  :queue.depth 9007199254740993}}})]
-      (check "only bounded gauge and sum targets join physical support"
-             [true true true true true false]
+      (check "all enabled metric tables have table-qualified physical support"
+             [true true true true true true]
              [(identity/physically-supported? identity/gauge-attribute-target)
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :resource-attributes))
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :scope-attributes))
@@ -126,6 +126,10 @@
       (check "gauge capability cannot enter trace projection"
              :otel.exporter.chdb.attribute-projection/signal-mismatch
              (try (projection/trace-projector capability target) nil
+                  (catch Throwable error (:type (ex-data error)))))
+      (check "gauge capability cannot enter histogram projection"
+             :otel.exporter.chdb.attribute-projection/signal-mismatch
+             (try (projection/histogram-projector capability target) nil
                   (catch Throwable error (:type (ex-data error)))))
       (check "gauge capability cannot cross connections"
              :otel.exporter.chdb.attribute-projection/target-mismatch
