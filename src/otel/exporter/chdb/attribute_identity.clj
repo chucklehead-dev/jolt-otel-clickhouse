@@ -68,11 +68,20 @@
               :table "otel_metrics_gauge"))
 
 (def sum-attribute-target
-  "The sum point-attribute target.
-
-  Sum resource/scope and every histogram target remain deliberately outside
-  the supported set until their distinct evidence is qualified."
+  "The sum point-attribute target."
   (sorted-map :location :metric-attributes
+              :signal :metrics
+              :table "otel_metrics_sum"))
+
+(def sum-resource-attribute-target
+  "The sum resource-attribute target."
+  (sorted-map :location :resource-attributes
+              :signal :metrics
+              :table "otel_metrics_sum"))
+
+(def sum-scope-attribute-target
+  "The sum instrumentation-scope-attribute target."
+  (sorted-map :location :scope-attributes
               :signal :metrics
               :table "otel_metrics_sum"))
 
@@ -80,6 +89,11 @@
   "The complete, table-qualified gauge target set supported by this slice."
   #{gauge-attribute-target gauge-resource-attribute-target
     gauge-scope-attribute-target})
+
+(def sum-attribute-targets
+  "The complete, table-qualified sum target set supported by this slice."
+  #{sum-attribute-target sum-resource-attribute-target
+    sum-scope-attribute-target})
 
 (defn target
   "Return a canonical target tuple, or nil for an invalid combination."
@@ -103,7 +117,8 @@
 
 (def physically-supported-targets
   "Target tuples with complete installer and exporter support today."
-  (into (conj trace-attribute-targets log-attribute-target sum-attribute-target)
+  (into (into (conj trace-attribute-targets log-attribute-target)
+              sum-attribute-targets)
         gauge-attribute-targets))
 
 (defn trace-attribute-target? [value]

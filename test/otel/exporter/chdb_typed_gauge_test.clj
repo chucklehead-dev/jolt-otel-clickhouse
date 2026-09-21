@@ -83,7 +83,7 @@
                             :point {:attributes {:queue.ready false
                                                  :queue.depth 9007199254740993}}})]
       (check "only bounded gauge and sum targets join physical support"
-             [true true true true false false]
+             [true true true true true false]
              [(identity/physically-supported? identity/gauge-attribute-target)
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :resource-attributes))
               (identity/physically-supported? (identity/target :metrics "otel_metrics_gauge" :scope-attributes))

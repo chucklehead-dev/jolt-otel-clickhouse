@@ -1,8 +1,8 @@
 (ns otel.exporter.chdb-typed-gauge-socket-native-test
   "Real loopback OTLP/JSON evidence for the bounded typed metric surface.
 
-  It covers gauge point/resource/scope and sum point descriptors. Sum
-  resource/scope, histograms, and Durable recovery remain outside this test."
+  It covers gauge and sum point/resource/scope descriptors. Histograms and
+  Durable recovery remain outside this test."
   (:require [clojure.data.json :as json]
             [db.jdbc]
             [jdbc.chdb.durable.backend :as backend]
@@ -75,6 +75,10 @@
     [{:schema manifest/reviewed-fragment-schema :authority :advice
       :source "advice/sum-socket.edn"
       :entries [{:signal :metrics :table "otel_metrics_sum"
+                 :location :resource-attributes :key "sum.resource.ready" :type :boolean}
+                {:signal :metrics :table "otel_metrics_sum"
+                 :location :scope-attributes :key "sum.scope.workers" :type :int64}
+                {:signal :metrics :table "otel_metrics_sum"
                  :location :metric-attributes :key "request.success" :type :boolean}
                 {:signal :metrics :table "otel_metrics_sum"
                  :location :metric-attributes :key "request.count" :type :int64}]}]}))
@@ -100,7 +104,8 @@
    (collected gauge-name sum-name gauge-attributes 7))
   ([gauge-name sum-name gauge-attributes workers]
    [{:scope {:name "typed-gauge-socket" :version "1"
-             :attributes {"scope.workers" workers "scope.generic" "kept-generic"}}
+             :attributes {"scope.workers" workers "sum.scope.workers" workers
+                          "scope.generic" "kept-generic"}}
      :metrics [{:type :gauge :name gauge-name :description "" :unit "{item}"
                 :data-points [{:value 2.0 :time-unix-nano 1700000000000000000
                                :attributes gauge-attributes}]}
@@ -176,6 +181,7 @@
         (let [gauge-name "typed.gauge.socket" sum-name "typed.sum.socket"
               r (resource/resource {"service.name" "typed-gauge-socket"
                                      "resource.ready" false
+                                     "sum.resource.ready" false
                                      "resource.generic" "kept-generic"})
               values (collected gauge-name sum-name)]
           (check! "direct typed gauge and sum export succeeds" true
@@ -207,11 +213,12 @@
                                  (map #(field-pair gauge-row gauge-fields %)
                                       ["queue.ready" "queue.zero" "queue.minimum"
                                        "queue.maximum" "queue.label"]))))
-            (check! "sum typed point values and statuses survive socket decode"
-                    [[false 3] [int64-max 3]]
+            (check! "sum typed point resource scope values and statuses survive socket decode"
+                    [[false 3] [7 3] [false 3] [int64-max 3]]
                     (mapv #(field-pair sum-row sum-fields %)
-                          ["request.success" "request.count"]))
-            (check! "generic structured bytes maps and unpromoted resource scope fields survive"
+                          ["sum.resource.ready" "sum.scope.workers"
+                           "request.success" "request.count"]))
+            (check! "generic structured bytes maps and all attribute locations survive"
                     [{"queue.ready" "false" "queue.zero" "0"
                       "queue.minimum" (str int64-min) "queue.maximum" (str int64-max)
                       "queue.label" "" "generic.empty-string" ""
@@ -221,10 +228,14 @@
                       "generic.bytes" "AAEC/w=="
                       "generic.nested" "{\"count\":2,\"kind\":\"nested\"}"}
                      {"resource.generic" "kept-generic" "resource.ready" "false"
-                      "service.name" "typed-gauge-socket"}
-                     {"scope.generic" "kept-generic" "scope.workers" "7"}]
+                      "service.name" "typed-gauge-socket" "sum.resource.ready" "false"}
+                     {"scope.generic" "kept-generic" "scope.workers" "7" "sum.scope.workers" "7"}
+                     {"resource.generic" "kept-generic" "resource.ready" "false"
+                      "service.name" "typed-gauge-socket" "sum.resource.ready" "false"}
+                     {"scope.generic" "kept-generic" "scope.workers" "7" "sum.scope.workers" "7"}]
                     [(:attributes gauge-row) (:attributes sum-row)
-                     (:resourceattributes gauge-row) (:scopeattributes gauge-row)]))
+                     (:resourceattributes gauge-row) (:scopeattributes gauge-row)
+                     (:resourceattributes sum-row) (:scopeattributes sum-row)]))
           (let [result (metric-explorer/typed-gauge-filtered-points
                         connection (:descriptor-set gauges)
                         (gauge-query (get gauge-fields "queue.ready")))]
@@ -303,10 +314,11 @@
                         (mapv #(second (field-pair gauge-row gauge-fields %))
                               ["resource.ready" "scope.workers" "queue.ready" "queue.zero"
                                "queue.minimum" "queue.maximum" "queue.label"]))
-                (check! "capability bypass leaves sum point columns historical and retains bytes"
-                        [[0 0] "AAEC/w=="]
+                (check! "capability bypass leaves all sum columns historical and retains bytes"
+                        [[0 0 0 0] "AAEC/w=="]
                         [(mapv #(second (field-pair sum-row sum-fields %))
-                               ["request.success" "request.count"])
+                               ["sum.resource.ready" "sum.scope.workers"
+                                "request.success" "request.count"])
                          (get (:attributes sum-row) "generic.bytes")]))
               (finally (export/shutdown-metric-exporter! legacy)))))
           (let [coverage (metric-explorer/typed-gauge-coverage
