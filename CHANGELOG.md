@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Assemble each ordinary and Durable JSONEachRow export batch in one
+  batch-local `StringBuilder`, retaining pinned `data.json` per-row bytes, row
+  order, and trailing-newline wire contract while avoiding the intermediate
+  chunk sequence and final `apply str` pass.
+
 - Extend installer-capability-bound typed promotion and bounded explorer
   readback to explicit histogram resource, scope, and point attributes. The
   explorer exposes only schema-bound Boolean/String/Int64 filters, stored

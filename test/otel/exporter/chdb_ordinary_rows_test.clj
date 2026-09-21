@@ -13,6 +13,23 @@
 (defn- rejected? [f]
   (try (f) false (catch Throwable _ true)))
 
+(defn- reference-json-each-row-payload [rows]
+  ;; Keep the pre-streaming composition as a test-only oracle.  Its bytes are
+  ;; the public wire contract: data.json defaults, row order, and exactly one
+  ;; LF after every row, including the final row.
+  (apply str (map #(str (json/write-str %) "\n") rows)))
+
+(defn- utf8-bytes [s]
+  (vec (.getBytes s "UTF-8")))
+
+(defn- generated-json-row [n]
+  {"sequence" n
+   "text" (str "row/" n "/unicode-é/control-" (char 0)
+               "\nseparator-\u2028")
+   "enabled" (zero? (mod n 2))
+   "nested" {"values" [n (- n) nil false true]
+             "tags" [(str "tag-" (mod n 7)) "slash/quote"]}})
+
 (defn- version-fence-checks [check]
   (doseq [durable? [false true] owned? [false true]
           version ["26.7.3" "26.8.1" "unknown" nil]
@@ -80,6 +97,53 @@
         (finally (.close connection))))))
 
 (defn run [check]
+  (let [streaming #'exporter/json-each-row-payload
+        representative
+        [(#'exporter/span-row
+          {:start-time-unix-nano 1700000000000000000
+           :end-time-unix-nano 1700000000000000123
+           :name "GET /?q=é"
+           :kind :server
+           :span-context {:trace-id "0123456789abcdef0123456789abcdef"
+                          :span-id "0123456789abcdef"
+                          :trace-state [["vendor" "one/two"]]}
+           :resource {:attributes {"service.name" "streaming-test"
+                                   "enabled" false}}
+           :scope {:name "scope" :version "1"}
+           :attributes {"answer" 42 "control" "\u0000\n\\\""}
+           :status {:code :ok}
+           :events [{:timestamp-unix-nano 1700000000000000001
+                     :name "event" :attributes {"payload" [false "é"]}}]
+           :links []}
+          nil)
+         (#'exporter/log-row
+          {:timestamp-unix-nano 0 :observed-time-unix-nano 1700000000000000002
+           :trace-id "0123456789abcdef0123456789abcdef"
+           :span-id "0123456789abcdef" :severity-text "INFO"
+           :severity-number 9 :body {"message" "hello/é"}
+           :attributes {"visible" true "count" 0}
+           :resource {:attributes {"service.name" "streaming-test"}}
+           :scope {:name "scope" :version "1"}}
+          nil)
+         (dissoc
+          (first (#'exporter/metric-rows
+                  {:attributes {"service.name" "streaming-test"}}
+                  [{:scope {:name "scope" :version "1"}
+                    :metrics [{:type :gauge :name "temperature" :unit "Cel"
+                               :data-points [{:timestamp-unix-nano 1700000000000000003
+                                              :start-time-unix-nano 0
+                                              :value 21.5
+                                              :attributes {"room" "é/1"}}]}]}]
+                  nil))
+          :_type)]]
+    (check "streaming JSONEachRow matches reference OTel span/log/metric bytes"
+           (utf8-bytes (reference-json-each-row-payload representative))
+           (utf8-bytes (streaming representative)))
+    (doseq [width [0 1 2 7 32 64]
+            :let [rows (mapv generated-json-row (range width))]]
+      (check (str "streaming JSONEachRow generated corpus width " width)
+             (utf8-bytes (reference-json-each-row-payload rows))
+             (utf8-bytes (streaming rows)))))
   (version-fence-checks check)
   (let [timestamp #'exporter/timestamp
         payload #'exporter/ordinary-payload]
@@ -240,4 +304,35 @@
                        "UTF-8")))
       (check "multibyte UTF8 overflow rejects" true
              (rejected? #(payload ["x"]
-                                  [{"x" (apply str (repeat (* 4 1024 1024) "é"))}]))))))
+                                  [{"x" (apply str (repeat (* 4 1024 1024) "é"))}]))))
+    (let [writes (atom [])
+          original-write json/write-str
+          full-row {"x" (apply str (repeat (- (* 8 1024 1024) 9) "a"))}
+          next-row {"x" "must-not-complete"}
+          later-row {"x" "must-not-start"}]
+      ;; The first row occupies the exact 8 MiB wire budget. The bounded
+      ;; Builder must reject before appending the overflowing second row, and
+      ;; never serialize the later row.
+      (with-redefs [json/write-str (fn [row]
+                                     (swap! writes conj (get row "x"))
+                                     (original-write row))]
+        (check "ordinary overflow rejects at bounded builder" true
+               (rejected? #(#'exporter/ordinary-payload ["x"]
+                                                          [full-row next-row later-row])))
+        (check "ordinary overflow never starts later row construction"
+               [(get full-row "x") (get next-row "x")]
+               (mapv identity @writes))
+        ;; Durable materializes SQL only after the same bounded JSONEachRow
+        ;; builder succeeds. An over-limit batch therefore cannot reach JDBC or
+        ;; prepare a complete SQL payload.
+        (reset! writes [])
+        (let [jdbc-calls (atom [])]
+          (with-redefs [jdbc/execute! (fn [& args] (swap! jdbc-calls conj args))]
+            (check "Durable overflow rejects at bounded builder" true
+                   (rejected? #(#'exporter/insert-json-rows!
+                                :writer "insert into owned_table"
+                                [full-row next-row later-row])))
+            (check "Durable overflow performs zero JDBC execution" [] @jdbc-calls)
+            (check "Durable overflow never starts later row construction"
+                   [(get full-row "x") (get next-row "x")]
+                   (mapv identity @writes))))))))

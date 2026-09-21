@@ -180,21 +180,37 @@
   ;; name those additive fields; omitted unrelated table columns keep defaults.
   (if typed-projector "insert into otel_logs" log-insert-query))
 
-(defn- chunks [rows]
-  (map #(str (json/write-str %) "\n") rows))
-
 (def ^:private max-insert-bytes (* 8 1024 1024))
+
+(defn- json-each-row-payload
+  "Encode one batch as JSONEachRow with the maintained data.json defaults.
+
+  The builder is deliberately local to this call: exporters may run concurrently
+  and neither a reusable buffer nor a changed JSON option set is safe at this
+  boundary. It retains data.json's per-row string encoding, but eliminates the
+  intermediate sequence and final apply/str pass. Each full row is checked
+  before it can be appended past the 8 MiB payload bound."
+  [rows]
+  (loop [remaining max-insert-bytes
+         rows (seq rows)
+         out (StringBuilder.)]
+    (if-let [row (first rows)]
+      (let [encoded (json/write-str row)
+            bytes (inc (alength (.getBytes encoded "UTF-8")))]
+        (when (> bytes remaining)
+          (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                          {:limit max-insert-bytes})))
+        (.append out encoded)
+        (.append out "\n")
+        (recur (- remaining bytes) (next rows) out))
+      (.toString out))))
 
 (defn- insert-json-rows!
   "Insert one SDK-bounded batch through chDB's ordinary query API. libchdb
   26.7's streaming-insert API corrupts ClickHouse ThreadStatus nesting under
   long-lived multi-signal exporters; the query API does not share that path."
   [connection query rows]
-  (let [payload (apply str (chunks rows))
-        size (alength (.getBytes payload "UTF-8"))]
-    (when (> size max-insert-bytes)
-      (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                      {:bytes size :limit max-insert-bytes})))
+  (let [payload (json-each-row-payload rows)]
     (context/with-instrumentation-suppressed
       (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload)))))
 
@@ -235,18 +251,10 @@
                      (every? (fn [[column value]] (valid-row-value? column value)) row))
         (throw (ex-info "Invalid chDB telemetry row"
                         {:type ::invalid-ordinary-row}))))
-    ;; Remaining space stays in [0, 8 MiB]: no unchecked sum or multiplication
-    ;; of an untrusted size, and no oversized concatenated payload allocation.
-    (let [[parts _]
-          (reduce (fn [[parts remaining] row]
-                    (let [part (str (json/write-str row) "\n")
-                          size (alength (.getBytes part "UTF-8"))]
-                      (when (> size remaining)
-                        (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                                        {:limit max-insert-bytes})))
-                      [(conj parts part) (- remaining size)]))
-                  [[] max-insert-bytes] rows)]
-      (apply str parts))))
+    ;; The batch-local StringBuilder checks each complete maintained data.json
+    ;; row plus LF in UTF-8 before appending, preserving the pre-overflow
+    ;; rejection boundary while avoiding chunk sequencing/final concatenation.
+    (json-each-row-payload rows)))
 
 (defn- insert-batch! [connection state table columns query rows]
   (if (:durable? @state)
