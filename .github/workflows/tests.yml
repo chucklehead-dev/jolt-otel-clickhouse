@@ -135,7 +135,7 @@ jobs:
           timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -A:test \
             -m otel.exporter.chdb-typed-metric-native-test \
             | tee "$RUNNER_TEMP/exporter-typed-metric-native.log"
-          test "$(grep -Fxc 'typed-metric-native-qualified :observed-checks 15' "$RUNNER_TEMP/exporter-typed-metric-native.log")" = 1
+          test "$(grep -Fxc 'typed-metric-native-qualified :observed-checks 17' "$RUNNER_TEMP/exporter-typed-metric-native.log")" = 1
       - name: Qualify typed metric OTLP socket loopback
         id: typed_metric_socket
         timeout-minutes: 2
