@@ -1,8 +1,8 @@
 (ns otel.exporter.chdb.typed-metric-explorer
-  "Bounded schema-bound queries over installer-confirmed typed gauge fields.
+  "Bounded schema-bound queries over installer-confirmed typed metric fields.
 
-  This is deliberately a query surface for the already-supported gauge table,
-  not a second schema installer. Sum and histogram fields are rejected before
+  This is deliberately a query surface for the already-supported gauge and sum
+  tables, not a second schema installer. Histogram fields are rejected before
   any JDBC work."
   (:require [db.jdbc]
             [jdbc.core :as jdbc]
@@ -11,14 +11,20 @@
             [otel.exporter.chdb.attribute-projection :as projection]
             [otel.exporter.chdb.explorer :as explorer]))
 
-(def filter-capability
+(def ^:private filter-operators
   {:operators {:boolean [:eq]
                :int64 [:eq :gte :lt]
-               :string [:eq :prefix :contains]}
-   :signals [:metrics]
-   :metric-kinds [:gauge]
-   :locations [:resource-attributes :scope-attributes :metric-attributes]
-   :types [:boolean :int64 :string]})
+               :string [:eq :prefix :contains]}})
+
+(def filter-capability
+  (merge filter-operators
+         {:signals [:metrics]
+          :metric-kinds [:gauge]
+          :locations [:resource-attributes :scope-attributes :metric-attributes]
+          :types [:boolean :int64 :string]}))
+
+(def sum-filter-capability
+  (assoc filter-capability :metric-kinds [:sum]))
 
 (def max-filter-value-length 256)
 
@@ -30,10 +36,10 @@
 (def ^:private binding-keys
   #{:attribute-key :attribute-location :attribute-type :field-id
     :manifest-version})
-(def ^:private gauge-locations
+(def ^:private metric-locations
   #{:resource-attributes :scope-attributes :metric-attributes})
 (def ^:private safe-column
-  (re-pattern "a[sv]_mg_(rs|sc|mt)_[a-z0-9_]+_[0-9a-f]{16}"))
+  (re-pattern "a[sv]_m[gs]_(rs|sc|mt)_[a-z0-9_]+_[0-9a-f]{16}"))
 (def ^:private int64-min -9223372036854775808)
 (def ^:private int64-max 9223372036854775807)
 (def ^:private coverage-keys
@@ -44,6 +50,7 @@
     :servicename :timestampunixnano :typedstatus})
 
 (defn supported-typed-gauge-filters [] filter-capability)
+(defn supported-typed-sum-filters [] sum-filter-capability)
 
 (defn- fail! [type message data]
   (throw (ex-info message (assoc data :attribute-explorer/error true :type type))))
@@ -61,7 +68,7 @@
        (string? (:field-id value))
        (re-matches #"attribute_[0-9a-f]{20}" (:field-id value))
        (string? (:attribute-key value))
-       (contains? gauge-locations (:attribute-location value))
+       (contains? metric-locations (:attribute-location value))
        (contains? #{:boolean :int64 :string} (:attribute-type value))
        (integer? (:manifest-version value))
        (pos? (:manifest-version value))))
@@ -83,12 +90,17 @@
            "typed gauge capability contains an invalid column" {}))
   value)
 
-(defn- gauge-fields! [connection descriptor-set]
-  (let [fields (projection/confirmed-gauge-fields descriptor-set connection)]
-    (when-not (every? #(contains? identity/gauge-attribute-targets
-                                   (identity/target-of %))
-                      fields)
-      (fail! ::invalid-target "typed gauge capability has an invalid target" {}))
+(defn- metric-fields! [connection descriptor-set metric-kind]
+  (let [[fields targets] (case metric-kind
+                         :gauge [(projection/confirmed-gauge-fields descriptor-set connection)
+                                 identity/gauge-attribute-targets]
+                         :sum [(projection/confirmed-sum-fields descriptor-set connection)
+                               identity/sum-attribute-targets]
+                         (fail! ::unsupported-metric-kind
+                                "typed metric queries support gauges and sums only"
+                                {:supported-metric-kinds [:gauge :sum]}))]
+    (when-not (every? #(contains? targets (identity/target-of %)) fields)
+      (fail! ::invalid-target "typed metric capability has an invalid target" {}))
     fields))
 
 (defn typed-gauge-fields
@@ -105,7 +117,19 @@
           {:signal :metrics :metric-kind :gauge
            :schema-binding (binding field)
            :operators (get-in filter-capability [:operators (:type field)])})
-        (gauge-fields! connection descriptor-set)))
+        (metric-fields! connection descriptor-set :gauge)))
+
+(defn typed-sum-fields
+  "Discover the exact queryable schema bindings in a confirmed sum capability."
+  [connection descriptor-set]
+  (when (nil? connection)
+    (fail! ::invalid-connection
+           "typed sum discovery requires the installed target connection" {}))
+  (mapv (fn [field]
+          {:signal :metrics :metric-kind :sum
+           :schema-binding (binding field)
+           :operators (get-in sum-filter-capability [:operators (:type field)])})
+        (metric-fields! connection descriptor-set :sum)))
 
 (defn- field! [connection descriptor-set options]
   (when (nil? connection)
@@ -114,13 +138,15 @@
   (when-not (= :metrics (:signal options))
     (fail! ::unsupported-signal "typed gauge queries support metrics only"
            {:supported-signals [:metrics]}))
-  (when-not (= :gauge (:metric-kind options))
-    (fail! ::unsupported-metric-kind "typed metric queries support gauges only"
-           {:supported-metric-kinds [:gauge]}))
-  (let [actual (:schema-binding options)]
+  (let [metric-kind (:metric-kind options)
+        actual (:schema-binding options)]
+    (when-not (contains? #{:gauge :sum} metric-kind)
+      (fail! ::unsupported-metric-kind "typed metric queries support gauges and sums only"
+             {:supported-metric-kinds [:gauge :sum]}))
     (when-not (valid-binding? actual)
       (fail! ::invalid-binding "typed gauge schema binding is invalid" {}))
-    (let [field (some #(when (= actual (binding %)) %) (gauge-fields! connection descriptor-set))]
+    (let [field (some #(when (= actual (binding %)) %)
+                      (metric-fields! connection descriptor-set metric-kind))]
       (when-not field
         (fail! ::stale-binding
                "typed gauge schema binding is no longer available" {}))
@@ -138,7 +164,7 @@
         end (instant! :end-unix-nano (:end-unix-nano options))]
     (when-not (and (< start end) (<= (- end start) explorer/max-time-range-nanos))
       (fail! ::invalid-time-window "typed gauge query window is invalid" {}))
-    {:end end :field field :start start}))
+    {:end end :field field :metric-kind (:metric-kind options) :start start}))
 
 (defn- request! [connection descriptor-set options]
   (let [{:keys [field] :as base}
@@ -155,7 +181,7 @@
        :string (and (string? value) (<= (count value) max-filter-value-length)
                     (or (= :eq operator) (not (empty? value))))
        false)
-      (fail! ::invalid-value "typed gauge filter value is invalid" {}))
+      (fail! ::invalid-value "typed metric filter value is invalid" {}))
     (assoc base
            :limit (positive-cap! :limit (:limit options) explorer/max-result-limit)
            :operator operator
@@ -178,7 +204,7 @@
     :resource-attributes "ResourceAttributes"
     :scope-attributes "ScopeAttributes"
     :metric-attributes "Attributes"
-    (fail! ::invalid-target "typed gauge field has an invalid location" {})))
+    (fail! ::invalid-target "typed metric field has an invalid location" {})))
 
 (defn- predicate [{:keys [field operator]} value-column]
   (case (:type field)
@@ -194,7 +220,11 @@
 
 (def ^:private metric-time-nanos "toInt64(toUnixTimestamp(TimeUnix)) * 1000000000")
 
-(defn- match-sql [{:keys [field] :as request}]
+(defn- metric-table [metric-kind]
+  (case metric-kind :gauge "otel_metrics_gauge" :sum "otel_metrics_sum"
+        (fail! ::unsupported-metric-kind "typed metric queries support gauges and sums only" {})))
+
+(defn- match-sql [{:keys [field metric-kind] :as request}]
   (let [{:keys [value status]} (columns! field)
         string? (= :string (:type field))]
     (str "SELECT " metric-time-nanos " AS timestampunixnano,\n"
@@ -205,7 +235,7 @@
          "       Value AS metricvalue,\n"
          "       " (if string? (str "leftUTF8(" value ", ?)") value)
          " AS attributevalue, " status " AS typedstatus\n"
-         "FROM otel_metrics_gauge\n"
+         "FROM " (metric-table metric-kind) "\n"
          "WHERE " metric-time-nanos " >= ?\n"
          "  AND " metric-time-nanos " < ?\n"
          "  AND " status (if string? " IN (2, 3)\n" " = 3\n")
@@ -222,7 +252,7 @@
   (vec (concat (repeat (if (= :string (:type field)) 5 4) text-length)
                [start end value limit])))
 
-(defn- coverage-sql [field]
+(defn- coverage-sql [metric-kind field]
   (let [{:keys [status]} (columns! field)
         generic-map (generic-map-column field)]
     (str "SELECT countIf(typedstatus = 3) AS valid,\n"
@@ -233,7 +263,7 @@
          " countIf(typedstatus = 0 AND NOT hasfallback) AS historicalunavailable,\n"
          " countIf(typedstatus NOT IN (0,1,2,3,4)) AS unknownstatus, count() AS total\n"
          "FROM (SELECT " status " AS typedstatus, mapContains(" generic-map ", ?) AS hasfallback\n"
-         " FROM otel_metrics_gauge WHERE " metric-time-nanos " >= ?\n"
+         " FROM " (metric-table metric-kind) " WHERE " metric-time-nanos " >= ?\n"
          " AND " metric-time-nanos " < ?)\n"
          "SETTINGS max_result_bytes = " explorer/max-typed-int64-result-bytes
          ", max_rows_to_read = " explorer/max-typed-int64-scan-rows
@@ -242,9 +272,9 @@
          ", max_execution_time = " explorer/max-typed-int64-query-seconds
          ", max_threads = 1")))
 
-(defn- coverage! [connection {:keys [field start end]}]
+(defn- coverage! [connection {:keys [field metric-kind start end]}]
   (let [rows (jdbc/fetch connection
-                         [(coverage-sql field) (:key field) start end]
+                         [(coverage-sql metric-kind field) (:key field) start end]
                          {:max-rows 1})]
     (when-not (and (vector? rows) (= 1 (count rows))
                    (= coverage-keys (set (keys (first rows)))))
@@ -262,22 +292,35 @@
        :historical-untyped-fallback historicalfallback
        :historical-untyped-unavailable historicalunavailable :total total})))
 
-(defn typed-gauge-coverage
-  "Return six-way bounded coverage for one exact typed gauge schema binding."
-  [connection descriptor-set options]
+(defn- typed-coverage
+  "Return six-way bounded coverage for one exact typed metric schema binding."
+  [connection descriptor-set options expected-kind]
+  (when-not (= expected-kind (:metric-kind options))
+    (fail! ::unsupported-metric-kind "typed metric query kind does not match operation"
+           {:expected-metric-kind expected-kind}))
   (let [{:keys [field] :as request}
         (base-request! connection descriptor-set options coverage-request-keys)]
     (context/with-instrumentation-suppressed
       (merge (binding field)
-             {:signal :metrics :metric-kind :gauge
+             {:signal :metrics :metric-kind expected-kind
               :coverage (coverage! connection request)}))))
+
+(defn typed-gauge-coverage
+  "Return six-way bounded coverage for one exact typed gauge schema binding."
+  [connection descriptor-set options]
+  (typed-coverage connection descriptor-set options :gauge))
+
+(defn typed-sum-coverage
+  "Return six-way bounded coverage for one exact typed sum schema binding."
+  [connection descriptor-set options]
+  (typed-coverage connection descriptor-set options :sum))
 
 (defn- finite-number? [value]
   (and (number? value)
        (let [n (double value)]
          (and (= n n) (not= n ##Inf) (not= n ##-Inf)))))
 
-(defn- row! [{:keys [field text-length]} row]
+(defn- row! [{:keys [field metric-kind text-length]} row]
   (when-not (and (map? row) (= row-keys (set (keys row))))
     (fail! ::invalid-result "typed gauge match row has an invalid shape" {}))
   (let [{:keys [attributevalue metricname metricunit metricvalue scopename
@@ -302,15 +345,18 @@
            {:attribute-value attributevalue :metric-name metricname
             :metric-unit metricunit :metric-value metricvalue
             :scope-name scopename :service-name servicename
-            :signal :metrics :metric-kind :gauge :source :typed
+            :signal :metrics :metric-kind metric-kind :source :typed
             :timestamp-unix-nano timestampunixnano :typed-status typedstatus})))
 
-(defn typed-gauge-filtered-points
+(defn- filtered-points
   "Return bounded typed gauge matches plus availability coverage.
 
   Gauge storage has second-resolution timestamps and no point identifier, so
   rows are ordered observations rather than a claim of unique point identity."
-  [connection descriptor-set options]
+  [connection descriptor-set options expected-kind]
+  (when-not (= expected-kind (:metric-kind options))
+    (fail! ::unsupported-metric-kind "typed metric query kind does not match operation"
+           {:expected-metric-kind expected-kind}))
   (let [{:keys [field limit] :as request} (request! connection descriptor-set options)]
     (context/with-instrumentation-suppressed
       (let [coverage (coverage! connection request)
@@ -323,4 +369,14 @@
                {:coverage coverage
                 :filter {:operator (:operator request) :value (:value request)}
                 :matches (mapv #(row! request %) rows)
-                :signal :metrics :metric-kind :gauge})))))
+                :signal :metrics :metric-kind expected-kind})))))
+
+(defn typed-gauge-filtered-points
+  "Return bounded typed gauge matches plus availability coverage."
+  [connection descriptor-set options]
+  (filtered-points connection descriptor-set options :gauge))
+
+(defn typed-sum-filtered-points
+  "Return bounded typed sum matches plus availability coverage."
+  [connection descriptor-set options]
+  (filtered-points connection descriptor-set options :sum))

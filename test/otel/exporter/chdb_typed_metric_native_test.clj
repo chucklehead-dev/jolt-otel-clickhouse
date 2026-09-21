@@ -124,6 +124,19 @@
   (select-keys (gauge-request installation key nil)
                [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
 
+(defn- sum-request
+  ([installation key value] (sum-request installation key :eq value))
+  ([installation key operator value]
+   (let [field (first (filter #(= key (:key %))
+                              (get-in installation [:record :manifest :fields])))]
+     {:schema-binding (schema-binding field) :signal :metrics :metric-kind :sum
+      :start-unix-nano 0 :end-unix-nano 2000000000
+      :operator operator :value value :limit 10 :max-text-length 64})))
+
+(defn- sum-coverage-request [installation key]
+  (select-keys (sum-request installation key nil)
+               [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
+
 (defn -main [& _]
   (reset! observed-checks 0)
   (println "typed metric direct native qualification")
@@ -138,6 +151,7 @@
                                     [:metric-attributes "queue.count" :int64]])
           sum-approved (approved "sum" "otel_metrics_sum"
                                  [[:resource-attributes "sum.resource.ready" :boolean]
+                                  [:resource-attributes "sum.resource.tier" :string]
                                   [:scope-attributes "sum.scope.workers" :int64]
                                   [:metric-attributes "request.success" :boolean]
                                   [:metric-attributes "request.count" :int64]])
@@ -148,7 +162,7 @@
       (check! "real gauge and sum installer DDL activates both capabilities"
               [:active :active] [(:status gauges) (:status sums)])
       (check! "first native installs emit exactly owned additive DDL"
-              [10 8] [(:ddl-count gauges) (:ddl-count sums)])
+              [10 10] [(:ddl-count gauges) (:ddl-count sums)])
       (check! "native observed gauge columns retain exact owned types"
               (expected-column-types gauges)
               (select-keys (observed-columns connection "otel_metrics_gauge")
@@ -171,13 +185,14 @@
                                           {:attributes {"service.ready" false
                                                         "service.tier" "gold"
                                                         "sum.resource.ready" false
+                                                        "sum.resource.tier" "gold"
                                                         "resource.generic" "kept-generic"}}
                                           (metric-batch)))
           (let [gauge-row (jdbc/fetch-one connection (typed-select "otel_metrics_gauge" gauge-physical))
                 sum-row (jdbc/fetch-one connection (typed-select "otel_metrics_sum" sum-physical))]
             (check! "native gauge retains generic maps and projects all three locations"
                     [{"service.ready" "false" "service.tier" "gold"
-                      "sum.resource.ready" "false"
+                      "sum.resource.ready" "false" "sum.resource.tier" "gold"
                       "resource.generic" "kept-generic"}
                      {"runtime.workers" "7" "sum.scope.workers" "7"
                       "scope.generic" "kept-generic"}
@@ -191,12 +206,14 @@
                       (value-status gauge-row gauge-physical "queue.count")]])
             (check! "native sum retains generic maps and projects all three locations"
                     [{"service.ready" "false" "service.tier" "gold"
-                      "sum.resource.ready" "false" "resource.generic" "kept-generic"}
+                      "sum.resource.ready" "false" "sum.resource.tier" "gold"
+                      "resource.generic" "kept-generic"}
                      {"runtime.workers" "7" "sum.scope.workers" "7" "scope.generic" "kept-generic"}
                      {"request.success" "false" "request.count" (str int64-max) "point.generic" "kept-generic"}
-                     [[false 3] [7 3] [false 3] [int64-max 3]]]
+                     [[false 3] ["gold" 3] [7 3] [false 3] [int64-max 3]]]
                     [(:resource sum-row) (:scope sum-row) (:attributes sum-row)
                      [(value-status sum-row sum-physical "sum.resource.ready")
+                      (value-status sum-row sum-physical "sum.resource.tier")
                       (value-status sum-row sum-physical "sum.scope.workers")
                       (value-status sum-row sum-physical "request.success")
                       (value-status sum-row sum-physical "request.count")]])
@@ -230,6 +247,32 @@
                        (let [row (first (:matches result))]
                          [(:attribute-value row) (:typed-status row)
                           (:metric-name row) (:metric-value row)])]))
+            (let [query #(metric-explorer/typed-sum-filtered-points
+                          connection (:descriptor-set sums) %)
+                  boolean (query (sum-request sums "request.success" false))
+                  int64 (query (sum-request sums "sum.scope.workers" :gte 7))
+                  string (query (sum-request sums "sum.resource.tier" :contains "ol"))]
+              (check! "native sum discovery and Boolean point Int64 scope String resource filters read exporter rows"
+                      [#{[:metric-attributes :boolean] [:metric-attributes :int64]
+                         [:resource-attributes :boolean] [:resource-attributes :string]
+                         [:scope-attributes :int64]}
+                       [[false 3 "typed.sum" 3] [7 3 "typed.sum" 3] ["gold" 3 "typed.sum" 3]]]
+                      [(set (map (fn [{:keys [schema-binding]}]
+                                   [(:attribute-location schema-binding)
+                                    (:attribute-type schema-binding)])
+                                 (metric-explorer/typed-sum-fields connection (:descriptor-set sums))))
+                       (mapv (fn [result]
+                               (let [row (first (:matches result))]
+                                 [(:attribute-value row) (:typed-status row)
+                                  (:metric-name row) (:metric-value row)]))
+                             [boolean int64 string])]))
+            (check! "native sum String coverage reads the exporter-produced availability pair"
+                    {:valid 1 :present-empty 0 :absent 0 :invalid 0
+                     :historical-untyped-fallback 0
+                     :historical-untyped-unavailable 0 :total 1}
+                    (:coverage (metric-explorer/typed-sum-coverage
+                                connection (:descriptor-set sums)
+                                (sum-coverage-request sums "sum.resource.tier"))))
             ;; Exercise the direct path's three locations and all stored
             ;; availability states. These rows are deliberately exported, not
             ;; forged with SQL, so the query observes real value/status pairs.
@@ -293,7 +336,7 @@
           (let [failed (install! store connection gauge-approved "otel_metrics_gauge")]
             (check! "native table-qualified wrong type fails without DDL"
                     [:failed 0] [(:status failed) (:ddl-count failed)]))))))
-  (when-not (= 15 @observed-checks)
+  (when-not (= 17 @observed-checks)
     (throw (ex-info "typed metric native check inventory changed"
-                    {:expected 15 :actual @observed-checks})))
+                    {:expected 17 :actual @observed-checks})))
   (println "typed-metric-native-qualified :observed-checks" @observed-checks))
