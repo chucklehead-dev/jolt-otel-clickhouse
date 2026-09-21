@@ -91,8 +91,8 @@
         valid (projector (log-record {"job.name" "archive"
                                       :job.complete false
                                       "job.attempt" 9007199254740993}))]
-    (check "log and bounded metric attributes support only their exact targets"
-           [true false false true true false]
+    (check "log and enabled metric tables retain table-qualified physical support"
+           [true false false true true true]
            [(identity/physically-supported? identity/log-attribute-target)
             (identity/physically-supported?
              (identity/target :logs "otel_logs" :resource-attributes))
@@ -157,6 +157,10 @@
            :otel.exporter.chdb.attribute-projection/signal-mismatch
            (:type (thrown-data
                    #(projection/trace-projector descriptor-set target))))
+    (check "a log capability cannot enter histogram projection"
+           :otel.exporter.chdb.attribute-projection/signal-mismatch
+           (:type (thrown-data
+                   #(projection/histogram-projector descriptor-set target))))
     (check "bare log descriptors cannot substitute for confirmation"
            :otel.exporter.chdb.attribute-registry-installer/unconfirmed-descriptors
            (:type (thrown-data
