@@ -121,7 +121,9 @@
      :capability capability}))
 
 (defn payload-control [rows cols]
-  (let [legacy (apply str (#'exporter/chunks rows))
+  ;; Keep the former composition only as this benchmark's equivalence oracle;
+  ;; production no longer exposes or uses its private chunk sequence.
+  (let [legacy (apply str (map #(str (json/write-str %) "\n") rows))
         candidate (#'exporter/ordinary-payload cols rows)
         bytes (alength (.getBytes candidate "UTF-8"))]
     (require! (and (= legacy candidate) (= batch-size (count rows))
