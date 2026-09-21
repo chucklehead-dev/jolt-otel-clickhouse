@@ -7,25 +7,33 @@
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.typed-metric-explorer :as metric-explorer]))
 
-(defn- installed []
+(defn- installed [metric-kind]
   (let [approved (manifest/compile-manifest
-                  {:dataset-id "telemetry-prod" :application-id "gauge-query"
-                   :lineage "gauge-query-v1" :version 7
+                  {:dataset-id "telemetry-prod" :application-id "metric-query"
+                   :lineage "metric-query-v1" :version 7
                    :fragments [{:schema manifest/reviewed-fragment-schema
-                                :authority :advice :source "advice/gauge-query.edn"
-                                :entries [{:signal :metrics :table "otel_metrics_gauge"
+                                :authority :advice :source "advice/metric-query.edn"
+                                :entries [{:signal :metrics :table (if (= metric-kind :sum)
+                                                                     "otel_metrics_sum"
+                                                                     "otel_metrics_gauge")
                                            :location :resource-attributes :key "service.tier" :type :string}
-                                          {:signal :metrics :table "otel_metrics_gauge"
+                                          {:signal :metrics :table (if (= metric-kind :sum)
+                                                                     "otel_metrics_sum"
+                                                                     "otel_metrics_gauge")
                                            :location :scope-attributes :key "runtime.pool" :type :int64}
-                                          {:signal :metrics :table "otel_metrics_gauge"
+                                          {:signal :metrics :table (if (= metric-kind :sum)
+                                                                     "otel_metrics_sum"
+                                                                     "otel_metrics_gauge")
                                            :location :metric-attributes :key "queue.ready" :type :boolean}]}]})
         columns (registry/expected-columns (registry/prepare approved))
-        observed (atom {}) next-column (atom 0) target (atom :gauge-query-target)
+        observed (atom {}) next-column (atom 0) target (atom metric-kind)
         installation (installer/install-approved!
                       (backend/memory-backend) approved
                       {:target target
                        :observe-columns #(vector {:columns @observed :signal :metrics
-                                                   :table "otel_metrics_gauge"})
+                                                   :table (if (= metric-kind :sum)
+                                                            "otel_metrics_sum"
+                                                            "otel_metrics_gauge")})
                        :execute-ddl! (fn [_]
                                        (let [{:keys [name type]} (nth columns @next-column)]
                                          (swap! next-column inc)
@@ -41,14 +49,14 @@
    :attribute-type (:type field) :field-id (:id field)
    :manifest-version (get-in field [:identity :version])})
 
-(defn- request [field value operator]
-  {:schema-binding (binding field) :signal :metrics :metric-kind :gauge
+(defn- request [metric-kind field value operator]
+  {:schema-binding (binding field) :signal :metrics :metric-kind metric-kind
    :start-unix-nano 1700000000000000000
    :end-unix-nano 1700000001000000000
    :operator operator :value value :limit 10 :max-text-length 64})
 
-(defn- coverage-request [field]
-  (select-keys (request field nil nil)
+(defn- coverage-request [metric-kind field]
+  (select-keys (request metric-kind field nil nil)
                [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
 
 (defn- thrown-data [f]
@@ -56,7 +64,7 @@
 
 (defn run [check]
   (println "schema-bound typed gauge explorer")
-  (let [installation (installed)
+  (let [installation (installed :gauge)
         descriptors (:descriptor-set installation)
         target (::target installation)
         resource (field installation "service.tier")
@@ -75,7 +83,7 @@
                                (swap! calls conj [sqlvec options])
                                (if (= 1 (:max-rows options)) [coverage] [match]))]
                  (metric-explorer/typed-gauge-filtered-points
-                  target descriptors (request ready false :eq)))]
+                  target descriptors (request :gauge ready false :eq)))]
     (check "gauge capability publishes one closed filter vocabulary"
            {:operators {:boolean [:eq] :int64 [:eq :gte :lt]
                         :string [:eq :prefix :contains]}
@@ -111,34 +119,73 @@
             (boolean (some #(str/includes? (first (first %)) "queue.ready") @calls))])
     (let [captured (atom nil)]
       (with-redefs [jdbc/fetch (fn [_ sqlvec _] (reset! captured sqlvec) [coverage])]
-        (metric-explorer/typed-gauge-coverage target descriptors (coverage-request resource)))
+        (metric-explorer/typed-gauge-coverage target descriptors (coverage-request :gauge resource)))
       (check "resource coverage selects its fixed compatibility map"
              true (str/includes? (first @captured) "mapContains(ResourceAttributes, ?)")))
     (let [captured (atom nil)]
       (with-redefs [jdbc/fetch (fn [_ sqlvec _] (reset! captured sqlvec) [coverage])]
-        (metric-explorer/typed-gauge-coverage target descriptors (coverage-request scope)))
+        (metric-explorer/typed-gauge-coverage target descriptors (coverage-request :gauge scope)))
       (check "scope coverage selects its fixed compatibility map"
              true (str/includes? (first @captured) "mapContains(ScopeAttributes, ?)")))
     (check "changed schema version is stale before query"
            :otel.exporter.chdb.typed-metric-explorer/stale-binding
            (:type (thrown-data #(metric-explorer/typed-gauge-coverage
                                  target descriptors
-                                 (assoc-in (coverage-request ready)
+                                 (assoc-in (coverage-request :gauge ready)
                                            [:schema-binding :manifest-version] 8)))))
     (check "gauge capability cannot cross connections"
            :otel.exporter.chdb.attribute-projection/target-mismatch
            (:type (thrown-data #(metric-explorer/typed-gauge-coverage
-                                 (atom :other) descriptors (coverage-request ready)))))
+                                 (atom :other) descriptors (coverage-request :gauge ready)))))
     (let [queries (atom 0)
-          invalid [(assoc (request ready false :eq) :metric-kind :sum)
-                   (assoc (request ready false :eq) :operator :contains)
-                   (assoc (request ready false :eq) :value "false")
-                   (assoc (request ready false :eq) :limit 101)]]
+          invalid [(assoc (request :gauge ready false :eq) :metric-kind :sum)
+                   (assoc (request :gauge ready false :eq) :operator :contains)
+                   (assoc (request :gauge ready false :eq) :value "false")
+                   (assoc (request :gauge ready false :eq) :limit 101)]]
       (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage])]
         (doseq [bad invalid]
           (thrown-data #(metric-explorer/typed-gauge-filtered-points
                          target descriptors bad))))
-      (check "invalid typed gauge requests execute no query" 0 @queries))))
+      (check "invalid typed gauge requests execute no query" 0 @queries)))
+  (let [installation (installed :sum)
+        descriptors (:descriptor-set installation)
+        target (::target installation)
+        ready (field installation "queue.ready")
+        coverage {:valid 2 :presentempty 0 :absent 1 :invalid 1
+                  :historicalfallback 1 :historicalunavailable 1
+                  :unknownstatus 0 :total 6}
+        match {:timestampunixnano 1700000000000000000
+               :metricname "queue.depth" :metricunit "1" :metricvalue 2.5
+               :servicename "worker" :scopename "queue" :attributevalue false
+               :typedstatus 3}
+        calls (atom [])
+        result (with-redefs [jdbc/fetch
+                             (fn [_ sqlvec options]
+                               (swap! calls conj [sqlvec options])
+                               (if (= 1 (:max-rows options)) [coverage] [match]))]
+                 (metric-explorer/typed-sum-filtered-points
+                  target descriptors (request :sum ready false :eq)))]
+    (check "sum capability publishes the same closed filter vocabulary"
+           (assoc (metric-explorer/supported-typed-gauge-filters) :metric-kinds [:sum])
+           (metric-explorer/supported-typed-sum-filters))
+    (check "sum discovery returns only sum schema bindings"
+           #{[:resource-attributes :string] [:scope-attributes :int64]
+             [:metric-attributes :boolean]}
+           (set (map (fn [{:keys [schema-binding]}]
+                       [(:attribute-location schema-binding) (:attribute-type schema-binding)])
+                     (metric-explorer/typed-sum-fields target descriptors))))
+    (check "sum result identifies the sum table and six-way coverage"
+           [:sum {:valid 2 :present-empty 0 :absent 1 :invalid 1
+                  :historical-untyped-fallback 1
+                  :historical-untyped-unavailable 1 :total 6}
+            true]
+           [(:metric-kind result) (:coverage result)
+            (boolean (some #(str/includes? (first (first %)) "FROM otel_metrics_sum") @calls))])
+    (let [queries (atom 0)]
+      (with-redefs [jdbc/fetch (fn [& _] (swap! queries inc) [coverage])]
+        (thrown-data #(metric-explorer/typed-gauge-filtered-points
+                       target descriptors (request :sum ready false :eq))))
+      (check "gauge operation rejects a sum capability before query" 0 @queries))))
 
 (defn -main [& _]
   (let [failures (atom 0)]

@@ -163,7 +163,7 @@ column and its availability status. The current metric boundary is:
 | Metric table | Resource attributes | Scope attributes | Point attributes | Typed query API |
 | --- | --- | --- | --- | --- |
 | `otel_metrics_gauge` | supported | supported | supported | bounded discovery/filter/coverage |
-| `otel_metrics_sum` | not supported | not supported | supported | not provided |
+| `otel_metrics_sum` | supported | supported | supported | bounded discovery/filter/coverage |
 | `otel_metrics_histogram` | not supported | not supported | not supported | not provided |
 
 Unsupported targets are rejected before installer DDL or export; they do not
@@ -172,8 +172,9 @@ loopback tests cover the enabled gauge and sum targets. The fresh-reader
 Durable fixture is wired into the hosted Durable lane for the same values,
 statuses, and generic maps, but this documentation does not treat that new
 hosted run as qualified until it has actually passed. Direct fixture readback
-is test evidence. The gauge query surface is separately capability-bound and
-does not make sum or histogram columns queryable.
+is test evidence. Gauge and sum query capabilities are separately bound to
+their exact installed descriptor sets; neither makes histogram columns
+queryable.
 
 Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
 do not provide that capability; the driver rejects them before storage effects.

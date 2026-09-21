@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Extend the installer-capability-bound metric explorer to promoted sum
+  resource, scope, and point attributes. It provides the same bounded
+  discovery, Boolean/String/Int64 filters, stored-point readback, and six-way
+  coverage as gauges, while histogram querying, aggregation, grouping,
+  saved-query persistence, and schema changes remain out of scope (#8).
+
 - Extend installer-capability-bound typed promotion to sum resource, scope,
   and point attributes on `otel_metrics_sum`. Generic ClickStack maps remain
   unchanged; direct native and real loopback OTLP readback cover all three
