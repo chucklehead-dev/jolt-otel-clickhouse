@@ -182,6 +182,99 @@
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
 
+(def ^:private untyped-span-shape
+  {:name "shape" :start-time-unix-nano 0 :end-time-unix-nano 0
+   :events [] :links [] :attributes {} :resource {:attributes {}}})
+
+;; Each accessor is selected once at construction. There is no per-row column
+;; name lookup/case dispatch and no materialized outer physical row map.
+(def ^:private untyped-span-accessors
+  {"Timestamp" #(timestamp (:start-time-unix-nano %))
+   "TraceId" #(or (get-in % [:span-context :trace-id]) "")
+   "SpanId" #(or (get-in % [:span-context :span-id]) "")
+   "ParentSpanId" #(or (:parent-span-id %) "")
+   "TraceState" #(trace-state-string (get-in % [:span-context :trace-state]))
+   "SpanName" :name
+   "SpanKind" #(otel-enum-string (:kind %) :internal)
+   "ServiceName" #(service-name (:resource %) "unknown_service:jolt")
+   "ResourceAttributes" #(attrs (get-in % [:resource :attributes]))
+   "ScopeName" #(or (get-in % [:scope :name]) "")
+   "ScopeVersion" #(or (get-in % [:scope :version]) "")
+   "SpanAttributes" #(attrs (:attributes %))
+   "Duration" #(max 0 (- (:end-time-unix-nano %) (:start-time-unix-nano %)))
+   "StatusCode" #(otel-enum-string (get-in % [:status :code]) :unset)
+   "StatusMessage" #(or (get-in % [:status :description]) "")
+   "EventsJSON" #(json/write-str (or (:events %) []))
+   "LinksJSON" #(json/write-str (or (:links %) []))
+   "Events.Timestamp" #(mapv (fn [e] (timestamp (:timestamp-unix-nano e))) (or (:events %) []))
+   "Events.Name" #(mapv (fn [e] (or (:name e) "")) (or (:events %) []))
+   "Events.Attributes" #(mapv (fn [e] (attrs (:attributes e))) (or (:events %) []))
+   "Links.TraceId" #(mapv (fn [e] (or (get-in e [:span-context :trace-id]) "")) (or (:links %) []))
+   "Links.SpanId" #(mapv (fn [e] (or (get-in e [:span-context :span-id]) "")) (or (:links %) []))
+   "Links.TraceState" #(mapv (fn [e] (trace-state-string (get-in e [:span-context :trace-state]))) (or (:links %) []))
+   "Links.Attributes" #(mapv (fn [e] (attrs (:attributes e))) (or (:links %) []))})
+
+(defn- untyped-scalar? [x] (or (nil? x) (string? x) (boolean? x)
+                         (and (integer? x) (<= -9223372036854775808 x 9223372036854775807))))
+(defn- untyped-attributes? [x]
+  (or (nil? x) (and (map? x) (every? string? (keys x)) (every? untyped-scalar? (vals x)))))
+(defn- untyped-span-eligible? [span]
+  ;; Narrow, pure shape check. Rejected shapes use the original whole-row path,
+  ;; preserving its validation order and errors. No acceptance rules change.
+  (and (map? span)
+       (every? #(or (nil? %) (map? %)) [(:span-context span) (:scope span) (:resource span) (:status span)])
+       (every? untyped-attributes? [(:attributes span) (get-in span [:resource :attributes])])
+       (every? #(and (integer? %) (<= 0 % 9223372036854775807))
+               [(:start-time-unix-nano span) (:end-time-unix-nano span)])
+       (every? #(or (nil? %) (string? %))
+               [(:name span) (:parent-span-id span) (get-in span [:span-context :trace-id])
+                (get-in span [:span-context :span-id]) (get-in span [:span-context :trace-state])
+                (get-in span [:scope :name]) (get-in span [:scope :version])
+                (get-in span [:status :description])])
+       (every? #(or (nil? %) (keyword? %)) [(:kind span) (get-in span [:status :code])])
+       (or (nil? (:links span)) (and (vector? (:links span)) (empty? (:links span))))
+       (or (nil? (:events span))
+           (and (vector? (:events span))
+                (every? #(and (map? %) (integer? (:timestamp-unix-nano %))
+                              (<= 0 (:timestamp-unix-nano %) 9223372036854775807)
+                              (or (nil? (:name %)) (string? (:name %)))
+                              (untyped-attributes? (:attributes %))) (:events span))))))
+
+(defn- compile-untyped-span-encoder []
+  (let [order (vec (keys (span-row untyped-span-shape nil)))]
+    (when (= (set order) (set (keys untyped-span-accessors)))
+      (let [slots (mapv (fn [index column]
+                          [(str (if (zero? index) "{" ",") (json/write-str column) ":")
+                           (get untyped-span-accessors column)]) (range) order)
+            emit (reduce (fn [next [fragment value-at]]
+                           (fn [out span]
+                             (.append out fragment)
+                             (json/write (value-at span) out)
+                             (next out span)))
+                         (fn [out _] (.append out "}")) (reverse slots))]
+        (fn [span]
+          (if (untyped-span-eligible? span)
+            (let [out (java.io.StringWriter.)] (emit out span) (.toString out))
+            (json/write-str (span-row span nil))))))))
+
+(defn- untyped-span-payload
+  ([encoder spans] (untyped-span-payload encoder spans max-insert-bytes))
+  ([encoder spans limit]
+   ;; Do not use mapv/map here: even chunked map can evaluate later rows before
+   ;; the current row's limit check. Only request next after acceptance.
+   (loop [remaining limit rows (seq spans) out (StringBuilder.)]
+     (if rows
+       (let [encoded (encoder (first rows))
+             size (inc (alength (.getBytes encoded "UTF-8")))]
+         (when (> size remaining)
+           (throw (ex-info "chDB telemetry export batch exceeds 8 MiB" {:limit limit})))
+         (.append out encoded) (.append out "\n")
+         (recur (- remaining size) (next rows) out))
+       (.toString out)))))
+
+
+(def ^:private untyped-span-encoder (delay (compile-untyped-span-encoder)))
+
 (defn- json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
 
@@ -440,10 +533,18 @@
       false
       (try
         (when (seq spans)
-          (insert-batch! connection state "otel_traces"
+          (let [snapshot @state
+                encoder (when (and (:durable? snapshot)
+                                   (nil? (:typed-span-projector snapshot)))
+                          @untyped-span-encoder)]
+            (if encoder
+              (let [payload (untyped-span-payload encoder spans)]
+                (context/with-instrumentation-suppressed
+                  (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload))))
+              (insert-batch! connection state "otel_traces"
                              (:span-insert-columns @state) "insert into otel_traces"
                              (map #(span-row % (:typed-span-projector @state))
-                                  spans)))
+                                  spans)))))
         (complete-batch! connection state (boolean (seq spans)))
         (catch Throwable e
           (swap! state assoc :last-error e)

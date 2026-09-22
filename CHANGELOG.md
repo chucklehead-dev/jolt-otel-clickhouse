@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Reduce untyped Durable span serialization allocation with a schema-bound
+  encoder using maintained `data.json` for every dynamic value. Typed and
+  ordinary exports retain their existing paths; unsupported span shapes fall
+  back to the existing row encoder. Payload bounds and publication guarantees
+  are unchanged.
+
 - Update OTel to the merged SDK lifecycle fixes and default scalar attribute
   normalization shortcut. Attribute values and ClickStack payloads retain their
   existing representation; this update does not change exporter durability semantics.
