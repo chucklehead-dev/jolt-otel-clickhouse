@@ -322,10 +322,6 @@
   "One native physical path in a fresh process; no anchor reset or alternate pins."
   []
   (reset! failures 0)
-  (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
-    (check "untyped schema encoder contracts" true (zero? (+ (:fail result) (:error result)))))
-  (when (pos? @failures) (finish-checks!))
-  (untyped-native/run (child-test-executable))
   (let [observed (atom 0)
         original-check check]
    (with-redefs [check (fn [& arguments]
@@ -397,6 +393,15 @@
        (if @terminal?
          (delete-tree! path)
          (println :persistent-migration-cleanup-terminal-unconfirmed))))))
+
+(defn- run-untyped-schema-encoder-checks []
+  ;; Keep the new encoder suite in the aggregate, but do not overload the
+  ;; migration-child contract: that child must prove only reopen persistence.
+  (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
+    (check "untyped schema encoder contracts" true
+           (zero? (+ (:fail result) (:error result)))))
+  (when (pos? @failures) (finish-checks!))
+  (untyped-native/run (child-test-executable)))
 
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
@@ -800,6 +805,7 @@
   (typed-log-socket-test/-main)
   (run-clean-source-load-check)
   (run-backend-benchmark-gate)
+  (run-untyped-schema-encoder-checks)
   (run-migration-checks)
   (run-logical-database-checks)
   (run-instrumentation-suppression-checks)
