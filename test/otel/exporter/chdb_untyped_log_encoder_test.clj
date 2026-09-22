@@ -127,6 +127,66 @@
       (with-redefs [exporter/log-row (fn [& _] (throw (ex-info "admitted row materialized" {})))]
         (is (= expected (encoder base-log)))))))
 
+(deftest direct-batch-log-renderer-preserves-utf8-and-whole-batch-fallback
+  ;; The batch renderer is deliberately narrower than the row renderer. It
+  ;; retains data.json for attribute values but does not create a final String
+  ;; for each physical row merely to count it. This checks its incremental
+  ;; count against the actual final UTF-8 wire, including data.json-owned
+  ;; Unicode/control escaping in the three attribute maps.
+  (let [batch (#'exporter/compile-untyped-log-batch-encoder)
+        records [(assoc base-log
+                        :body "ASCII direct body"
+                        :attributes {"unicode" "λ😀" "control" "\u0000\t\n"}
+                        :resource {:attributes {"service.name" "service" "emoji" "😀"}}
+                        :scope {:attributes {"scope" "β/\\\""}})
+                 (assoc base-log :body "another ASCII body"
+                        :attributes {"ordered" "second"})]
+        expected (apply str (map #(str (baseline %) "\n") records))]
+    (is (ifn? batch))
+    (is (= (utf8 expected) (utf8 (batch records))))
+    ;; These scalar values need data.json's escape/structured authority. A
+    ;; single one discards the partial request-local builder and restarts the
+    ;; *entire* batch through the historical generic row path.
+    (doseq [ineligible [(assoc base-log :body "unicode-λ")
+                        (assoc base-log :body {"nested" [false nil "λ"]})]]
+      (is (= (var-get #'exporter/generic-untyped-log-payload)
+             (batch [base-log ineligible]))))))
+
+(deftest direct-batch-log-renderer-stops-before-later-record-after-overflow
+  (let [batch (#'exporter/compile-untyped-log-batch-encoder)
+        exact (assoc base-log :body "direct-boundary-one")
+        overflow (assoc base-log :body "direct-boundary-two")
+        limit (alength (.getBytes (batch [exact]) "UTF-8"))
+        later (lazy-seq (throw (ex-info "later raw record was observed" {})))]
+    (is (ifn? batch))
+    (is (= limit (alength (.getBytes (batch [exact] limit) "UTF-8"))))
+    ;; `batch` may construct the overflowing record, but it must reject before
+    ;; requesting the next lazy record and before any driver/WAL call.
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo
+                          #"exceeds 8 MiB"
+                          (batch (concat [exact overflow] later) limit)))))
+
+(deftest direct-batch-log-renderer-reaches-the-existing-durable-boundary
+  (let [row (#'exporter/compile-untyped-log-encoder)
+        batch (#'exporter/compile-untyped-log-batch-encoder)
+        target (log-target true)
+        records [base-log (assoc base-log :body "second ASCII direct body")]
+        calls (atom [])]
+    ;; Compile the schema fences before replacing log-row. Thereafter a direct
+    ;; success may not materialize a physical row map, but still uses the same
+    ;; execute-and-flush ownership boundary and exact SQL bytes.
+    (with-redefs [exporter/untyped-log-encoder (delay row)
+                  exporter/untyped-log-batch-encoder (delay batch)
+                  exporter/log-row (fn [& _] (throw (ex-info "direct batch materialized row" {})))
+                  durable/execute-and-flush! (fn [_ sql]
+                                               (swap! calls conj sql)
+                                               {:status :committed})]
+      (is (true? (logs/export-logs! target records))))
+    (is (= 1 (count @calls)))
+    (is (= (utf8 (str "insert into otel_logs (Timestamp, TraceId, SpanId, TraceFlags, SeverityText, SeverityNumber, ServiceName, Body, ResourceSchemaUrl, ResourceAttributes, ScopeSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, LogAttributes, EventName) FORMAT JSONEachRow\n"
+                       (apply str (map #(str (baseline %) "\n") records))))
+           (utf8 (first @calls))))))
+
 (deftest direct-log-8mib-boundary-preserves-route-and-construction-order
   (let [direct (#'exporter/compile-untyped-log-encoder)
         exact (exact-limit-record direct)

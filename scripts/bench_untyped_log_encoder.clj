@@ -69,25 +69,35 @@
     (let [without-cache #(with-redefs [exporter/untyped-log-attribute-cache (constantly nil)]
                             (#'exporter/untyped-log-payload encoder records))
           with-cache #(#'exporter/untyped-log-payload encoder records)
+          batch-encoder (#'exporter/compile-untyped-log-batch-encoder)
+          direct-batch #(binding [exporter/*untyped-log-attribute-wire-cache*
+                                  (#'exporter/untyped-log-attribute-cache)]
+                          (batch-encoder records))
           generic (generic-payload records)
           direct-without-cache (without-cache)
           direct-with-cache (with-cache)]
-      (when-not (and (= (vec (.getBytes generic "UTF-8"))
+      (when-not (ifn? batch-encoder)
+        (throw (ex-info "Jolt direct batch log encoder unavailable" {})))
+      (let [direct-batch-wire (direct-batch)]
+        (when-not (and (= (vec (.getBytes generic "UTF-8"))
                         (vec (.getBytes direct-without-cache "UTF-8")))
                      (= (vec (.getBytes generic "UTF-8"))
-                        (vec (.getBytes direct-with-cache "UTF-8"))))
-        (throw (ex-info "encoder byte parity failed" {})))
-      (dotimes [_ 3] (generic-payload records) (without-cache) (with-cache))
+                        (vec (.getBytes direct-with-cache "UTF-8")))
+                     (= (vec (.getBytes generic "UTF-8"))
+                        (vec (.getBytes direct-batch-wire "UTF-8"))))
+          (throw (ex-info "encoder byte parity failed" {})))
+        (dotimes [_ 3] (generic-payload records) (without-cache) (with-cache) (direct-batch))
       ;; ABBA avoids attributing one monotonic warm-up/drift direction to the
-      ;; cache.  A is the exact same schema-bound encoder with only its
-      ;; request-local cache disabled; B is the candidate.  This is encoder
+      ;; direct batch renderer. A retains the reviewed per-row exact encoder;
+      ;; B appends admitted rows to one request-local StringBuilder and counts
+      ;; exact UTF-8 bytes before observing the next record. This is encoder
       ;; evidence only, never a Durable throughput claim.
-      (let [arms [[:a-no-cache without-cache] [:b-cache with-cache]
-                  [:b-cache with-cache] [:a-no-cache without-cache]]
+        (let [arms [[:a-row-cache with-cache] [:b-direct-batch direct-batch]
+                  [:b-direct-batch direct-batch] [:a-row-cache with-cache]]
             measured (mapv (fn [[label thunk]]
                              {:arm label :summary (timing-summary (sample sample-count thunk))})
                            arms)
-            receipt {:kind :jolt-untyped-log-attribute-wire-cache-encoder-abba
+            receipt {:kind :jolt-direct-batch-log-renderer-encoder-abba
                      :rows row-count :samples sample-count
                      :jolt-version (System/getProperty "jolt.version")
                      :exporter-source-sha256
@@ -95,11 +105,11 @@
                      :probe-source-sha256
                      (sha256 (slurp "scripts/bench_untyped_log_encoder.clj"))
                      :fixture-sha256 (sha256 (pr-str records))
-                     :payload-sha256 (sha256 direct-with-cache)
-                     :bytes (alength (.getBytes direct-with-cache "UTF-8"))
+                     :payload-sha256 (sha256 direct-batch-wire)
+                     :bytes (alength (.getBytes direct-batch-wire "UTF-8"))
                      :exact? true
                      :generic (timing-summary (sample sample-count #(generic-payload records)))
                      :abba measured
                      :scope :encoder-only-no-chdb-or-wal}]
-        (when receipt-path (write-immutable-receipt! receipt-path receipt))
-        (println (pr-str receipt))))))
+          (when receipt-path (write-immutable-receipt! receipt-path receipt))
+          (println (pr-str receipt)))))))

@@ -494,11 +494,21 @@
   {:entries (java.util.HashMap.)
    :chars (java.util.concurrent.atomic.AtomicLong. 0)})
 
-(defn- cached-untyped-log-attrs-wire [source]
+(defn- utf8-byte-count [text]
+  ;; This is deliberately byte based rather than `(count text)`: Jolt's
+  ;; strings are not an UTF-8 byte container.  The direct batch renderer uses
+  ;; this only for data.json-owned attribute wires; its scalar subset is ASCII
+  ;; and has constant-time byte counts below.  Keeping this authority here
+  ;; makes a future native byte counter an isolated substitution, not a wire
+  ;; semantic change.
+  (alength (.getBytes text "UTF-8")))
+
+(defn- cached-untyped-log-attrs-entry [source]
   (let [source (or source {})
         cache *untyped-log-attribute-wire-cache*]
     (if-not cache
-      (json/write-str (attrs source))
+      (let [wire (json/write-str (attrs source))]
+        {:wire wire :utf8-bytes (utf8-byte-count wire)})
       (let [entries (:entries cache)
             ;; Do not use `source` itself here: associative equality erases
             ;; insertion order, while JSON bytes must preserve it.
@@ -508,12 +518,16 @@
           cached
           (let [encoded (json/write-str (attrs source))
                 size (count encoded)
+                entry {:wire encoded :utf8-bytes (utf8-byte-count encoded)}
                 chars (:chars cache)]
             (when (and (< (.size entries) untyped-log-attribute-cache-max-entries)
                        (<= (+ (.get chars) size) untyped-log-attribute-cache-max-chars))
-              (.put entries key encoded)
+              (.put entries key entry)
               (.addAndGet chars size))
-            encoded))))))
+            entry))))))
+
+(defn- cached-untyped-log-attrs-wire [source]
+  (:wire (cached-untyped-log-attrs-entry source)))
 
 (defn- plain-json-string? [value]
   ;; data.json's default writer has the exact escaping authority.  This tiny
@@ -541,6 +555,26 @@
                                   (.append out value)
                                   (.append out (char 34)))
     :else (json/write value out)))
+
+(defn- batch-direct-log-scalar-bytes
+  "Return an exact UTF-8 byte count for the direct scalar subset, or nil.
+  Its strings are ASCII by admission and JSON numbers are ASCII by grammar."
+  [value]
+  (cond
+    (nil? value) 4
+    (true? value) 4
+    (false? value) 5
+    (integer? value) (count (str value))
+    (plain-json-string? value) (+ 2 (count value))
+    :else nil))
+
+(defn- append-batch-direct-log-scalar! [^StringBuilder out value]
+  (cond
+    (nil? value) (.append out "null")
+    (true? value) (.append out "true")
+    (false? value) (.append out "false")
+    (integer? value) (.append out (str value))
+    :else (do (.append out (char 34)) (.append out value) (.append out (char 34)))))
 
 (defn- untyped-log-eligible? [record]
   ;; Pure, conservative shape admission.  In particular, maps are accepted
@@ -618,6 +652,81 @@
 
 (def ^:private generic-untyped-log-payload ::generic-untyped-log-payload)
 
+(defn- compile-untyped-log-batch-encoder []
+  ;; The row encoder above has an intentionally broader admitted subset: it
+  ;; can delegate one scalar to data.json and then check the completed row.
+  ;; This batch form has a stricter admission rule because it must know every
+  ;; record's UTF-8 size *before* looking at the next record, without turning
+  ;; each row into a final String.  Escaped/structured scalar values therefore
+  ;; select the existing all-generic path for the whole batch.
+  (when (jolt-runtime?)
+    (let [order (vec (keys (log-row untyped-log-shape nil)))]
+      (when (and (= (set order) (set schema/clickstack-log-insert-columns))
+                 (= (set order) (set (keys untyped-log-accessors))))
+        (let [fragments (log-key-fragments order)
+              fragment-bytes (mapv utf8-byte-count fragments)
+              emit (fn [records limit]
+                     (loop [remaining limit
+                   records (seq records)
+                   out (StringBuilder.)]
+              ;; Do not use `if-let`: false/nil raw records must choose the
+              ;; generic route rather than ending the batch early.
+              (if records
+                (let [record (first records)]
+                  (if-not (untyped-log-eligible? record)
+                    generic-untyped-log-payload
+                    (let [row-start-bytes 2 ; closing brace plus LF
+                          row-bytes (volatile! row-start-bytes)
+                          direct? (loop [columns order
+                                         fragments fragments
+                                         fragment-bytes fragment-bytes]
+                                    (if-let [column (first columns)]
+                                      (let [attribute-at (get untyped-log-attribute-accessors column)
+                                            value (if attribute-at
+                                                    (cached-untyped-log-attrs-entry
+                                                     (attribute-at record))
+                                                    ((get untyped-log-accessors column) record))]
+                                        ;; No StringBuilder mutation happens
+                                        ;; before the scalar's direct-admission
+                                        ;; decision. A rejected field returns
+                                        ;; the generic sentinel, and the
+                                        ;; request-local builder is discarded.
+                                        (if attribute-at
+                                          (do (.append out (first fragments))
+                                              (.append out (:wire value))
+                                              (vswap! row-bytes + (first fragment-bytes)
+                                                      (:utf8-bytes value))
+                                              (recur (next columns) (next fragments)
+                                                     (next fragment-bytes)))
+                                          (let [scalar-bytes
+                                                (batch-direct-log-scalar-bytes value)]
+                                            (if (nil? scalar-bytes)
+                                              false
+                                              (do (.append out (first fragments))
+                                                  (append-batch-direct-log-scalar! out value)
+                                                  (vswap! row-bytes + (first fragment-bytes)
+                                                          scalar-bytes)
+                                                  (recur (next columns) (next fragments)
+                                                         (next fragment-bytes)))))))
+                                      true))]
+                      (if-not direct?
+                        generic-untyped-log-payload
+                        (let [bytes @row-bytes]
+                          ;; This is the pre-next-record boundary. The
+                          ;; builder is request-local and has not reached a
+                          ;; JDBC/Durable/WAL boundary at this point.
+                          (when (> bytes remaining)
+                            (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                                            {:limit limit})))
+                          (.append out \}) (.append out "\n")
+                          (recur (- remaining bytes) (next records) out))))))
+                (.toString out))))]
+          (fn
+            ([records] (emit records max-insert-bytes))
+            ([records limit] (emit records limit))))))))
+
+(def ^:private untyped-log-batch-encoder (delay (compile-untyped-log-batch-encoder)))
+
 (defn- untyped-log-payload
   "Encode an all-eligible batch incrementally, preserving the
   no-later-record-after-overflow rule.
@@ -681,13 +790,18 @@
         encoder (when (and (not typed-projector)
                            (= (:log-insert-columns snapshot)
                               schema/clickstack-log-insert-columns))
-                  @untyped-log-encoder)]
+                  @untyped-log-encoder)
+        batch-encoder (when encoder @untyped-log-batch-encoder)]
     (if-not encoder
       (insert-batch! connection state "otel_logs"
                      (:log-insert-columns snapshot)
                      (selected-log-insert-query typed-projector)
                      (map #(log-row % typed-projector) records))
-      (let [payload (untyped-log-payload encoder records)
+      (let [payload (if batch-encoder
+                      (binding [*untyped-log-attribute-wire-cache*
+                                (untyped-log-attribute-cache)]
+                        (batch-encoder records))
+                      (untyped-log-payload encoder records))
             query (selected-log-insert-query nil)]
         (if (= generic-untyped-log-payload payload)
           ;; Keep every non-admitted raw shape on the historical path. In
