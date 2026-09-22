@@ -2,6 +2,7 @@
   "Focused parity/route checks for the Jolt-only schema-bound log writer."
   (:require [clojure.data.json :as json]
             [clojure.test :refer [deftest is run-tests]]
+            [jdbc.chdb :as chdb]
             [jdbc.chdb.durable :as durable]
             [otel.exporter.chdb :as exporter]
             [otel.sdk.export :as export]
@@ -93,12 +94,57 @@
     (doseq [records [[nil base-log] [false base-log]]]
       (let [generic (apply str (map #(str (baseline %) "\n") records))
             direct (#'exporter/untyped-log-payload encoder records)]
-        (is (= (utf8 generic) (utf8 direct)))
+        (is (= (var-get #'exporter/generic-untyped-log-payload) direct))
         (reset! calls [])
         (with-redefs [durable/execute-and-flush! (fn [_ sql]
                                                    (swap! calls conj sql) {:status :committed})]
           (is (true? (logs/export-logs! target records))))
         (is (= [(utf8 (str query generic))] (mapv utf8 @calls)))))))
+
+(deftest noneligible-record-keeps-legacy-durable-json
+  ;; This shape is not eligible for the fixed writer. Durable historically
+  ;; lets data.json render the keyword through log-row; unlike ordinary
+  ;; transport, it must not gain an early physical-row validation failure.
+  (let [target (exporter/->ChdbExporter
+                :writer false #{:logs}
+                (atom {:closed-signals #{} :durable? true
+                       :typed-log-projector nil
+                       :log-insert-columns
+                       ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText"
+                        "SeverityNumber" "ServiceName" "Body" "ResourceSchemaUrl"
+                        "ResourceAttributes" "ScopeSchemaUrl" "ScopeName" "ScopeVersion"
+                        "ScopeAttributes" "LogAttributes" "EventName"]}))
+        record (assoc base-log :resource {:schema-url :legacy-keyword
+                                          :attributes {"service.name" "fallback"}})
+        query "insert into otel_logs (Timestamp, TraceId, SpanId, TraceFlags, SeverityText, SeverityNumber, ServiceName, Body, ResourceSchemaUrl, ResourceAttributes, ScopeSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, LogAttributes, EventName) FORMAT JSONEachRow\n"
+        expected (str query (baseline record) "\n")
+        calls (atom [])]
+    (is (not (#'exporter/untyped-log-eligible? record)))
+    (with-redefs [durable/execute-and-flush! (fn [_ sql]
+                                               (swap! calls conj sql) {:status :committed})]
+      (is (true? (logs/export-logs! target [record]))))
+    (is (= [(utf8 expected)] (mapv utf8 @calls)))))
+
+(deftest noneligible-record-keeps-ordinary-validation
+  ;; The same non-eligible value previously reaches ordinary-payload, where
+  ;; the transport boundary rejects it before calling the driver.
+  (let [target (exporter/->ChdbExporter
+                :writer false #{:logs}
+                (atom {:closed-signals #{} :durable? false
+                       :typed-log-projector nil
+                       :log-insert-columns
+                       ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText"
+                        "SeverityNumber" "ServiceName" "Body" "ResourceSchemaUrl"
+                        "ResourceAttributes" "ScopeSchemaUrl" "ScopeName" "ScopeVersion"
+                        "ScopeAttributes" "LogAttributes" "EventName"]}))
+        record (assoc base-log :resource {:schema-url :legacy-keyword
+                                          :attributes {"service.name" "fallback"}})
+        calls (atom [])]
+    (with-redefs [chdb/insert-json-rows! (fn [& arguments] (swap! calls conj arguments))]
+      (is (false? (logs/export-logs! target [record]))))
+    (is (empty? @calls))
+    (is (= ::exporter/invalid-ordinary-row
+           (:type (ex-data (exporter/last-error target)))))))
 
 (defn -main []
   (let [result (run-tests 'otel.exporter.chdb-untyped-log-encoder-test)]

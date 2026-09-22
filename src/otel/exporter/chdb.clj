@@ -563,24 +563,34 @@
 
 (def ^:private untyped-log-encoder (delay (compile-untyped-log-encoder)))
 
+(def ^:private generic-untyped-log-payload ::generic-untyped-log-payload)
+
 (defn- untyped-log-payload
-  "Encode records incrementally, preserving the no-later-record-after-overflow
-  rule.  Every admitted record has already passed physical validation; fallback
-  records validate through the ordinary maintained row path."
+  "Encode an all-eligible batch incrementally, preserving the
+  no-later-record-after-overflow rule.
+
+  A non-eligible raw record returns the generic payload sentinel before it is
+  encoded. The caller then restarts the whole batch through the old log-row
+  path: Durable retains its historical write semantics (which do not run
+  ordinary-row validation), while ordinary transport retains its existing
+  whole-batch validation. Do not pre-scan the input: that could observe a
+  later record after an earlier direct row would overflow."
   [encoder records]
   (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
     ;; Test sequence presence, not the record: raw SDK callers can supply a
     ;; falsey record, which must retain the ordinary `log-row` fallback rather
     ;; than terminating this batch and dropping subsequent records.
     (if records
-      (let [record (first records)
-            encoded (encoder record)
-            bytes (inc (alength (.getBytes encoded "UTF-8")))]
-        (when (> bytes remaining)
-          (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                          {:limit max-insert-bytes})))
-        (.append out encoded) (.append out "\n")
-        (recur (- remaining bytes) (next records) out))
+      (let [record (first records)]
+        (if-not (untyped-log-eligible? record)
+          generic-untyped-log-payload
+          (let [encoded (encoder record)
+                bytes (inc (alength (.getBytes encoded "UTF-8")))]
+            (when (> bytes remaining)
+              (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                              {:limit max-insert-bytes})))
+            (.append out encoded) (.append out "\n")
+            (recur (- remaining bytes) (next records) out))))
       (.toString out))))
 
 (declare execute-durable-sql!)
@@ -615,12 +625,19 @@
                      (map #(log-row % typed-projector) records))
       (let [payload (untyped-log-payload encoder records)
             query (selected-log-insert-query nil)]
-        (if (:durable? snapshot)
-          (execute-durable-sql!
-           connection (str query " FORMAT JSONEachRow\n" payload))
-          (context/with-instrumentation-suppressed
-            (chdb/insert-json-rows! connection "otel_logs"
-                                    (:log-insert-columns snapshot) payload)))))))
+        (if (= generic-untyped-log-payload payload)
+          ;; Keep every non-admitted raw shape on the historical path. In
+          ;; particular Durable deliberately serializes this path without the
+          ;; ordinary transport's physical-row validation.
+          (insert-batch! connection state "otel_logs"
+                         (:log-insert-columns snapshot) query
+                         (map #(log-row % nil) records))
+          (if (:durable? snapshot)
+            (execute-durable-sql!
+             connection (str query " FORMAT JSONEachRow\n" payload))
+            (context/with-instrumentation-suppressed
+              (chdb/insert-json-rows! connection "otel_logs"
+                                      (:log-insert-columns snapshot) payload))))))))
 
 (defn- typed-columns [fields]
   (vec (mapcat (fn [field]
