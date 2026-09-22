@@ -9,6 +9,7 @@
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
+            [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
             [otel.exporter.chdb-ordinary-transport-diagnostics-test]
             [otel.exporter.chdb-ordinary-typed-rows-test :as ordinary-typed-rows-test]
@@ -320,6 +321,8 @@
   "One native physical path in a fresh process; no anchor reset or alternate pins."
   []
   (reset! failures 0)
+  (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
+    (check "untyped schema encoder contracts" true (zero? (+ (:fail result) (:error result)))))
   (let [observed (atom 0)
         original-check check]
    (with-redefs [check (fn [& arguments]
