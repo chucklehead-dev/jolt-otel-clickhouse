@@ -10,7 +10,7 @@
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
 
 (def ^:private data-json-source-root
-  "https___github.com_casselc_data.json.git/e7f97a9b5ecf7fa00787375fff4176a082fe9b98/src/main/clojure")
+  "https___github.com_casselc_data.json.git/d8763cb8b38771285f5111dad9316762cd02a700/src/main/clojure")
 
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
@@ -121,7 +121,7 @@
            (boolean (oracle (str fixture-root "/../clojure"))))
     (check "data.json old SHA is rejected" false
            (boolean (oracle (str/replace source
-                                      "e7f97a9b5ecf7fa00787375fff4176a082fe9b98"
+                                      "d8763cb8b38771285f5111dad9316762cd02a700"
                                       "932444043c0c06f9e295ba4963419b2481e9dd07"))))
     (check "data.json distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" root))))
