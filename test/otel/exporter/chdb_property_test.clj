@@ -444,22 +444,23 @@
 
 (defn- durable-itf-replay-property []
   (h/run-test!
-   {:name "Quint durable export success replay"
+   {:name "Quint durable queue witness and runtime boundary"
     :database "" :verbosity :quiet :derandomize? true :test-cases 1}
    (fn [_]
      (let [trace (json/read-str
                   (slurp "formal/quint/traces/durable-export-success.itf.json"))
            model-states (get trace "states")
-           expected-actions (mapv #(get % "mbt::actionTaken") model-states)
+           model-actions (mapv #(get % "mbt::actionTaken") model-states)
            final-model-state (last model-states)
            state-key (first (filter #(str/ends-with? % "::state")
                                     (keys final-model-state)))
            expected-final (get final-model-state state-key)
+           tag-set (fn [itf-set]
+                     (set (map #(get % "tag") (get itf-set "#set"))))
            implementation-actions (atom ["init"])
-           ;; Replay the same insert -> persistence barrier -> acknowledgement
-           ;; boundaries using ordinary transport plus an explicit barrier.
-           ;; This does not assert a native Durable writer or switch transport
-           ;; merely to retain the obsolete SQL spy.
+           ;; The ITF is a witness for the proposed writer queue. The current
+           ;; exporter still owns one ordinary insert -> barrier -> return
+           ;; path; it does not implement Atomic/ForceFlush/Close queue items.
            exporter
            (chdb-export/->ChdbExporter
             :fake false #{:spans}
@@ -480,24 +481,36 @@
                (export/export-spans! exporter [(sample-span)]))]
          (when result
            (swap! implementation-actions conj "returnSuccess"))
-         (check! (= expected-actions @implementation-actions)
-                 "otel-exporter/quint-itf-actions"
-                 "implementation boundaries diverged from the Quint ITF trace"
-                 {:expected expected-actions
-                  :actual @implementation-actions})
-         (let [actual-final
-               {"barrierAttempted" true
-                "durable" result
-                "inserted" true
-                "phase" {"tag" (if result "Succeeded" "Failed")
-                         "value" {"#tup" []}}
-                "returnedFailure" (not result)
-                "returnedSuccess" result
-                "wrote" true}]
-           (check! (= expected-final actual-final)
-                   "otel-exporter/quint-itf-final-state"
-                   "implementation result diverged from the Quint state oracle"
-                   {:expected expected-final :actual actual-final})))))))
+         (check! (= ["init" "admitA" "admitB" "atomicA" "atomicBSuccess"]
+                    model-actions)
+                 "otel-exporter/quint-itf-queue-witness"
+                 "Durable ITF no longer witnesses independently admitted FIFO callers"
+                 {:actions model-actions})
+         (check! (and (= #{} (tag-set (get expected-final "pending")))
+                      (= [] (get expected-final "queue"))
+                      (= #{"A" "B"}
+                         (tag-set (get expected-final "successes")))
+                      (= #{} (tag-set (get expected-final "failures")))
+                      (= ["A" "B"]
+                         (mapv #(get % "tag")
+                               (get expected-final "committedOrder")))
+                      (= #{#{"A"} #{"B"}}
+                         (set (map tag-set
+                                   (get (get expected-final "committedGroups")
+                                        "#set")))))
+                 "otel-exporter/quint-itf-queue-final-state"
+                 "Durable ITF no longer proves the atomic caller queue witness"
+                 {:final-state expected-final})
+         (check! (= ["init" "insertSuccess" "barrierSuccess" "returnSuccess"]
+                    @implementation-actions)
+                 "otel-exporter/quint-runtime-boundary"
+                 "current single-exporter insert/barrier contract changed"
+                 {:runtime-actions @implementation-actions
+                  :model-actions model-actions
+                  :runtime-integration :single-exporter-barrier
+                  :not-implemented [:atomic-writer-request
+                                    :positioned-force-flush
+                                    :fifo-close]}))))))
 
 (defn- wire-json-property []
   (h/run-test!

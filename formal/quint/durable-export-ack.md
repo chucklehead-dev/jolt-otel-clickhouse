@@ -25,6 +25,16 @@ transition and is settled only with its own terminal publication result.
 admitted work; it never clears or falsely settles that work. This is a writer
 boundary, not an exporter mutex.
 
+## Runtime integration boundary
+
+This model specifies the required writer-level primitive; it is not evidence
+that the current exporter or chDB writer already implements it. Today the
+exporter exercises one ordinary insert, persistence barrier, and return path.
+The Hegel property therefore validates the checked-in ITF as a model witness
+separately from that current single-export runtime contract. It must not equate
+`Atomic`, `ForceFlush`, or `Close` model actions with runtime calls until the
+writer primitive and its trace tests land.
+
 The modeled state is one cohesive record:
 
 - `admitted`, `pending`, ordered request `queue`, `writtenOrder`, and
