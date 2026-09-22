@@ -146,6 +146,22 @@
     (is (= ::exporter/invalid-ordinary-row
            (:type (ex-data (exporter/last-error target)))))))
 
+(deftest noncanonical-log-columns-retain-ordinary-validation
+  ;; The record is eligible for the fixed encoder, but this constructed state
+  ;; is not its schema. The legacy ordinary path must reject before the driver
+  ;; rather than submitting fixed JSON under the unexpected column list.
+  (let [target (exporter/->ChdbExporter
+                :writer false #{:logs}
+                (atom {:closed-signals #{} :durable? false
+                       :typed-log-projector nil
+                       :log-insert-columns ["Unexpected"]}))
+        calls (atom [])]
+    (with-redefs [chdb/insert-json-rows! (fn [& arguments] (swap! calls conj arguments))]
+      (is (false? (logs/export-logs! target [base-log]))))
+    (is (empty? @calls))
+    (is (= ::exporter/invalid-ordinary-row
+           (:type (ex-data (exporter/last-error target)))))))
+
 (defn -main []
   (let [result (run-tests 'otel.exporter.chdb-untyped-log-encoder-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

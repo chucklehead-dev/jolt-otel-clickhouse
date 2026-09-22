@@ -617,7 +617,14 @@
   [connection state records]
   (let [snapshot @state
         typed-projector (:typed-log-projector snapshot)
-        encoder (when-not typed-projector @untyped-log-encoder)]
+        ;; This fixed writer owns precisely the untyped collector schema. A
+        ;; constructed or mutated exporter state with a different ordered
+        ;; column vector must retain insert-batch!'s generic validation and
+        ;; query construction rather than pairing its payload with that state.
+        encoder (when (and (not typed-projector)
+                           (= (:log-insert-columns snapshot)
+                              schema/clickstack-log-insert-columns))
+                  @untyped-log-encoder)]
     (if-not encoder
       (insert-batch! connection state "otel_logs"
                      (:log-insert-columns snapshot)
