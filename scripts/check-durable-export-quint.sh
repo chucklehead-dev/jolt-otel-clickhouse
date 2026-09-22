@@ -58,14 +58,14 @@ quint test "$tests" \
 sample_log="$target/corrected-sampled.log"
 quint run "$model" \
   --main durableExportAckCorrected \
-  --invariants successBelongsToExactlyOneCommittedGroup noPreCommitSuccess exactlyOneSettlement fifoReplayOrder terminalFailureRetainsWal shutdownFencesAdmissionAndForceFlush committedCallerNeverFails \
-  --witnesses atomicGroupCommittedReached atomicGroupFailureRetainedReached atomicGroupAmbiguousRetainedReached forceFlushEmptyReached shutdownFencedReached \
-  --max-steps 2 \
+  --invariants successBelongsToExactlyOneCommittedGroup noPreCommitSuccess queuedCallersAreOnlyUnsettled exactlyOneSettlementWhenQueueDrained fifoAdmissionOrder fifoReplayOrder terminalFailureRetainsWal forceFlushWaitsForQueuedCallers shutdownSettlesQueuedCallers noPostCloseGroupOrForceFlush committedCallerNeverFails \
+  --witnesses independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushAfterQueuedCallersReached shutdownSettlesQueuedCallersReached \
+  --max-steps 6 \
   --max-samples 10000 \
   --backend typescript \
   --verbosity 1 | tee "$sample_log"
 
-for witness in atomicGroupCommittedReached atomicGroupFailureRetainedReached atomicGroupAmbiguousRetainedReached forceFlushEmptyReached shutdownFencedReached
+for witness in independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushAfterQueuedCallersReached shutdownSettlesQueuedCallersReached
 do
   if ! grep -Eq "^${witness} was witnessed in [1-9][0-9]* trace" "$sample_log"
   then
@@ -77,7 +77,7 @@ done
 quint verify "$model" \
   --main durableExportAckCorrected \
   --invariant exporterSafety \
-  --max-steps 2 \
+  --max-steps 6 \
   --backend apalache \
   --apalache-version 0.56.1 \
   --verbosity 1
