@@ -462,6 +462,35 @@
 
 (def ^:private confirmed-durable-statuses #{:committed :reconciled})
 
+(def ^:private durable-phase-names
+  [:payload-built :native-execute-returned :persistence-barrier-returned])
+
+(defn durable-phase-receipts
+  "Create an opt-in, caller-owned aggregate sink for the acknowledged untyped
+  Durable span path. Supply the returned atom as :durable-phase-receipts to
+  `exporter`. Each phase contains only a completed count, total elapsed
+  nanoseconds, and span count; payloads, rows, and attribute values are never
+  retained. Omit the option (the default) to avoid timing and aggregation."
+  []
+  (atom (zipmap durable-phase-names
+                (repeat {:count 0 :nanos 0 :spans 0}))))
+
+(defn- record-durable-phase! [receipts phase elapsed-nanos span-count]
+  ;; Diagnostics must not change the acknowledgement result, including when a
+  ;; caller installs a problematic atom watch. The sink receives aggregates
+  ;; only, never payload text or SDK values.
+  (when receipts
+    (try
+      (swap! receipts
+             (fn [snapshot]
+               (update snapshot phase
+                       (fn [current]
+                         (let [current (or current {:count 0 :nanos 0 :spans 0})]
+                           {:count (inc (:count current))
+                            :nanos (+ (:nanos current) elapsed-nanos)
+                            :spans (+ (:spans current) span-count)})))))
+      (catch Throwable _ nil))))
+
 (defn- persistence-barrier! [connection state publication-required?]
   (when-let [barrier (:persistence-barrier @state)]
     (let [result
@@ -478,10 +507,18 @@
                          :status (:status result)})))
       result)))
 
-(defn- complete-batch! [connection state wrote?]
-  (when wrote?
-    (persistence-barrier! connection state true))
-  true)
+(defn- complete-batch!
+  ([connection state wrote?]
+   (when wrote?
+     (persistence-barrier! connection state true))
+   true)
+  ([connection state wrote? receipts span-count]
+   (when wrote?
+     (let [started (System/nanoTime)]
+       (persistence-barrier! connection state true)
+       (record-durable-phase! receipts :persistence-barrier-returned
+                              (- (System/nanoTime) started) span-count)))
+   true))
 
 (defn- close-signal! [connection owned? expected-signals state signal]
   ;; Claim the terminal close in the same atomic transition that records the
@@ -532,20 +569,41 @@
     (if-not (signal-open? owned? expected-signals state :spans)
       false
       (try
-        (when (seq spans)
-          (let [snapshot @state
-                encoder (when (and (:durable? snapshot)
-                                   (nil? (:typed-span-projector snapshot)))
-                          @untyped-span-encoder)]
-            (if encoder
-              (let [payload (untyped-span-payload encoder spans)]
-                (context/with-instrumentation-suppressed
-                  (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload))))
-              (insert-batch! connection state "otel_traces"
-                             (:span-insert-columns @state) "insert into otel_traces"
-                             (map #(span-row % (:typed-span-projector @state))
-                                  spans)))))
-        (complete-batch! connection state (boolean (seq spans)))
+        (let [receipts
+              (when (seq spans)
+                (let [snapshot @state
+                      encoder (when (and (:durable? snapshot)
+                                         (nil? (:typed-span-projector snapshot)))
+                                @untyped-span-encoder)
+                      receipts (when encoder (:durable-phase-receipts snapshot))]
+                  (if encoder
+                    (if receipts
+                      (let [span-count (count spans)
+                            payload-start (System/nanoTime)
+                            payload (untyped-span-payload encoder spans)]
+                        (record-durable-phase! receipts :payload-built
+                                               (- (System/nanoTime) payload-start) span-count)
+                        (let [execute-start (System/nanoTime)]
+                          (context/with-instrumentation-suppressed
+                            (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload)))
+                          (record-durable-phase! receipts :native-execute-returned
+                                                 (- (System/nanoTime) execute-start) span-count))
+                        receipts)
+                      ;; Keep the disabled default path free of clocks,
+                      ;; aggregation, or diagnostic callbacks.
+                      (let [payload (untyped-span-payload encoder spans)]
+                        (context/with-instrumentation-suppressed
+                          (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload)))
+                        nil))
+                    (do
+                      (insert-batch! connection state "otel_traces"
+                                     (:span-insert-columns @state) "insert into otel_traces"
+                                     (map #(span-row % (:typed-span-projector @state))
+                                          spans))
+                      nil))))]
+          (if receipts
+            (complete-batch! connection state true receipts (count spans))
+            (complete-batch! connection state (boolean (seq spans)))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false))))
@@ -631,7 +689,8 @@
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
-            typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors]
+            typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
+            durable-phase-receipts]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false}}]
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
@@ -640,6 +699,9 @@
    (when (and durable? persistence-barrier)
      (throw (ex-info "Choose :durable? or :persistence-barrier, not both"
                      {:type ::ambiguous-persistence-barrier})))
+   (when (and durable-phase-receipts (not (atom? durable-phase-receipts)))
+     (throw (ex-info ":durable-phase-receipts must be an atom"
+                     {:type ::invalid-durable-phase-receipts})))
    (when (and (or typed-span-descriptors typed-log-descriptors typed-gauge-descriptors
                   typed-sum-descriptors typed-histogram-descriptors)
               (nil? connection))
@@ -732,6 +794,7 @@
                                                      :sum sum-columns
                                                      :histogram histogram-columns}
                               :durable? durable?
+                              :durable-phase-receipts durable-phase-receipts
                               :last-error nil}))
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
