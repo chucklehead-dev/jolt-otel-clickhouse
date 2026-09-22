@@ -69,16 +69,18 @@
     ;; payload despite appearing in two rows.  The writer sees only data.json
     ;; output; no custom JSON escaping is introduced by this cache.
     (let [calls (atom 0) original @#'exporter/attrs
-          spans [(assoc shape :attributes same) (assoc shape :attributes same)]]
+          spans [(assoc shape :attributes same) (assoc shape :attributes same)]
+          expected (baseline-payload spans)]
       (with-redefs [exporter/attrs (fn [m] (swap! calls inc) (original m))]
-        (is (= (baseline-payload spans) (encode spans)))
+        (is (= expected (encode spans)))
         (is (= 2 @calls))))
     ;; Equal logical maps with a distinct ordered entry sequence must not share
     ;; a wire cache entry.  data.json follows received iteration order.
     (let [calls (atom 0) original @#'exporter/attrs
-          spans [(assoc shape :attributes ordered-a) (assoc shape :attributes ordered-b)]]
+          spans [(assoc shape :attributes ordered-a) (assoc shape :attributes ordered-b)]
+          expected (baseline-payload spans)]
       (with-redefs [exporter/attrs (fn [m] (swap! calls inc) (original m))]
-        (is (= (baseline-payload spans) (encode spans)))
+        (is (= expected (encode spans)))
         (is (= 3 @calls))))))
 
 (defn target [extra]
