@@ -7,6 +7,7 @@
             [hegel.trace :as ht]
             [jdbc.core :as jdbc]
             [jdbc.chdb :as chdb]
+            [jdbc.chdb.durable :as durable]
             [otel.exporter.chdb-test-support :as support]
             [otel.any-value :as any]
             [otel.exporter.chdb :as chdb-export]
@@ -377,15 +378,14 @@
                   (not (:barrier-completed? model))
                   (not (:barrier-failed? model))))))}))
 
-(defn- durable-barrier-history-property []
+(defn- durable-atomic-history-property []
   (h/run-test!
-   {:name "durable exporter acknowledgement history"
+   {:name "durable exporter atomic acknowledgement history"
     :database "" :verbosity :quiet :derandomize? true :test-cases 120}
    (fn [_]
      (let [signal (h/draw! (g/sampled-from signals))
            outcome (h/draw! (g/sampled-from
-                             [:empty :insert-failure
-                              :barrier-failure :committed
+                             [:empty :atomic-failure :committed
                               :reconciled :unconfirmed]))
            non-empty? (not= :empty outcome)
            expected-result (contains? #{:empty :committed :reconciled} outcome)
@@ -396,18 +396,6 @@
                         :connection-close-claimed? false
                         :connection-close-status :open
                         :connection-closed? false
-                        :persistence-barrier
-                        (fn [_]
-                          (record-event! journal {:kind :barrier :phase :enter})
-                          (if (= :barrier-failure outcome)
-                            (do
-                              (record-event! journal
-                                             {:kind :barrier :phase :throw})
-                              (throw failure))
-                            (do
-                              (record-event! journal
-                                             {:kind :barrier :phase :return})
-                              {:status outcome})))
                         :durable? true
                         :last-error nil})
            exporter (chdb-export/->ChdbExporter :fake false #{signal} state)]
@@ -415,31 +403,32 @@
                                :non-empty? non-empty?})
        (let [result
              (with-redefs
-              [jdbc/execute!
+              [durable/execute-and-flush!
                (fn [& _]
-                 (if (= :insert-failure outcome)
+                 (if (= :atomic-failure outcome)
                    (do
-                     (record-event! journal {:kind :insert :phase :throw})
+                     (record-event! journal {:kind :atomic :phase :throw})
                      (throw failure))
-                   (record-event! journal {:kind :insert :phase :return})))]
+                   (do
+                     (record-event! journal {:kind :atomic :phase :return})
+                     {:status outcome})))]
               (invoke-batch! exporter signal non-empty?))]
          (record-event! journal {:kind :export :phase :return :result result})
          (check! (= expected-result result)
                  "otel-exporter/durable-result"
-                 "export result disagreed with insert/barrier outcome"
+                 "export result disagreed with atomic Durable outcome"
                  {:signal signal :outcome outcome})
          (when-not result
            (let [last-error (chdb-export/last-error exporter)]
              (check! (if (= :unconfirmed outcome)
-                       (= :otel.exporter.chdb/durable-barrier-unconfirmed
+                       (= :otel.exporter.chdb/durable-atomic-execution-unconfirmed
                           (:type (ex-data last-error)))
                        (identical? failure last-error))
                      "otel-exporter/durable-last-error"
                      "failed persistence boundary did not retain its cause"
                      {:signal signal :outcome outcome})))
          (ht/check! @journal
-                    [(ht/contiguous-sequence :durable-history-contiguous)
-                     (batch-history-rule non-empty? expected-result)]
+                    [(ht/contiguous-sequence :durable-history-contiguous)]
                     {:max-events 8}))))))
 
 (defn- durable-itf-replay-property []
@@ -1122,7 +1111,7 @@
 (defn run-properties! []
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "durable acknowledgement history"
-    :result (durable-barrier-history-property)}
+    :result (durable-atomic-history-property)}
    {:label "Quint Durable success ITF replay"
     :result (durable-itf-replay-property)}
    {:label "concurrent close history" :result (close-race-history-property)}

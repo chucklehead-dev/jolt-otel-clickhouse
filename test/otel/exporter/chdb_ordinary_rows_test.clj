@@ -173,13 +173,13 @@
                                                    [good (assoc good "Events.Timestamp" [9223372036854775808N])]))))
       (check "later invalid event timestamp has zero driver effects" [] @calls))
     (let [calls (atom [])]
-      (with-redefs [jdbc/execute! (fn [& args] (swap! calls conj args))]
-        (check "Durable timestamp failure precedes materialized SQL execution" true
+      (with-redefs [durable/execute-and-flush! (fn [& args] (swap! calls conj args))]
+        (check "Durable timestamp failure precedes atomic materialized SQL execution" true
                (rejected? #(#'exporter/insert-batch! :writer (atom {:durable? true})
                                                    "owned_table" ["Timestamp"] "insert into owned_table"
                                                    (map (fn [n] {"Timestamp" (timestamp n)})
                                                         [0 9223372036854775808N])))))
-      (check "Durable timestamp failure has zero JDBC execution effects" [] @calls)))
+      (check "Durable timestamp failure has zero atomic execution effects" [] @calls)))
   (doseq [close-fails? [false true]]
     (let [closed (atom 0) schema-calls (atom 0)
           original (ex-info "Original context rejection" {})
@@ -289,8 +289,9 @@
     (let [sql (atom [])]
       (with-redefs [chdb/insert-json-rows!
                     (fn [& _] (throw (ex-info "Durable entered ordinary API" {})))
-                    jdbc/execute! (fn [connection query]
-                                    (swap! sql conj [connection query]))]
+                    durable/execute-and-flush! (fn [connection query]
+                                                 (swap! sql conj [connection query])
+                                                 {:status :committed})]
         (insert :writer (atom {:durable? true}) "owned_table" columns
                 "insert into owned_table" [row])
         (check "Durable retains exact materialized SQL"

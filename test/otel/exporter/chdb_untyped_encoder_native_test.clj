@@ -51,7 +51,7 @@
         (let [target (exporter/exporter {:connection connection :durable? true :create-schema? false :signals #{:spans}})
               eligible (subvec spans 0 2) fallback (subvec spans 2)
               legacy-payload (#'exporter/json-each-row-payload (mapv #(#'exporter/span-row % nil) spans))
-              execute @#'jdbc/execute! captured (atom [])
+              execute-and-flush @#'durable/execute-and-flush! captured (atom [])
               prefix "insert into otel_traces FORMAT JSONEachRow\n"]
           (check! (= (set selected-columns) (set (keys (#'exporter/span-row (first spans) nil))))
                   "selection covers every legacy row and ClickStack insert column")
@@ -61,10 +61,11 @@
           (jdbc/execute! connection (str "insert into otel_traces_legacy FORMAT JSONEachRow\n" legacy-payload))
           (check! (contains? #{:committed :reconciled} (:status (durable/flush! connection))) "legacy baseline publication")
           (check! (ifn? (force @#'exporter/untyped-span-encoder)) "production plan available")
-          (with-redefs [jdbc/execute! (fn [connection sql]
-                                       (when (str/starts-with? sql prefix)
-                                         (swap! captured conj (subs sql (count prefix))))
-                                       (execute connection sql))]
+          (with-redefs [durable/execute-and-flush!
+                        (fn [connection sql]
+                          (when (str/starts-with? sql prefix)
+                            (swap! captured conj (subs sql (count prefix))))
+                          (execute-and-flush connection sql))]
             (with-redefs [exporter/span-row (fn [& _] (throw (ex-info "eligible batch fell back" {})))]
               (check! (true? (export/export-spans! target eligible)) "eligible public export uses encoder"))
             (check! (true? (export/export-spans! target fallback)) "fallback public export"))
@@ -74,6 +75,8 @@
             (spit (str root "/payload.edn")
                   (pr-str {:columns selected-columns :legacy-sha256 (sha256 legacy-payload)
                            :public-sha256 (sha256 actual-payload) :exact? true})))
+          ;; Each public exporter batch is already settled by its own atomic
+          ;; writer request. This explicit force flush is therefore empty.
           (check! (= :empty (:status (durable/flush! connection))) "published before return")
           (let [rows (vec (jdbc/fetch connection selection))]
             (check! (= rows (vec (jdbc/fetch connection (str/replace selection "FROM otel_traces " "FROM otel_traces_legacy "))))

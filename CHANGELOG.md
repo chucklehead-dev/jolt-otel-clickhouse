@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Adopt chDB's caller-atomic Durable `execute-and-flush!` writer request for
+  every non-empty exporter physical insert. Typed, fallback, and untyped span
+  paths no longer split a Durable JDBC execute from its publication barrier;
+  ordinary and caller-supplied persistence barriers retain their existing
+  behavior. Opt-in phase receipts now report the one honest combined writer
+  boundary instead of fabricated subphase timings.
+
 - Reuse bounded, batch-local `data.json` wire strings for repeated untyped
   Durable span/resource attribute maps and known-empty link fields.  The
   optimized path retains exact JSONEachRow bytes, the 8 MiB per-batch bound,

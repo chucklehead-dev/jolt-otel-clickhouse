@@ -728,20 +728,45 @@
                   (fn [_] (swap! calls conj :checkpoint) {:status :committed})
                   durable/flush!
                   (fn [_] (swap! calls conj :barrier) {:status :committed})
-                  jdbc/execute!
-                  (fn [& _] (swap! calls conj :insert) {:count 1})]
+                  durable/execute-and-flush!
+                  (fn [_ _] (swap! calls conj :atomic) {:status :committed})]
       (let [exporter (test-support/call-with-qualified-native #(chdb-export/exporter
                       {:connection :fake :durable? true :signals #{:spans}}))]
         (check "Durable startup preflights before schema checkpoint"
                [:role :schema :checkpoint] @calls)
         (check "non-empty Durable span batch succeeds" true
                (export/export-spans! exporter [span]))
-        (check "batch success follows its persistence barrier"
-               [:role :schema :checkpoint :insert :barrier] @calls)
+        (check "batch success is one atomic Durable writer request"
+               [:role :schema :checkpoint :atomic] @calls)
         (check "force flush reaches the same persistence barrier" true
                (export/flush-exporter! exporter))
         (check "force flush completes after the barrier"
-               [:role :schema :checkpoint :insert :barrier :barrier] @calls))))
+               [:role :schema :checkpoint :atomic :barrier] @calls))))
+  (let [calls (atom [])
+        span {:name "generic-barrier-span" :kind :internal
+              :start-time-unix-nano 1 :end-time-unix-nano 2
+              :span-context {:trace-id "11111111111111111111111111111111"
+                             :span-id "2222222222222222"}
+              :resource {:attributes {}} :scope {:name "generic-test"}
+              :attributes {} :events [] :links [] :status {:code :unset}}
+        exporter
+        (chdb-export/->ChdbExporter
+         :generic false #{:spans}
+         (atom (test-support/exporter-state
+                {:closed-signals #{}
+                 :connection-close-claimed? false
+                 :connection-close-status :open
+                 :connection-closed? false
+                 :durable? false
+                 :persistence-barrier
+                 (fn [_] (swap! calls conj :generic-barrier) true)
+                 :last-error nil})))]
+    (with-redefs [jdbc.chdb/insert-json-rows!
+                  (fn [& _] (swap! calls conj :ordinary-insert))]
+      (check "custom generic barrier remains post-batch" true
+             (export/export-spans! exporter [span])))
+    (check "custom generic barrier preserves insert then barrier order"
+           [:ordinary-insert :generic-barrier] @calls))
   (let [span {:name "unconfirmed-span" :kind :internal
               :start-time-unix-nano 1 :end-time-unix-nano 2
               :span-context {:trace-id "" :span-id ""}
@@ -754,13 +779,12 @@
                 :connection-close-claimed? false
                 :connection-close-status :open
                 :connection-closed? false
-                :persistence-barrier (fn [_] {:status :empty})
                 :durable? true :last-error nil}))]
-    (with-redefs [jdbc/execute! (fn [& _] {:count 1})]
-      (check "non-empty batch rejects an empty Durable flush" false
+    (with-redefs [durable/execute-and-flush! (fn [& _] {:status :empty})]
+      (check "non-empty batch rejects an unconfirmed atomic Durable result" false
              (export/export-spans! exporter [span])))
     (check "unconfirmed Durable publication is diagnosable"
-           :otel.exporter.chdb/durable-barrier-unconfirmed
+           :otel.exporter.chdb/durable-atomic-execution-unconfirmed
            (:type (ex-data (chdb-export/last-error exporter)))))
   (let [calls (atom [])]
     (with-redefs [durable/connection-role
