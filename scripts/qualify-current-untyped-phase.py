@@ -22,7 +22,7 @@ DRIVER = Path("/home/chuck/ai-src/qualification-worktrees/jolt-chdb-9ec4d6b-dura
 NATIVE = Path("/home/chuck/.cache/chdb-rust/v26.7.3/linux-x86_64-libchdb/libchdb.so")
 FIXTURE = Path("/home/chuck/ai-src/evidence/direct-encoder-canonical-no-durable-20260922T0415Z/fixture-batch-0.edn")
 OTEL = Path("/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2")
-DATA_JSON_CLASS_PATH = "e7f97a9b5ecf7fa00787375fff4176a082fe9b98/src/main/clojure"
+DATA_JSON_CLASS_PATH = "d8763cb8b38771285f5111dad9316762cd02a700/src/main/clojure"
 HARNESS_SOURCES = (
     REPO / "bench/otel/exporter/scalar_abba.clj",
     REPO / "bench/otel/exporter/scalar_abba_support.clj",
