@@ -46,7 +46,9 @@
                      (System/getenv "BENCH_EXPORTER_SOURCE_SHA256")) "loaded exporter hash")
         spans (f/fixture)
         arm (System/getenv "BENCH_ARM")
-        _ (check! (contains? #{"A" "B"} arm) "known arm")
+        ;; CURRENT is the distinct one-arm profile label.  The historical
+        ;; A/B launcher still supplies only A or B and retains its old pins.
+        _ (check! (contains? #{"A" "B" "CURRENT"} arm) "known arm")
         rows (mapv #(#'exporter/span-row % nil) spans)
         payload (#'exporter/json-each-row-payload rows)
         _ (check! (= payload (apply str (map #(str (json/write-str %) "\n") rows))) "JSON parity")
@@ -61,7 +63,16 @@
     (with-open [connection (jdbc/connection (durable/writer-dbspec options))]
       (schema/ensure-schema! connection)
       (check! (contains? f/confirmed-statuses (:status (durable/checkpoint! connection))) "schema checkpoint")
-      (let [writer (exporter/exporter {:connection connection :durable? true :create-schema? false :signals #{:spans}})
+      (let [phase-receipts (when (= "1" (System/getenv "BENCH_PHASE_RECEIPTS"))
+                             (exporter/durable-phase-receipts))
+            ;; This sink is deliberately opt-in. It is reset after warmup so
+            ;; the terminal aggregate describes exactly the measured calls,
+            ;; while preflight and production activation remain correctness
+            ;; witnesses only.
+            receipt-baseline (when phase-receipts @phase-receipts)
+            writer (exporter/exporter {:connection connection :durable? true :create-schema? false
+                                       :signals #{:spans}
+                                       :durable-phase-receipts phase-receipts})
             op #(export/export-spans! writer spans)
             publish @#'exporter/persistence-barrier!
             pubs (atom [])
@@ -73,7 +84,7 @@
                         exporter/persistence-barrier! (fn [& _] {:status :committed})]
             (check! (op) "public SQL preflight"))
           (check! (= [(str "insert into otel_traces FORMAT JSONEachRow\n" payload)] @observed) "exact public SQL")
-          (when (= "B" arm)
+          (when (contains? #{"B" "CURRENT"} arm)
             ;; Compile/cache before replacing span-row. Any fallback would fail:
             ;; witness the actual production public call, outside timing.
             (let [calls (atom 0)]
@@ -88,7 +99,10 @@
                             (swap! pubs conj (:status r)) r))]
             (let [all
                   (mapv (fn [index]
-                          (when (= index f/warmups) (System/gc))
+                          (when (= index f/warmups)
+                            (System/gc)
+                            (when phase-receipts
+                              (reset! phase-receipts receipt-baseline)))
                           (let [before (f/head-evidence store)
                                 _ (reset! pubs [])
                                 sample (measured-call op #(System/nanoTime) f/counters)
@@ -110,21 +124,42 @@
               (check! (= :empty (:status barrier)) "empty final flush")
               (check! (= expected-n n) "writer count")
               (check! (= digest actual-digest) "writer digest")
+              (when phase-receipts
+                ;; The report is intentionally a fixed, aggregate-only shape.
+                ;; It covers measured calls, rather than warmup/preflight.
+                (check! (= #{:payload-built
+                             :native-execute-returned
+                             :persistence-barrier-returned}
+                           (set (keys @phase-receipts)))
+                        "aggregate phase receipt key set")
+                (doseq [[phase receipt] @phase-receipts]
+                  (check! (= #{:count :nanos :spans} (set (keys receipt)))
+                          (str "aggregate phase receipt shape " phase))
+                  (check! (= f/samples (:count receipt))
+                          (str "aggregate phase receipt count " phase))
+                  (check! (= (* f/samples f/batch-size) (:spans receipt))
+                          (str "aggregate phase receipt spans " phase))
+                  (check! (and (integer? (:nanos receipt))
+                               (not (neg? (:nanos receipt))))
+                          (str "aggregate phase receipt nanos " phase))))
               (spit (str root "/writer-report.edn")
-                    (str (pr-str {:arm (System/getenv "BENCH_ARM") :otel-source source
-                                  :production-encoder-witnessed? (= "B" arm)
-                                  :exporter-source exporter-source
-                                  :runtime {:jolt (host/jolt-version) :chez (host/scheme-version)}
-                                  :payload-sha256 (f/sha256 payload)
-                                  :measurements measured
-                                  :p50-nanos (f/percentile latencies 0.50)
-                                  :p99-nanos (f/percentile latencies 0.99)
-                                  :aggregate-rows-per-second (/ (* 1.0e9 f/samples f/batch-size) (reduce + latencies))
-                                  :counters (reduce #(merge-with + %1 %2) {} (map :counters measured))
-                                  :writer {:rows n :expected-rows expected-n :expected-digest digest
-                                           :expanded-digest expanded-digest
-                                           :actual-digest actual-digest :empty-barrier? true
-                                           :head (f/head-evidence store)}}) "\n"))
+                    (str (pr-str
+                          (cond-> {:arm (System/getenv "BENCH_ARM") :otel-source source
+                                   :production-encoder-witnessed?
+                                   (contains? #{"B" "CURRENT"} arm)
+                                   :exporter-source exporter-source
+                                   :runtime {:jolt (host/jolt-version) :chez (host/scheme-version)}
+                                   :payload-sha256 (f/sha256 payload)
+                                   :measurements measured
+                                   :p50-nanos (f/percentile latencies 0.50)
+                                   :p99-nanos (f/percentile latencies 0.99)
+                                   :aggregate-rows-per-second (/ (* 1.0e9 f/samples f/batch-size) (reduce + latencies))
+                                   :counters (reduce #(merge-with + %1 %2) {} (map :counters measured))
+                                   :writer {:rows n :expected-rows expected-n :expected-digest digest
+                                            :expanded-digest expanded-digest
+                                            :actual-digest actual-digest :empty-barrier? true
+                                            :head (f/head-evidence store)}}
+                            phase-receipts (assoc :phase-receipts @phase-receipts))) "\n"))
               (println :writer-green n)))
           (finally (export/shutdown-exporter! writer)))))))
 

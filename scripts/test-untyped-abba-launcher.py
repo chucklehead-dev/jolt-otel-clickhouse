@@ -11,6 +11,11 @@ spec = importlib.util.spec_from_file_location("launcher", Path(__file__).with_na
 launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
+current_spec = importlib.util.spec_from_file_location(
+    "current_launcher", Path(__file__).with_name("qualify-current-untyped-phase.py"))
+current_launcher = importlib.util.module_from_spec(current_spec)
+current_spec.loader.exec_module(current_launcher)
+
 class Contracts(unittest.TestCase):
     def test_actual_public_path_and_activation_witness(self):
         source = (launcher.REPO / "bench/otel/exporter/scalar_abba.clj").read_text()
@@ -19,6 +24,52 @@ class Contracts(unittest.TestCase):
         self.assertNotIn("otel.exporter.untyped-encoder", source)
         self.assertIn("production encoder activation", source)
         self.assertIn(":production-encoder-witnessed?", source)
+
+    def test_phase_receipts_are_opt_in_and_aggregate_only(self):
+        source = (launcher.REPO / "bench/otel/exporter/scalar_abba.clj").read_text()
+        self.assertIn("BENCH_PHASE_RECEIPTS", source)
+        self.assertIn("exporter/durable-phase-receipts", source)
+        self.assertIn(":durable-phase-receipts phase-receipts", source)
+        self.assertIn(":phase-receipts @phase-receipts", source)
+        self.assertIn("reset! phase-receipts receipt-baseline", source)
+        self.assertNotIn(":payload phase-receipts", source)
+
+    def test_phase_receipt_environment_is_absent_by_default(self):
+        with patch.dict("os.environ", {"BENCH_PHASE_RECEIPTS": "stale"}, clear=True):
+            ordinary = launcher.environment("A", Path("/tmp/cell"), "writer")
+            profiled = launcher.environment("A", Path("/tmp/cell"), "writer", True)
+            reader = launcher.environment("A", Path("/tmp/cell"), "reader", True)
+        self.assertNotIn("BENCH_PHASE_RECEIPTS", ordinary)
+        self.assertEqual("1", profiled["BENCH_PHASE_RECEIPTS"])
+        self.assertNotIn("BENCH_PHASE_RECEIPTS", reader)
+
+    def test_current_phase_launcher_is_one_arm_and_non_comparative(self):
+        source = Path(current_launcher.__file__).read_text()
+        self.assertIn('BENCH_ARM="CURRENT"', source)
+        self.assertIn('"comparative": False', source)
+        self.assertIn("one-arm-current-phase-profile", source)
+        self.assertIn('for phase in ("writer", "reader")', source)
+        self.assertIn("fresh-reader-expanded-digest", source)
+        self.assertNotIn("ORDER = (\"A\", \"B\", \"B\", \"A\")", source)
+
+    def test_current_phase_provenance_fails_closed_and_marks_receipts_diagnostic(self):
+        source = Path(current_launcher.__file__).read_text()
+        self.assertIn("def normalize_classpath(text):", source)
+        self.assertIn("exactly one selected current exporter source", source)
+        self.assertIn("fixed OTel source", source)
+        self.assertIn("qualified driver resolved", source)
+        self.assertIn("data.json pin", source)
+        self.assertIn("resolved-classpath", source)
+        self.assertIn("HARNESS_SOURCES", source)
+        self.assertIn("provenance changed before green terminal", source)
+        self.assertIn("perturbs-measured-total", source)
+
+    def test_phase_receipt_key_set_is_exact(self):
+        source = (launcher.REPO / "bench/otel/exporter/scalar_abba.clj").read_text()
+        self.assertIn("aggregate phase receipt key set", source)
+        self.assertIn(":payload-built", source)
+        self.assertIn(":native-execute-returned", source)
+        self.assertIn(":persistence-barrier-returned", source)
 
     def test_same_sources_dependencies_and_candidate_pin(self):
         self.assertEqual(launcher.deps("A").replace(str(launcher.ROOTS["A"] / "src"), "<SRC>"),

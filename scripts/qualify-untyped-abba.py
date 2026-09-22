@@ -76,14 +76,22 @@ def deps(arm):
 def command(arm, *args):
     return [str(WRAPPER), str(COMPILER), "-Srepro", "-Sdeps", deps(arm), *args]
 
-def environment(arm, cell, phase):
+def environment(arm, cell, phase, phase_receipts=False):
     env = os.environ.copy()
+    # The launcher owns this switch. In particular, a shell-exported value
+    # must not accidentally turn the ordinary qualification into a profile.
+    env.pop("BENCH_PHASE_RECEIPTS", None)
     env.update(PATH=str(COMPILER.parent) + os.pathsep + env.get("PATH", ""),
                OTEL_TEST_JOLT_WRAPPER=str(WRAPPER), JOLT_CHDB_LIB=str(NATIVE),
                JOLT_CACHE_DIR=str(cell / ("cache-" + phase)), BENCH_ARM=arm,
                BENCH_FROZEN_FIXTURE=str(FIXTURE), BENCH_FROZEN_FIXTURE_SHA256=PINS[FIXTURE],
                BENCH_OTEL_SOURCE_SHA256=sha(OTEL / "src/otel/any_value.clj"),
                BENCH_EXPORTER_SOURCE_SHA256=sha(ROOTS[arm] / "src/otel/exporter/chdb.clj"))
+    if phase_receipts and phase == "writer":
+        # The writer reads this explicit opt-in.  Do not set a false-valued
+        # variable: its absence keeps the ordinary benchmark path unchanged;
+        # reader children never construct an exporter.
+        env["BENCH_PHASE_RECEIPTS"] = "1"
     return env
 
 def normalize_classpath(text, arm):
@@ -123,7 +131,7 @@ def run_child(cmd, log, env, timeout=300):
                                 cwd=REPO, env=env, stdout=output, stderr=subprocess.STDOUT)
     require(result.returncode == 0, f"child failed ({result.returncode}): {log}")
 
-def execute(root, run=run_child):
+def execute(root, run=run_child, phase_receipts=False):
     # Focused production controls cover typed/ordinary bypass before native work.
     run(command("B", "-m", "otel.exporter.chdb-untyped-encoder-test"),
         root / "candidate-controls.log", environment("B", root / "2-B", "writer"))
@@ -133,7 +141,7 @@ def execute(root, run=run_child):
         for phase in ("writer", "reader"):
             cmd = command(arm, "-m", "otel.exporter.scalar-abba", phase, str(cell))
             (cell / f"{phase}.command.json").write_text(json.dumps(cmd) + "\n")
-            run(cmd, cell / f"{phase}.log", environment(arm, cell, phase))
+            run(cmd, cell / f"{phase}.log", environment(arm, cell, phase, phase_receipts))
             require((cell / f"{phase}-report.edn").is_file(), "missing terminal report")
             (cell / f"{phase}.complete").write_text(sha(cell / f"{phase}-report.edn") + "\n")
         digest = (cell / "reader.expanded-digest").read_text().strip()
@@ -145,6 +153,8 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("mode", choices=["preflight", "run"])
     parser.add_argument("root", type=Path)
+    parser.add_argument("--phase-receipts", action="store_true",
+                        help="record aggregate writer phase timings in the terminal report")
     args = parser.parse_args()
     lock = exclusive_lock()  # Held for the entire one-shot launcher lifetime.
     evidence = pins()
@@ -164,7 +174,7 @@ def main():
         require(version == "jolt v0.8.10-7-g23d3bb04", "runtime version")
         (root / "version.txt").write_text(version + "\n")
         if args.mode == "run":
-            execute(root)
+            execute(root, phase_receipts=args.phase_receipts)
             require(pins() == evidence, "pins changed during qualification")
         status["status"] = "green"
         status["mode"] = args.mode
