@@ -12,10 +12,19 @@ launcher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(launcher)
 
 class Contracts(unittest.TestCase):
+    def test_actual_public_path_and_activation_witness(self):
+        source = (launcher.REPO / "bench/otel/exporter/scalar_abba.clj").read_text()
+        self.assertIn("op #(export/export-spans! writer spans)", source)
+        self.assertNotIn("prototype/export-spans!", source)
+        self.assertNotIn("otel.exporter.untyped-encoder", source)
+        self.assertIn("production encoder activation", source)
+        self.assertIn(":production-encoder-witnessed?", source)
+
     def test_same_sources_dependencies_and_candidate_pin(self):
-        self.assertEqual(launcher.deps("A"), launcher.deps("B"))
+        self.assertEqual(launcher.deps("A").replace(str(launcher.ROOTS["A"] / "src"), "<SRC>"),
+                         launcher.deps("B").replace(str(launcher.ROOTS["B"] / "src"), "<SRC>"))
         self.assertIn("8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2", str(launcher.OTEL))
-        self.assertEqual(launcher.B, "b492e8811e575f156e7b5c1ae383ba81e1a3bdd3")
+        self.assertEqual(launcher.B, "6fdc6cba06fdb635c09695a5c0a40250c866b03e")
 
     def test_parallel_launcher_is_rejected(self):
         with tempfile.TemporaryDirectory() as parent:
@@ -48,6 +57,8 @@ class Contracts(unittest.TestCase):
             root = launcher.prepare(Path(parent) / "evidence")
             calls = []
             def fake(cmd, log, env):
+                if cmd[-1] == "otel.exporter.chdb-untyped-encoder-test":
+                    return
                 phase, cell = cmd[-2:]
                 calls.append((Path(cell).name, phase))
                 self.assertTrue((Path(cell) / "scratch-writer").is_dir())
@@ -87,6 +98,8 @@ class Contracts(unittest.TestCase):
             root = launcher.prepare(Path(parent) / "evidence")
             calls = []
             def fake(cmd, log, env):
+                if cmd[-1] == "otel.exporter.chdb-untyped-encoder-test":
+                    return
                 phase, cell = cmd[-2:]
                 calls.append((Path(cell).name, phase))
                 (Path(cell) / f"{phase}-report.edn").write_text("{}")

@@ -11,7 +11,7 @@ import time
 
 BASE = "ebac0eb1c0ac070b3591675d15d09acadef81988"
 A = BASE
-B = "b492e8811e575f156e7b5c1ae383ba81e1a3bdd3"
+B = "6fdc6cba06fdb635c09695a5c0a40250c866b03e"
 REPO = Path(__file__).resolve().parents[1]
 COMPILER = Path("/home/chuck/ai-src/worktrees/jolt-v0810-durable-wal-private-hint/target/release/jolt")
 WRAPPER = Path("/home/chuck/ai-src/tools/jolt-with-chez-10.4.1")
@@ -20,7 +20,7 @@ NATIVE = Path("/home/chuck/.cache/chdb-rust/v26.7.3/linux-x86_64-libchdb/libchdb
 FIXTURE = Path("/home/chuck/ai-src/evidence/direct-encoder-canonical-no-durable-20260922T0415Z/fixture-batch-0.edn")
 ROOTS = {
     "A": REPO,
-    "B": REPO,
+    "B": Path("/home/chuck/ai-src/worktrees/jolt-otel-clickhouse-untyped-production"),
 }
 OTEL = Path("/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2")
 PINS = {
@@ -68,7 +68,7 @@ def prepare(root):
     return root
 
 def deps(arm):
-    return ('{:paths [' + json.dumps(str(ROOTS[arm] / "src")) + ' "bench"] :deps {'
+    return ('{:paths [' + json.dumps(str(ROOTS[arm] / "src")) + ' "bench" ' + json.dumps(str(ROOTS["B"] / "test")) + '] :deps {'
             'io.github.chucklehead-dev/jolt-chdb {:local/root ' + json.dumps(str(DRIVER)) + '} '
             'io.github.casselc/otel {:local/root ' + json.dumps(str(OTEL)) +
             ' :exclusions [jolt-lang/jolt-crypto]}}}')
@@ -83,8 +83,7 @@ def environment(arm, cell, phase):
                JOLT_CACHE_DIR=str(cell / ("cache-" + phase)), BENCH_ARM=arm,
                BENCH_FROZEN_FIXTURE=str(FIXTURE), BENCH_FROZEN_FIXTURE_SHA256=PINS[FIXTURE],
                BENCH_OTEL_SOURCE_SHA256=sha(OTEL / "src/otel/any_value.clj"),
-               BENCH_EXPORTER_SOURCE_SHA256=sha(ROOTS[arm] / "src/otel/exporter/chdb.clj"),
-               BENCH_PROTOTYPE_SOURCE_SHA256=sha(REPO / "bench/otel/exporter/untyped_encoder.clj"))
+               BENCH_EXPORTER_SOURCE_SHA256=sha(ROOTS[arm] / "src/otel/exporter/chdb.clj"))
     return env
 
 def normalize_classpath(text, arm):
@@ -106,18 +105,16 @@ def pins():
     require(not git(DRIVER, "status", "--porcelain", "--untracked-files=no"), "driver dirty")
     require(git(OTEL, "rev-parse", "HEAD") == "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2", "fixed OTel commit")
     require(not git(OTEL, "status", "--porcelain", "--untracked-files=no"), "OTel dirty")
-    require(git(REPO, "merge-base", "--is-ancestor", B, "HEAD") == "", "prototype ancestor")
+    require(git(ROOTS["B"], "rev-parse", "HEAD") == B, "production candidate commit")
     require(not git(ROOTS["B"], "status", "--porcelain", "--untracked-files=no"), "candidate dirty")
     changed = git(ROOTS["B"], "diff", "--name-only", A, B).splitlines()
-    require(set(changed) == {"bench/UNTYPED_ENCODER.md", "bench/otel/exporter/untyped_encoder.clj", "bench/otel/exporter/untyped_encoder_test.clj"}, "only audited exporter change")
-    require(not git(REPO, "diff", B, "--", "bench/otel/exporter/untyped_encoder.clj"), "prototype source unchanged")
+    require(set(changed) == {"CHANGELOG.md", "src/otel/exporter/chdb.clj", "test/otel/exporter/chdb_test.clj", "test/otel/exporter/chdb_untyped_encoder_test.clj", "test/otel/exporter/chdb_untyped_encoder_native_test.clj"}, "only audited exporter change")
     for path, expected in PINS.items():
         require(sha(path) == expected, "artifact hash: " + str(path))
     return {"exporter-base": BASE, "harness-commit": git(REPO, "rev-parse", "HEAD"),
             "exporter-arms": {"A": A, "B": B}, "otel": git(OTEL, "rev-parse", "HEAD"), "driver": git(DRIVER, "rev-parse", "HEAD"),
             "hashes": {str(p): h for p, h in PINS.items()},
-            "exporter-source-sha256": sha(REPO / "src/otel/exporter/chdb.clj"),
-            "prototype-sha256": sha(REPO / "bench/otel/exporter/untyped_encoder.clj")}
+            "exporter-source-sha256": sha(REPO / "src/otel/exporter/chdb.clj")}
 
 def run_child(cmd, log, env, timeout=300):
     with open(log, "w") as output:
@@ -127,6 +124,9 @@ def run_child(cmd, log, env, timeout=300):
     require(result.returncode == 0, f"child failed ({result.returncode}): {log}")
 
 def execute(root, run=run_child):
+    # Focused production controls cover typed/ordinary bypass before native work.
+    run(command("B", "-m", "otel.exporter.chdb-untyped-encoder-test"),
+        root / "candidate-controls.log", environment("B", root / "2-B", "writer"))
     digests = []
     for index, arm in enumerate(ORDER):
         cell = root / f"{index + 1}-{arm}"
