@@ -6,6 +6,7 @@
             [jdbc.chdb :as chdb]
             [otel.sdk.export :as export]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb-untyped-encoder-native-test :as native-gate]
             [otel.exporter.chdb-test-support :as support]))
 
 (def shape {:name "shape" :start-time-unix-nano 0 :end-time-unix-nano 0
@@ -16,6 +17,13 @@
 
 (defn baseline [s] (json/write-str (#'exporter/span-row s nil)))
 (defn failed? [f] (try (f) false (catch Exception _ true)))
+
+(deftest native-differential-covers-entire-row-schema
+  (let [columns native-gate/selected-columns]
+    (is (= 24 (count columns)))
+    (is (= (set (keys (#'exporter/span-row shape nil))) (set columns)))
+    (is (= "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+           (native-gate/sha256 "")))))
 
 (deftest exact-parity-and-real-fast-path
   (let [encoder (#'exporter/compile-untyped-span-encoder)
