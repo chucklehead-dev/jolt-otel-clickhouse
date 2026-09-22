@@ -458,9 +458,10 @@
            tag-set (fn [itf-set]
                      (set (map #(get % "tag") (get itf-set "#set"))))
            implementation-actions (atom ["init"])
-           ;; The ITF is a witness for the proposed writer queue. The current
-           ;; exporter still owns one ordinary insert -> barrier -> return
-           ;; path; it does not implement Atomic/ForceFlush/Close queue items.
+           ;; The ITF is a witness for the merged chDB writer queue. The
+           ;; current exporter still owns one ordinary insert -> barrier ->
+           ;; return path; it has not adopted or integration-trace-qualified
+           ;; Atomic/ForceFlush/Close writer operations.
            exporter
            (chdb-export/->ChdbExporter
             :fake false #{:spans}
@@ -508,9 +509,10 @@
                  {:runtime-actions @implementation-actions
                   :model-actions model-actions
                   :runtime-integration :single-exporter-barrier
-                  :not-implemented [:atomic-writer-request
-                                    :positioned-force-flush
-                                    :fifo-close]}))))))
+                  :exporter-adoption-boundaries
+                  [:execute-and-flush-adoption
+                   :multi-caller-atomic-trace
+                   :force-flush-and-close-integration-trace]}))))))
 
 (defn- wire-json-property []
   (h/run-test!

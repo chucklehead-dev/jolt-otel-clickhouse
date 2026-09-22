@@ -9,8 +9,8 @@ files under `target/formal/quint`; generated `.qnt` files are never edited.
 Two concurrent non-empty OTel exports, `A` then `B`, are the actors. They
 coordinate with chDB and Durable through writer-owned shared state, not
 protocol messages, so plain Quint is clearer than Choreo. The model compares
-the unsafe separated `execute!` / `flush!` requests with the proposed
-writer-level atomic `execute-and-flush!` group primitive. It deliberately
+the unsafe separated `execute!` / `flush!` requests with chDB's merged
+writer-level atomic `execute-and-flush!` primitive (jolt-chdb #188). It deliberately
 abstracts serialization, SQL shape, retries, leases, and object-store CAS
 reconciliation; those remain in the lower-level Durable model.
 
@@ -27,13 +27,13 @@ boundary, not an exporter mutex.
 
 ## Runtime integration boundary
 
-This model specifies the required writer-level primitive; it is not evidence
-that the current exporter or chDB writer already implements it. Today the
-exporter exercises one ordinary insert, persistence barrier, and return path.
-The Hegel property therefore validates the checked-in ITF as a model witness
-separately from that current single-export runtime contract. It must not equate
-`Atomic`, `ForceFlush`, or `Close` model actions with runtime calls until the
-writer primitive and its trace tests land.
+chDB now implements the writer-level primitive (jolt-chdb #188); this model is
+not evidence that the exporter has adopted or integration-trace-qualified it.
+Today the exporter exercises one ordinary insert, persistence barrier, and
+return path. The Hegel property therefore validates the checked-in ITF as a
+model witness separately from that current single-export runtime contract. It
+must not equate `Atomic`, `ForceFlush`, or `Close` model actions with exporter
+calls until exporter adoption and integration trace tests land.
 
 The modeled state is one cohesive record:
 
@@ -54,7 +54,7 @@ committed caller cannot be settled false.
 | Model boundary | Implementation boundary |
 | --- | --- |
 | `separateExecute*` / `separateFlush*` | existing separate `execute!` then `flush!` queue requests |
-| `Atomic(A)` / `Atomic(B)` | proposed writer-level `execute-and-flush!` admission and terminal settlement |
+| `Atomic(A)` / `Atomic(B)` | merged writer-level `execute-and-flush!` admission and terminal settlement (#188) |
 | `ForceFlush` / `Close` | positioned force flush and shutdown fencing behind admitted requests |
 | event ordering | `durable-barrier-history-property` in `test/otel/exporter/chdb_property_test.clj` |
 
