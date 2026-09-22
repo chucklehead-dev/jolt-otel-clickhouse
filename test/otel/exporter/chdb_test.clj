@@ -752,14 +752,15 @@
         exporter
         (chdb-export/->ChdbExporter
          :generic false #{:spans}
-         (atom {:closed-signals #{}
-                :connection-close-claimed? false
-                :connection-close-status :open
-                :connection-closed? false
-                :durable? false
-                :persistence-barrier
-                (fn [_] (swap! calls conj :generic-barrier) true)
-                :last-error nil}))]
+         (atom (test-support/exporter-state
+                {:closed-signals #{}
+                 :connection-close-claimed? false
+                 :connection-close-status :open
+                 :connection-closed? false
+                 :durable? false
+                 :persistence-barrier
+                 (fn [_] (swap! calls conj :generic-barrier) true)
+                 :last-error nil})))]
     (with-redefs [jdbc.chdb/insert-json-rows!
                   (fn [& _] (swap! calls conj :ordinary-insert))]
       (check "custom generic barrier remains post-batch" true
