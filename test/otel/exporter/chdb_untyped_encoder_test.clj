@@ -77,6 +77,52 @@
                (first @calls)))
         (is (= (first @calls) (second @calls)))))))
 
+(deftest opt-in-durable-phase-receipts-are-aggregate-only
+  (let [receipts (exporter/durable-phase-receipts)
+        calls (atom [])
+        t (target {:durable-phase-receipts receipts})]
+    (with-redefs [jdbc/execute! (fn [_ sql] (swap! calls conj sql))]
+      (is (true? (export/export-spans! t [shape shape]))))
+    ;; Receipt data proves each acknowledged boundary completed, but retains no
+    ;; query/payload/row/attribute material from the spans.
+    (is (= {:payload-built {:count 1 :spans 2}
+            :native-execute-returned {:count 1 :spans 2}
+            :persistence-barrier-returned {:count 1 :spans 2}}
+           (into {} (map (fn [[phase values]]
+                           [phase (select-keys values [:count :spans])]) @receipts))))
+    (is (every? #(and (integer? (:nanos %)) (not (neg? (:nanos %))))
+                (vals @receipts)))
+    (is (not-any? string? (tree-seq coll? seq @receipts)))
+    (is (= 1 (count @calls))))
+  (let [receipts (exporter/durable-phase-receipts)
+        t (target {:typed-span-projector (fn [_] {"Extra" 7})
+                   :durable-phase-receipts receipts})]
+    (with-redefs [jdbc/execute! (fn [& _] nil)]
+      (is (true? (export/export-spans! t [shape]))))
+    (is (= {:payload-built {:count 0 :nanos 0 :spans 0}
+            :native-execute-returned {:count 0 :nanos 0 :spans 0}
+            :persistence-barrier-returned {:count 0 :nanos 0 :spans 0}}
+           @receipts))))
+
+(deftest phase-receipts-cannot-change-durable-acknowledgement
+  (let [receipts (exporter/durable-phase-receipts)
+        t (target {:durable-phase-receipts receipts})]
+    (add-watch receipts ::throwing-watch (fn [& _] (throw (ex-info "diagnostic failure" {}))))
+    (try
+      (with-redefs [jdbc/execute! (fn [& _] nil)]
+        (is (true? (export/export-spans! t [shape]))))
+      (finally
+        (remove-watch receipts ::throwing-watch)))))
+
+(deftest failed-durable-barrier-has-no-completed-barrier-receipt
+  (let [receipts (exporter/durable-phase-receipts)
+        t (target {:durable-phase-receipts receipts
+                   :persistence-barrier (fn [_] (throw (ex-info "barrier failed" {})))})]
+    (with-redefs [jdbc/execute! (fn [& _] nil)]
+      (is (false? (export/export-spans! t [shape]))))
+    (is (= {:count 0 :nanos 0 :spans 0}
+           (:persistence-barrier-returned @receipts)))))
+
 (deftest invalid-or-oversize-never-reaches-jdbc-or-later-row
   (doseq [oversize? [false true]]
     (let [seen (atom []) calls (atom 0)
