@@ -17,32 +17,35 @@ reconciliation; those remain in the lower-level Durable model.
 The red separated-request mutant makes the bug concrete: `A.execute`,
 `B.execute`, and `A.flush` publish the group `{A, B}`. `B.flush` then sees an
 empty WAL and settles B false even though B is already committed. The corrected
-model admits A and B independently into a FIFO writer queue; each caller's
+model admits A and B independently into a FIFO writer queue of
+`Atomic(caller)`, `ForceFlush`, and `Close` requests. Each caller's
 `execute-and-flush!` request is processed as one non-interleavable worker
-transition and is settled only with its own terminal publication result. This
-is a writer boundary, not an exporter mutex: other connection users may queue
-behind an admitted request but cannot interleave inside it.
+transition and is settled only with its own terminal publication result.
+`Close` fences later admission when queued, but waits behind all previously
+admitted work; it never clears or falsely settles that work. This is a writer
+boundary, not an exporter mutex.
 
 The modeled state is one cohesive record:
 
-- `admitted`, `writtenOrder`, and `retainedWal` expose worker admission and
-  uncommitted FIFO WAL order;
+- `admitted`, `pending`, ordered request `queue`, `writtenOrder`, and
+  `retainedWal` expose worker admission and uncommitted FIFO WAL order;
 - `committedGroups` and `committedOrder` record caller-owned
   confirmed/reconciled publications and their replay order;
 - `successes` and `failures` are caller-visible terminal outcomes;
-- close snapshots fence new groups and force-flush calls after shutdown.
+- close snapshots fence new admission while allowing queued work to drain.
 
 The primary invariants say that every success belongs to exactly one committed
 group, no caller is settled twice, the fixed A-then-B replay order is retained,
-terminal barrier failure/ambiguity retains its WAL, and shutdown fences both
-admission and force flush. The mutant intentionally violates the separate
-property that a committed caller cannot be settled false.
+terminal barrier failure/ambiguity retains its WAL, force flush executes at its
+FIFO position, and close fences admission but processes only after earlier
+callers settle. The mutant intentionally violates the separate property that a
+committed caller cannot be settled false.
 
 | Model boundary | Implementation boundary |
 | --- | --- |
 | `separateExecute*` / `separateFlush*` | existing separate `execute!` then `flush!` queue requests |
-| `atomicGroup*` | proposed writer-level `execute-and-flush!` admission and terminal settlement |
-| `atomicGroupFailure*` | retained-WAL terminal failure/ambiguity for every admitted group member |
+| `Atomic(A)` / `Atomic(B)` | proposed writer-level `execute-and-flush!` admission and terminal settlement |
+| `ForceFlush` / `Close` | positioned force flush and shutdown fencing behind admitted requests |
 | event ordering | `durable-barrier-history-property` in `test/otel/exporter/chdb_property_test.clj` |
 
 The corrected module disables separated requests. The mutant enables them; its
@@ -60,9 +63,9 @@ scripts/check-durable-export-quint.sh
 ```
 
 The corrected path models separate A/B admission, one atomic worker transition
-per caller, queued force flush, and shutdown with queued callers. The red
-interleave takes four separated requests. This bounded check is not a claim
-about the lower-level distributed Durable protocol.
+per caller, a positioned force flush, and a FIFO close with queued callers.
+The red interleave takes four separated requests. This bounded check is not a
+claim about the lower-level distributed Durable protocol.
 
 ## Executable model
 
@@ -71,11 +74,12 @@ module durableExportAck {
   const ALLOW_SEPARATE_REQUESTS: bool
 
   type Caller = A | B
+  type Request = Atomic(Caller) | ForceFlush | Close
 
   type ExportState = {
     admitted: Set[Caller],
-    queued: List[Caller],
-    forceFlushQueued: bool,
+    pending: Set[Caller],
+    queue: List[Request],
     writtenOrder: List[Caller],
     retainedWal: List[Caller],
     committedOrder: List[Caller],
@@ -87,16 +91,16 @@ module durableExportAck {
     forceFlushes: int,
     forceFlushSettlementSnapshot: Set[Caller],
     closed: bool,
+    closeProcessed: bool,
     admittedAtClose: Set[Caller],
-    forceFlushesAtClose: int,
   }
 
   var state: ExportState
 
   pure val initialState: ExportState = {
     admitted: Set(),
-    queued: List(),
-    forceFlushQueued: false,
+    pending: Set(),
+    queue: List(),
     writtenOrder: List(),
     retainedWal: List(),
     committedOrder: List(),
@@ -108,8 +112,8 @@ module durableExportAck {
     forceFlushes: 0,
     forceFlushSettlementSnapshot: Set(),
     closed: false,
+    closeProcessed: false,
     admittedAtClose: Set(),
-    forceFlushesAtClose: 0,
   }
 
   pure val groupAB: Set[Caller] = Set(A, B)
@@ -121,42 +125,53 @@ module durableExportAck {
   pure def applyAdmitA(s: ExportState): ExportState =
     { ...s,
       admitted: Set(A),
-      queued: List(A) }
+      pending: Set(A),
+      queue: s.queue.append(Atomic(A)) }
 
   pure def canAdmitB(s: ExportState): bool =
-    not(s.closed) and not(s.forceFlushQueued) and s.admitted == Set(A) and
-      (s.queued == List(A) or (s.queued == List() and s.successes == Set(A)))
+    not(s.closed) and s.admitted == Set(A)
 
   pure def applyAdmitB(s: ExportState): ExportState =
     { ...s,
       admitted: groupAB,
-      queued: if (s.queued == List(A)) orderAB else List(B) }
+      pending: s.pending.union(Set(B)),
+      queue: s.queue.append(Atomic(B)) }
 
   pure def canQueueForceFlush(s: ExportState): bool =
-    not(s.closed) and not(s.forceFlushQueued)
+    not(s.closed)
 
   pure def applyQueueForceFlush(s: ExportState): ExportState =
-    { ...s, forceFlushQueued: true }
+    { ...s, queue: s.queue.append(ForceFlush) }
+
+  pure def canRequestClose(s: ExportState): bool = not(s.closed)
+
+  pure def applyRequestClose(s: ExportState): ExportState =
+    { ...s,
+      closed: true,
+      admittedAtClose: s.admitted,
+      queue: s.queue.append(Close) }
 
   // Each process action is one writer request: execution, confirmed/reconciled
   // publication, and caller settlement cannot interleave with the next item.
   pure def canProcessAtomicA(s: ExportState): bool =
-    not(s.closed) and (s.queued == List(A) or s.queued == orderAB)
+    s.queue.length() > 0 and s.queue.head() == Atomic(A)
 
   pure def applyAtomicA(s: ExportState): ExportState =
     { ...s,
-      queued: if (s.queued == orderAB) List(B) else List(),
+      pending: s.pending.exclude(Set(A)),
+      queue: s.queue.tail(),
       writtenOrder: s.writtenOrder.concat(List(A)),
       committedOrder: s.committedOrder.concat(List(A)),
       committedGroups: s.committedGroups.union(Set(Set(A))),
       successes: s.successes.union(Set(A)) }
 
   pure def canProcessAtomicB(s: ExportState): bool =
-    not(s.closed) and s.queued == List(B) and s.successes == Set(A)
+    s.queue.length() > 0 and s.queue.head() == Atomic(B) and s.successes == Set(A)
 
   pure def applyAtomicBSuccess(s: ExportState): ExportState =
     { ...s,
-      queued: List(),
+      pending: s.pending.exclude(Set(B)),
+      queue: s.queue.tail(),
       writtenOrder: s.writtenOrder.concat(List(B)),
       committedOrder: s.committedOrder.concat(List(B)),
       committedGroups: s.committedGroups.union(Set(Set(B))),
@@ -164,7 +179,8 @@ module durableExportAck {
 
   pure def applyAtomicBFailure(s: ExportState, ambiguous: bool): ExportState =
     { ...s,
-      queued: List(),
+      pending: s.pending.exclude(Set(B)),
+      queue: s.queue.tail(),
       writtenOrder: s.writtenOrder.concat(List(B)),
       retainedWal: s.retainedWal.concat(List(B)),
       failures: s.failures.union(Set(B)),
@@ -181,12 +197,14 @@ module durableExportAck {
   pure def applySeparateExecuteA(s: ExportState): ExportState =
     { ...s,
       admitted: Set(A),
+      pending: Set(A),
       writtenOrder: List(A),
       retainedWal: List(A) }
 
   pure def applySeparateExecuteB(s: ExportState): ExportState =
     { ...s,
       admitted: groupAB,
+      pending: groupAB,
       writtenOrder: orderAB,
       retainedWal: orderAB }
 
@@ -195,6 +213,7 @@ module durableExportAck {
 
   pure def applySeparateFlushA(s: ExportState): ExportState =
     { ...s,
+      pending: s.pending.exclude(Set(A)),
       retainedWal: List(),
       committedOrder: orderAB,
       committedGroups: Set(groupAB),
@@ -206,28 +225,27 @@ module durableExportAck {
       s.retainedWal == List()
 
   pure def applySeparateFlushB(s: ExportState): ExportState =
-    { ...s, failures: Set(B) }
+    { ...s,
+      pending: s.pending.exclude(Set(B)),
+      failures: Set(B) }
 
   pure def canForceFlushEmpty(s: ExportState): bool =
-    not(s.closed) and s.forceFlushQueued and s.queued == List() and
+    s.queue.length() > 0 and s.queue.head() == ForceFlush and
       s.retainedWal == List()
 
   pure def applyForceFlushEmpty(s: ExportState): ExportState =
     { ...s,
-      forceFlushQueued: false,
+      queue: s.queue.tail(),
       forceFlushes: s.forceFlushes + 1,
       forceFlushSettlementSnapshot: s.successes.union(s.failures) }
 
-  pure def canShutdown(s: ExportState): bool = not(s.closed)
+  pure def canProcessClose(s: ExportState): bool =
+    s.queue.length() > 0 and s.queue.head() == Close
 
-  pure def applyShutdown(s: ExportState): ExportState =
+  pure def applyClose(s: ExportState): ExportState =
     { ...s,
-      closed: true,
-      queued: List(),
-      forceFlushQueued: false,
-      failures: s.failures.union(s.admitted.exclude(s.successes)),
-      admittedAtClose: s.admitted,
-      forceFlushesAtClose: s.forceFlushes }
+      queue: s.queue.tail(),
+      closeProcessed: true }
 
   action init: bool = state' = initialState
 
@@ -244,6 +262,11 @@ module durableExportAck {
   action queueForceFlush: bool = all {
     canQueueForceFlush(state),
     state' = applyQueueForceFlush(state),
+  }
+
+  action requestClose: bool = all {
+    canRequestClose(state),
+    state' = applyRequestClose(state),
   }
 
   action atomicA: bool = all {
@@ -291,15 +314,16 @@ module durableExportAck {
     state' = applyForceFlushEmpty(state),
   }
 
-  action shutdown: bool = all {
-    canShutdown(state),
-    state' = applyShutdown(state),
+  action processClose: bool = all {
+    canProcessClose(state),
+    state' = applyClose(state),
   }
 
   action step: bool = any {
     admitA,
     admitB,
     queueForceFlush,
+    requestClose,
     atomicA,
     atomicBSuccess,
     atomicBFailure,
@@ -309,17 +333,11 @@ module durableExportAck {
     separateFlushA,
     separateFlushB,
     forceFlushEmpty,
-    shutdown,
+    processClose,
   }
 
   pure def committedGroupCount(s: ExportState, caller: Caller): int =
     s.committedGroups.filter(group => group.contains(caller)).size()
-
-  pure def queuedMembers(s: ExportState): Set[Caller] =
-    if (s.queued == List()) Set()
-    else if (s.queued == List(A)) Set(A)
-    else if (s.queued == List(B)) Set(B)
-    else groupAB
 
   val successBelongsToExactlyOneCommittedGroup: bool =
     state.successes.forall(caller => committedGroupCount(state, caller) == 1)
@@ -329,45 +347,33 @@ module durableExportAck {
       state.committedOrder == List(A) or state.committedOrder == orderAB) and
     (not(state.successes.contains(B)) or state.committedOrder == orderAB)
 
-  val queuedCallersAreOnlyUnsettled: bool = and {
+  val pendingCallersAreOnlyUnsettled: bool = and {
     state.successes.intersect(state.failures) == Set(),
-    state.successes.intersect(queuedMembers(state)) == Set(),
-    state.failures.intersect(queuedMembers(state)) == Set(),
-    state.admitted == state.successes.union(state.failures).union(queuedMembers(state)),
+    state.successes.intersect(state.pending) == Set(),
+    state.failures.intersect(state.pending) == Set(),
+    state.admitted == state.successes.union(state.failures).union(state.pending),
   }
 
-  val exactlyOneSettlementWhenQueueDrained: bool =
-    state.queued == List() implies and {
+  val closeProcessesOnlyAfterCallerSettlement: bool =
+    not(state.closeProcessed) or and {
+      state.pending == Set(),
       state.successes.intersect(state.failures) == Set(),
       state.admitted == state.successes.union(state.failures),
     }
-
-  val fifoAdmissionOrder: bool =
-    state.queued == List() or state.queued == List(A) or state.queued == orderAB or
-      state.queued == List(B)
 
   val fifoReplayOrder: bool =
     state.committedOrder == List() or state.committedOrder == List(A) or
       state.committedOrder == orderAB
 
-  val forceFlushWaitsForQueuedCallers: bool =
+  val forceFlushRunsAtItsQueuePosition: bool =
     state.forceFlushes == 0 or and {
       state.forceFlushSettlementSnapshot.exclude(
         state.successes.union(state.failures)) == Set(),
     }
 
-  val shutdownSettlesQueuedCallers: bool =
-    not(state.closed) or and {
-      state.queued == List(),
-      not(state.forceFlushQueued),
-      state.admitted == state.successes.union(state.failures),
-      state.admitted == state.admittedAtClose,
-    }
-
-  val noPostCloseGroupOrForceFlush: bool =
+  val closeFencesFutureAdmission: bool =
     not(state.closed) or and {
       state.admitted == state.admittedAtClose,
-      state.forceFlushes == state.forceFlushesAtClose,
     }
 
   val terminalFailureRetainsWal: bool =
@@ -384,14 +390,12 @@ module durableExportAck {
   val exporterSafety: bool = and {
     successBelongsToExactlyOneCommittedGroup,
     noPreCommitSuccess,
-    queuedCallersAreOnlyUnsettled,
-    exactlyOneSettlementWhenQueueDrained,
-    fifoAdmissionOrder,
+    pendingCallersAreOnlyUnsettled,
+    closeProcessesOnlyAfterCallerSettlement,
     fifoReplayOrder,
     terminalFailureRetainsWal,
-    forceFlushWaitsForQueuedCallers,
-    shutdownSettlesQueuedCallers,
-    noPostCloseGroupOrForceFlush,
+    forceFlushRunsAtItsQueuePosition,
+    closeFencesFutureAdmission,
     committedCallerNeverFails,
   }
 
@@ -399,10 +403,12 @@ module durableExportAck {
     state.committedGroups == Set(Set(A), Set(B)) and state.successes == groupAB
 
   val queuedBothCallersReached: bool =
-    state.admitted == groupAB and state.queued == orderAB
+    state.admitted == groupAB and state.pending == groupAB and
+      state.queue == List(Atomic(A), Atomic(B))
 
   val atomicASettledBStillQueuedReached: bool =
-    state.successes == Set(A) and state.queued == List(B)
+    state.successes == Set(A) and state.pending == Set(B) and
+      state.queue == List(Atomic(B))
 
   val atomicBFailureRetainedReached: bool =
     state.barrierFailed and state.retainedWal == List(B) and state.failures == Set(B)
@@ -410,12 +416,17 @@ module durableExportAck {
   val atomicBAmbiguousRetainedReached: bool =
     state.barrierAmbiguous and state.retainedWal == List(B) and state.failures == Set(B)
 
-  val forceFlushAfterQueuedCallersReached: bool =
-    state.forceFlushes == 1 and state.successes == groupAB and state.queued == List() and
-      state.forceFlushSettlementSnapshot == groupAB
+  val forceFlushBetweenAAndBReached: bool =
+    state.forceFlushes == 1 and state.successes == Set(A) and state.pending == Set(B) and
+      state.queue == List(Atomic(B)) and state.forceFlushSettlementSnapshot == Set(A)
 
-  val shutdownSettlesQueuedCallersReached: bool =
-    state.closed and state.failures == groupAB and state.queued == List()
+  val closeQueuedBehindAdmittedWorkReached: bool =
+    state.closed and not(state.closeProcessed) and state.pending == groupAB and
+      state.queue == List(Atomic(A), Atomic(B), Close)
+
+  val closeAfterAdmittedWorkReached: bool =
+    state.closeProcessed and state.pending == Set() and state.successes == groupAB and
+      state.queue == List()
 
   val separatedRequestsCommitBThenFailB: bool =
     state.committedGroups == Set(groupAB) and state.failures == Set(B)
@@ -446,7 +457,7 @@ module durableExportAckCorrectedTest {
         independentlySettledCallersReached,
         exporterSafety,
         successBelongsToExactlyOneCommittedGroup,
-        exactlyOneSettlementWhenQueueDrained,
+        closeProcessesOnlyAfterCallerSettlement,
       })
 
   run queuedAdmissionTest =
@@ -456,7 +467,7 @@ module durableExportAckCorrectedTest {
       .expect(and {
         queuedBothCallersReached,
         exporterSafety,
-        queuedCallersAreOnlyUnsettled,
+        pendingCallersAreOnlyUnsettled,
       })
 
   run atomicBFailureRetainsWalTest =
@@ -483,29 +494,41 @@ module durableExportAckCorrectedTest {
         terminalFailureRetainsWal,
       })
 
-  run forceFlushWaitsForQueuedCallersTest =
+  run forceFlushIsPositionedBetweenCallersTest =
     init
       .then(admitA)
-      .then(admitB)
       .then(queueForceFlush)
+      .then(admitB)
       .then(atomicA)
-      .then(atomicBSuccess)
       .then(forceFlushEmpty)
       .expect(and {
-        forceFlushAfterQueuedCallersReached,
+        forceFlushBetweenAAndBReached,
         exporterSafety,
-        forceFlushWaitsForQueuedCallers,
+        forceFlushRunsAtItsQueuePosition,
       })
 
-  run shutdownSettlesQueuedCallersTest =
+  run closeQueuesBehindAdmittedCallersTest =
     init
       .then(admitA)
       .then(admitB)
-      .then(queueForceFlush)
-      .then(shutdown)
+      .then(requestClose)
       .expect(and {
-        shutdownSettlesQueuedCallersReached,
+        closeQueuedBehindAdmittedWorkReached,
         exporterSafety,
+      })
+
+  run closeProcessesAfterAdmittedCallersTest =
+    init
+      .then(admitA)
+      .then(admitB)
+      .then(requestClose)
+      .then(atomicA)
+      .then(atomicBSuccess)
+      .then(processClose)
+      .expect(and {
+        closeAfterAdmittedWorkReached,
+        exporterSafety,
+        closeProcessesOnlyAfterCallerSettlement,
       })
 }
 

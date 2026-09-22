@@ -58,14 +58,14 @@ quint test "$tests" \
 sample_log="$target/corrected-sampled.log"
 quint run "$model" \
   --main durableExportAckCorrected \
-  --invariants successBelongsToExactlyOneCommittedGroup noPreCommitSuccess queuedCallersAreOnlyUnsettled exactlyOneSettlementWhenQueueDrained fifoAdmissionOrder fifoReplayOrder terminalFailureRetainsWal forceFlushWaitsForQueuedCallers shutdownSettlesQueuedCallers noPostCloseGroupOrForceFlush committedCallerNeverFails \
-  --witnesses independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushAfterQueuedCallersReached shutdownSettlesQueuedCallersReached \
+  --invariants successBelongsToExactlyOneCommittedGroup noPreCommitSuccess pendingCallersAreOnlyUnsettled closeProcessesOnlyAfterCallerSettlement fifoReplayOrder terminalFailureRetainsWal forceFlushRunsAtItsQueuePosition closeFencesFutureAdmission committedCallerNeverFails \
+  --witnesses independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushBetweenAAndBReached closeQueuedBehindAdmittedWorkReached closeAfterAdmittedWorkReached \
   --max-steps 6 \
   --max-samples 10000 \
   --backend typescript \
   --verbosity 1 | tee "$sample_log"
 
-for witness in independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushAfterQueuedCallersReached shutdownSettlesQueuedCallersReached
+for witness in independentlySettledCallersReached queuedBothCallersReached atomicASettledBStillQueuedReached atomicBFailureRetainedReached atomicBAmbiguousRetainedReached forceFlushBetweenAAndBReached closeQueuedBehindAdmittedWorkReached closeAfterAdmittedWorkReached
 do
   if ! grep -Eq "^${witness} was witnessed in [1-9][0-9]* trace" "$sample_log"
   then
