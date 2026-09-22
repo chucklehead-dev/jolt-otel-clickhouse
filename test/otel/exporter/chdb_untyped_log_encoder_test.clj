@@ -73,6 +73,33 @@
       (is (true? (logs/export-logs! target records))))
     (is (= [(utf8 expected)] (mapv utf8 @calls)))))
 
+(deftest falsey-records-retain-generic-rows-and-durable-route
+  ;; A raw caller can pass nil or false even though normal SDK records are
+  ;; maps. The generic path materializes their default log rows; the fast path
+  ;; must neither terminate early nor acknowledge a partial Durable batch.
+  (let [encoder (#'exporter/compile-untyped-log-encoder)
+        target (exporter/->ChdbExporter
+                :writer false #{:logs}
+                (atom {:closed-signals #{} :durable? true
+                       :typed-log-projector nil
+                       :log-insert-columns
+                       ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText"
+                        "SeverityNumber" "ServiceName" "Body" "ResourceSchemaUrl"
+                        "ResourceAttributes" "ScopeSchemaUrl" "ScopeName" "ScopeVersion"
+                        "ScopeAttributes" "LogAttributes" "EventName"]}))
+        query "insert into otel_logs (Timestamp, TraceId, SpanId, TraceFlags, SeverityText, SeverityNumber, ServiceName, Body, ResourceSchemaUrl, ResourceAttributes, ScopeSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, LogAttributes, EventName) FORMAT JSONEachRow\n"
+        calls (atom [])]
+    (is (ifn? encoder))
+    (doseq [records [[nil base-log] [false base-log]]]
+      (let [generic (apply str (map #(str (baseline %) "\n") records))
+            direct (#'exporter/untyped-log-payload encoder records)]
+        (is (= (utf8 generic) (utf8 direct)))
+        (reset! calls [])
+        (with-redefs [durable/execute-and-flush! (fn [_ sql]
+                                                   (swap! calls conj sql) {:status :committed})]
+          (is (true? (logs/export-logs! target records))))
+        (is (= [(utf8 (str query generic))] (mapv utf8 @calls)))))))
+
 (defn -main []
   (let [result (run-tests 'otel.exporter.chdb-untyped-log-encoder-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

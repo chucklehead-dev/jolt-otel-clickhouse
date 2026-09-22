@@ -569,8 +569,12 @@
   records validate through the ordinary maintained row path."
   [encoder records]
   (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
-    (if-let [record (first records)]
-      (let [encoded (encoder record)
+    ;; Test sequence presence, not the record: raw SDK callers can supply a
+    ;; falsey record, which must retain the ordinary `log-row` fallback rather
+    ;; than terminating this batch and dropping subsequent records.
+    (if records
+      (let [record (first records)
+            encoded (encoder record)
             bytes (inc (alength (.getBytes encoded "UTF-8")))]
         (when (> bytes remaining)
           (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
