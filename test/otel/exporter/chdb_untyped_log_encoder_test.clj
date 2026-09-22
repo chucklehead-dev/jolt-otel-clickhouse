@@ -53,6 +53,55 @@
     (with-redefs [exporter/jolt-runtime? (constantly false)]
       (is (nil? (#'exporter/compile-untyped-log-encoder))))))
 
+(deftest attribute-wire-cache-is-batch-local-and-order-safe
+  (let [encoder (#'exporter/compile-untyped-log-encoder)
+        same-resource {"service.name" "cache-test" "region" "us-east-2"}
+        same-scope {"library" "cache-test"}
+        same-log {"enabled" true "answer" 42}
+        ordered-a (array-map "first" "a" "second" "b")
+        ordered-b (array-map "second" "b" "first" "a")
+        encode #(#'exporter/untyped-log-payload encoder %)
+        baseline-payload #(apply str (map (fn [record] (str (baseline record) "\n")) %))]
+    (is (ifn? encoder))
+    ;; All three source maps are reused in the second record, so data.json
+    ;; should render each only once.  The expected bytes are produced before
+    ;; instrumentation, from the maintained generic physical-row path.
+    (let [records [(assoc base-log :resource {:attributes same-resource}
+                                 :scope {:attributes same-scope}
+                                 :attributes same-log)
+                   (assoc base-log :body "same maps, different row"
+                                 :resource {:attributes same-resource}
+                                 :scope {:attributes same-scope}
+                                 :attributes same-log)]
+          expected (baseline-payload records)
+          calls (atom 0)
+          original @#'exporter/attrs]
+      (with-redefs [exporter/attrs (fn [source]
+                                     (swap! calls inc)
+                                     (original source))]
+        (is (= expected (encode records)))
+        (is (= 3 @calls))
+        ;; The binding is freshly allocated for every payload; no values or
+        ;; cache entries survive an export call.
+        (is (= expected (encode records)))
+        (is (= 6 @calls))))
+    ;; Equal associative maps may have different input iteration order.  They
+    ;; are distinct JSON wires and therefore intentionally consume distinct
+    ;; cache entries; shared resource/scope wires are still reused.
+    (let [records [(assoc base-log :attributes ordered-a)
+                   (assoc base-log :body "ordered-b" :attributes ordered-b)]
+          expected (baseline-payload records)
+          calls (atom 0)
+          original @#'exporter/attrs]
+      (is (not= (json/write-str (original ordered-a))
+                (json/write-str (original ordered-b))))
+      (with-redefs [exporter/attrs (fn [source]
+                                     (swap! calls inc)
+                                     (original source))]
+        (is (= expected (encode records)))
+        ;; resource + scope once, then each ordered LogAttributes source once.
+        (is (= 4 @calls))))))
+
 (deftest durable-route-retains-exact-public-payload
   (let [encoder (#'exporter/compile-untyped-log-encoder)
         target (exporter/->ChdbExporter

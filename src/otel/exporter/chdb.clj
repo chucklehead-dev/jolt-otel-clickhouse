@@ -472,6 +472,49 @@
    "LogAttributes" #(attrs (:attributes %))
    "EventName" #(or (:event-name %) "")})
 
+;; Attribute maps recur heavily in collector log batches: resource and scope
+;; maps are normally shared by every record, and application log attributes
+;; often repeat too.  Preserve data.json as the only JSON authority, but keep
+;; its exact already-produced wire text in a bounded cache for this one
+;; payload.  In particular, map equality is not sufficient: data.json follows
+;; the supplied map's iteration order, so the ordered entry vector is part of
+;; the key.  The dynamic binding below gives the cache request-local lifetime;
+;; it cannot retain telemetry across exporter calls or threads.
+(def ^:private untyped-log-attribute-accessors
+  {"ResourceAttributes" #(get-in % [:resource :attributes])
+   "ScopeAttributes" #(get-in % [:scope :attributes])
+   "LogAttributes" :attributes})
+
+(def ^:private untyped-log-attribute-cache-max-entries 64)
+(def ^:private untyped-log-attribute-cache-max-chars (* 1024 1024))
+
+(def ^:dynamic ^:private *untyped-log-attribute-wire-cache* nil)
+
+(defn- untyped-log-attribute-cache []
+  {:entries (java.util.HashMap.)
+   :chars (java.util.concurrent.atomic.AtomicLong. 0)})
+
+(defn- cached-untyped-log-attrs-wire [source]
+  (let [source (or source {})
+        cache *untyped-log-attribute-wire-cache*]
+    (if-not cache
+      (json/write-str (attrs source))
+      (let [entries (:entries cache)
+            ;; Do not use `source` itself here: associative equality erases
+            ;; insertion order, while JSON bytes must preserve it.
+            key (vec source)
+            cached (.get entries key)]
+        (if cached
+          cached
+          (let [encoded (json/write-str (attrs source))
+                size (count encoded)
+                chars (:chars cache)]
+            (when (and (< (.size entries) untyped-log-attribute-cache-max-entries)
+                       (<= (+ (.get chars) size) untyped-log-attribute-cache-max-chars))
+              (.put entries key encoded)
+              (.addAndGet chars size))
+            encoded))))))
+
 (defn- plain-json-string? [value]
   ;; data.json's default writer has the exact escaping authority.  This tiny
   ;; direct subset deliberately excludes every escaping/Unicode boundary,
@@ -551,12 +594,22 @@
                 (let [out (StringBuilder.)]
                   (loop [columns order fragments fragments]
                     (when-let [column (first columns)]
-                      (let [value ((get untyped-log-accessors column) record)]
-                        (when-not (valid-row-value? column value)
+                      (let [attribute-at (get untyped-log-attribute-accessors column)
+                            value (if attribute-at
+                                    (cached-untyped-log-attrs-wire (attribute-at record))
+                                    ((get untyped-log-accessors column) record))]
+                        ;; Attribute wires come directly from `(attrs source)`
+                        ;; and data.json, therefore represent the same valid
+                        ;; Map(String,String) value the old accessor supplied.
+                        ;; Other columns retain the existing explicit check.
+                        (when (and (not attribute-at)
+                                   (not (valid-row-value? column value)))
                           (throw (ex-info "Invalid chDB telemetry row"
                                           {:type ::invalid-ordinary-row})))
                         (.append out (first fragments))
-                        (append-direct-log-scalar! out value)
+                        (if attribute-at
+                          (.append out value)
+                          (append-direct-log-scalar! out value))
                         (recur (next columns) (next fragments)))))
                   (.append out \})
                   (.toString out))))))))))
@@ -576,22 +629,26 @@
   whole-batch validation. Do not pre-scan the input: that could observe a
   later record after an earlier direct row would overflow."
   [encoder records]
-  (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
-    ;; Test sequence presence, not the record: raw SDK callers can supply a
-    ;; falsey record, which must retain the ordinary `log-row` fallback rather
-    ;; than terminating this batch and dropping subsequent records.
-    (if records
-      (let [record (first records)]
-        (if-not (untyped-log-eligible? record)
-          generic-untyped-log-payload
-          (let [encoded (encoder record)
-                bytes (inc (alength (.getBytes encoded "UTF-8")))]
-            (when (> bytes remaining)
-              (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                              {:limit max-insert-bytes})))
-            (.append out encoded) (.append out "\n")
-            (recur (- remaining bytes) (next records) out))))
-      (.toString out))))
+  ;; The selected encoder is Jolt-only; retain that boundary here as well so a
+  ;; direct/private caller cannot accidentally change JVM or BB behavior.
+  (binding [*untyped-log-attribute-wire-cache*
+            (when (jolt-runtime?) (untyped-log-attribute-cache))]
+    (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
+      ;; Test sequence presence, not the record: raw SDK callers can supply a
+      ;; falsey record, which must retain the ordinary `log-row` fallback rather
+      ;; than terminating this batch and dropping subsequent records.
+      (if records
+        (let [record (first records)]
+          (if-not (untyped-log-eligible? record)
+            generic-untyped-log-payload
+            (let [encoded (encoder record)
+                  bytes (inc (alength (.getBytes encoded "UTF-8")))]
+              (when (> bytes remaining)
+                (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                                {:limit max-insert-bytes})))
+              (.append out encoded) (.append out "\n")
+              (recur (- remaining bytes) (next records) out))))
+        (.toString out)))))
 
 (declare execute-durable-sql!)
 
