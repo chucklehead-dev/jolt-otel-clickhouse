@@ -27,8 +27,8 @@ rm -f "$raw" "$normalized" "$log"
 set +e
 quint run "$model" \
   --main durableExportAckCorrected \
-  --invariant 'not(durableSuccessReached)' \
-  --max-steps 3 \
+  --invariant 'not(atomicGroupCommittedReached)' \
+  --max-steps 1 \
   --max-samples 10000 \
   --seed 1 \
   --backend typescript \
@@ -41,7 +41,7 @@ set -e
 if [[ $status -eq 0 ]] || ! grep -Eq '^\[violation\] Found an issue' "$log"
 then
   cat "$log" >&2
-  echo "durable success witness was not reached" >&2
+  echo "atomic-group durable success witness was not reached" >&2
   exit 1
 fi
 
@@ -51,7 +51,7 @@ jq -c '{
     "format-description": "https://apalache-mc.org/docs/adr/015adr-trace.html",
     source: "formal/quint/durable-export-ack.md",
     status: "witness",
-    description: "Negated-invariant witness for a durable successful export"
+    description: "Negated-invariant witness for an atomically settled durable export group"
   },
   vars: .vars,
   states: .states

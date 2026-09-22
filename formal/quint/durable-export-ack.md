@@ -6,39 +6,47 @@ files under `target/formal/quint`; generated `.qnt` files are never edited.
 
 ## Scope and assumptions
 
-One logical OTel export is the actor. It coordinates with chDB and Durable
-through shared state, not protocol messages, so plain Quint is clearer than
-Choreo. The model deliberately splits insertion, the Durable barrier, and the
-caller-visible return because failures can occur between those boundaries.
-Serialization, SQL shape, retries, leases, and object-store CAS reconciliation
-remain in the lower-level Durable model.
-`flush-exporter!` is also outside this one-batch model: unlike a non-empty
-export, an explicit force-flush may correctly find no pending WAL and return
-success after an `:empty` Durable result.
+Two concurrent non-empty OTel exports, `A` then `B`, are the actors. They
+coordinate with chDB and Durable through writer-owned shared state, not
+protocol messages, so plain Quint is clearer than Choreo. The model compares
+the unsafe separated `execute!` / `flush!` requests with the proposed
+writer-level atomic `execute-and-flush!` group primitive. It deliberately
+abstracts serialization, SQL shape, retries, leases, and object-store CAS
+reconciliation; those remain in the lower-level Durable model.
+
+The red separated-request mutant makes the bug concrete: `A.execute`,
+`B.execute`, and `A.flush` publish the group `{A, B}`. `B.flush` then sees an
+empty WAL and settles B false even though B is already committed. The corrected
+model admits and settles `{A, B}` as one worker request. This is a writer
+boundary, not an exporter mutex: other connection users cannot interleave
+inside an admitted atomic group.
 
 The modeled state is one cohesive record:
 
-- `phase` records the current export boundary;
-- `wrote` distinguishes an empty successful export from a telemetry batch;
-- `inserted` and `barrierAttempted` expose ordering;
-- `durable` means the barrier committed or reconciled the batch;
-- `returnedSuccess` and `returnedFailure` are caller-visible outcomes.
+- `admitted`, `writtenOrder`, and `retainedWal` expose worker admission and
+  uncommitted FIFO WAL order;
+- `committedGroups` and `committedOrder` record a confirmed/reconciled
+  publication and its replay order;
+- `successes` and `failures` are caller-visible terminal outcomes;
+- close snapshots fence new groups and force-flush calls after shutdown.
 
-The primary invariant is: a non-empty successful return implies the batch is
-durable. Supporting invariants require barriers to follow insertion, prevent an
-empty batch from publishing, and keep success and failure disjoint.
+The primary invariants say that every success belongs to exactly one committed
+group, no caller is settled twice, the fixed A-then-B replay order is retained,
+terminal barrier failure/ambiguity retains its WAL, and shutdown fences both
+admission and force flush. The mutant intentionally violates the separate
+property that a committed caller cannot be settled false.
 
 | Model boundary | Implementation boundary |
 | --- | --- |
-| `insertSuccess` / `insertFailure` | `insert-json-rows!` in `src/otel/exporter/chdb.clj` |
-| `barrierSuccess` / `barrierFailure` | `persistence-barrier!` and Durable `flush!` |
-| `returnSuccess` | the `true` return from each signal exporter |
+| `separateExecute*` / `separateFlush*` | existing separate `execute!` then `flush!` queue requests |
+| `atomicGroup*` | proposed writer-level `execute-and-flush!` admission and terminal settlement |
+| `atomicGroupFailure*` | retained-WAL terminal failure/ambiguity for every admitted group member |
 | event ordering | `durable-barrier-history-property` in `test/otel/exporter/chdb_property_test.clj` |
 
-The corrected module forbids return before `Committed`. The mutant admits a
-return directly from `Inserted`; its deterministic test and bounded Apalache
-check are the red control. Update this model before changing any of the named
-implementation boundaries.
+The corrected module disables separated requests. The mutant enables them; its
+deterministic test and bounded Apalache check produce the required state in
+which B is committed and false. Update this model before changing any named
+implementation boundary.
 
 ## Commands
 
@@ -49,151 +57,254 @@ corrected bounded check, and the required mutant counterexample with:
 scripts/check-durable-export-quint.sh
 ```
 
-The bound is three transitions: insert, barrier, and return. This is exhaustive
-for the one-operation model, not a claim about the lower-level distributed
-Durable protocol.
+The corrected success/failure/ambiguity paths take one atomic group transition;
+the red interleave takes four separated requests. This bounded check is not a
+claim about the lower-level distributed Durable protocol.
 
 ## Executable model
 
 ```quint target/formal/quint/durableExportAck.qnt +=
 module durableExportAck {
-  const ALLOW_PRE_BARRIER_ACK: bool
+  const ALLOW_SEPARATE_REQUESTS: bool
 
-  type Phase = Idle | Inserted | Committed | Succeeded | Failed
+  type Caller = A | B
 
   type ExportState = {
-    phase: Phase,
-    wrote: bool,
-    inserted: bool,
-    barrierAttempted: bool,
-    durable: bool,
-    returnedSuccess: bool,
-    returnedFailure: bool,
+    admitted: Set[Caller],
+    writtenOrder: List[Caller],
+    retainedWal: List[Caller],
+    committedOrder: List[Caller],
+    committedGroups: Set[Set[Caller]],
+    successes: Set[Caller],
+    failures: Set[Caller],
+    barrierFailed: bool,
+    barrierAmbiguous: bool,
+    forceFlushes: int,
+    closed: bool,
+    admittedAtClose: Set[Caller],
+    forceFlushesAtClose: int,
   }
 
   var state: ExportState
 
   pure val initialState: ExportState = {
-    phase: Idle,
-    wrote: false,
-    inserted: false,
-    barrierAttempted: false,
-    durable: false,
-    returnedSuccess: false,
-    returnedFailure: false,
+    admitted: Set(),
+    writtenOrder: List(),
+    retainedWal: List(),
+    committedOrder: List(),
+    committedGroups: Set(),
+    successes: Set(),
+    failures: Set(),
+    barrierFailed: false,
+    barrierAmbiguous: false,
+    forceFlushes: 0,
+    closed: false,
+    admittedAtClose: Set(),
+    forceFlushesAtClose: 0,
   }
 
-  pure def canStart(s: ExportState): bool = s.phase == Idle
+  pure val groupAB: Set[Caller] = Set(A, B)
+  pure val orderAB: List[Caller] = List(A, B)
 
-  pure def applyEmptySuccess(s: ExportState): ExportState =
-    { ...s, phase: Succeeded, returnedSuccess: true }
+  pure def canAdmitAtomic(s: ExportState): bool =
+    not(s.closed) and s.admitted == Set()
 
-  pure def applyInsertSuccess(s: ExportState): ExportState =
-    { ...s, phase: Inserted, wrote: true, inserted: true }
+  pure def applyAtomicSuccess(s: ExportState): ExportState =
+    { ...s,
+      admitted: groupAB,
+      writtenOrder: orderAB,
+      committedOrder: orderAB,
+      committedGroups: Set(groupAB),
+      successes: groupAB }
 
-  pure def applyFailure(s: ExportState): ExportState =
-    { ...s, phase: Failed, returnedFailure: true }
+  pure def applyAtomicFailure(s: ExportState, ambiguous: bool): ExportState =
+    { ...s,
+      admitted: groupAB,
+      writtenOrder: orderAB,
+      retainedWal: orderAB,
+      failures: groupAB,
+      barrierFailed: not(ambiguous),
+      barrierAmbiguous: ambiguous }
 
-  pure def applyInsertFailure(s: ExportState): ExportState =
-    applyFailure({ ...s, wrote: true })
+  pure def canSeparateExecuteA(s: ExportState): bool =
+    ALLOW_SEPARATE_REQUESTS and not(s.closed) and s.admitted == Set()
 
-  pure def canBarrier(s: ExportState): bool = s.phase == Inserted
+  pure def canSeparateExecuteB(s: ExportState): bool =
+    ALLOW_SEPARATE_REQUESTS and not(s.closed) and
+      s.admitted == Set(A) and s.retainedWal == List(A)
 
-  pure def applyBarrierSuccess(s: ExportState): ExportState =
-    { ...s, phase: Committed, barrierAttempted: true, durable: true }
+  pure def applySeparateExecuteA(s: ExportState): ExportState =
+    { ...s,
+      admitted: Set(A),
+      writtenOrder: List(A),
+      retainedWal: List(A) }
 
-  pure def applyBarrierFailure(s: ExportState): ExportState =
-    applyFailure({ ...s, barrierAttempted: true })
+  pure def applySeparateExecuteB(s: ExportState): ExportState =
+    { ...s,
+      admitted: groupAB,
+      writtenOrder: orderAB,
+      retainedWal: orderAB }
 
-  pure def canReturnSuccess(s: ExportState): bool =
-    s.phase == Committed or (ALLOW_PRE_BARRIER_ACK and s.phase == Inserted)
+  pure def canSeparateFlushA(s: ExportState): bool =
+    ALLOW_SEPARATE_REQUESTS and not(s.closed) and s.retainedWal == orderAB
 
-  pure def applyReturnSuccess(s: ExportState): ExportState =
-    { ...s, phase: Succeeded, returnedSuccess: true }
+  pure def applySeparateFlushA(s: ExportState): ExportState =
+    { ...s,
+      retainedWal: List(),
+      committedOrder: orderAB,
+      committedGroups: Set(groupAB),
+      successes: Set(A) }
+
+  pure def canSeparateFlushB(s: ExportState): bool =
+    ALLOW_SEPARATE_REQUESTS and not(s.closed) and
+      s.committedGroups == Set(groupAB) and s.successes == Set(A) and
+      s.retainedWal == List()
+
+  pure def applySeparateFlushB(s: ExportState): ExportState =
+    { ...s, failures: Set(B) }
+
+  pure def canForceFlushEmpty(s: ExportState): bool =
+    not(s.closed) and s.retainedWal == List()
+
+  pure def applyForceFlushEmpty(s: ExportState): ExportState =
+    { ...s, forceFlushes: s.forceFlushes + 1 }
+
+  pure def canShutdown(s: ExportState): bool = not(s.closed)
+
+  pure def applyShutdown(s: ExportState): ExportState =
+    { ...s,
+      closed: true,
+      failures: s.failures.union(s.admitted.exclude(s.successes)),
+      admittedAtClose: s.admitted,
+      forceFlushesAtClose: s.forceFlushes }
 
   action init: bool = state' = initialState
 
-  action emptySuccess: bool = all {
-    canStart(state),
-    state' = applyEmptySuccess(state),
+  action atomicGroupSuccess: bool = all {
+    canAdmitAtomic(state),
+    state' = applyAtomicSuccess(state),
   }
 
-  action insertSuccess: bool = all {
-    canStart(state),
-    state' = applyInsertSuccess(state),
+  action atomicGroupFailure: bool = all {
+    canAdmitAtomic(state),
+    state' = applyAtomicFailure(state, false),
   }
 
-  action insertFailure: bool = all {
-    canStart(state),
-    state' = applyInsertFailure(state),
+  action atomicGroupAmbiguous: bool = all {
+    canAdmitAtomic(state),
+    state' = applyAtomicFailure(state, true),
   }
 
-  action barrierSuccess: bool = all {
-    canBarrier(state),
-    state' = applyBarrierSuccess(state),
+  action separateExecuteA: bool = all {
+    canSeparateExecuteA(state),
+    state' = applySeparateExecuteA(state),
   }
 
-  action barrierFailure: bool = all {
-    canBarrier(state),
-    state' = applyBarrierFailure(state),
+  action separateExecuteB: bool = all {
+    canSeparateExecuteB(state),
+    state' = applySeparateExecuteB(state),
   }
 
-  action returnSuccess: bool = all {
-    canReturnSuccess(state),
-    state' = applyReturnSuccess(state),
+  action separateFlushA: bool = all {
+    canSeparateFlushA(state),
+    state' = applySeparateFlushA(state),
+  }
+
+  action separateFlushB: bool = all {
+    canSeparateFlushB(state),
+    state' = applySeparateFlushB(state),
+  }
+
+  action forceFlushEmpty: bool = all {
+    canForceFlushEmpty(state),
+    state' = applyForceFlushEmpty(state),
+  }
+
+  action shutdown: bool = all {
+    canShutdown(state),
+    state' = applyShutdown(state),
   }
 
   action step: bool = any {
-    emptySuccess,
-    insertSuccess,
-    insertFailure,
-    barrierSuccess,
-    barrierFailure,
-    returnSuccess,
+    atomicGroupSuccess,
+    atomicGroupFailure,
+    atomicGroupAmbiguous,
+    separateExecuteA,
+    separateExecuteB,
+    separateFlushA,
+    separateFlushB,
+    forceFlushEmpty,
+    shutdown,
   }
 
-  val acknowledgementIsDurable: bool =
-    not(state.returnedSuccess and state.wrote) or state.durable
+  pure def committedGroupCount(s: ExportState, caller: Caller): int =
+    s.committedGroups.filter(group => group.contains(caller)).size()
 
-  val barrierFollowsInsert: bool =
-    not(state.barrierAttempted) or state.inserted
+  val successBelongsToExactlyOneCommittedGroup: bool =
+    state.successes.forall(caller => committedGroupCount(state, caller) == 1)
 
-  val emptyBatchSkipsPersistence: bool =
-    state.wrote or and {
-      not(state.inserted),
-      not(state.barrierAttempted),
-      not(state.durable),
+  val noPreCommitSuccess: bool =
+    state.successes == Set() or state.committedOrder == orderAB
+
+  val exactlyOneSettlement: bool = and {
+    state.successes.intersect(state.failures) == Set(),
+    state.admitted == state.successes.union(state.failures),
+  }
+
+  val fifoReplayOrder: bool =
+    state.committedOrder == List() or state.committedOrder == orderAB
+
+  val terminalFailureRetainsWal: bool =
+    not(state.barrierFailed or state.barrierAmbiguous) or and {
+      state.retainedWal == orderAB,
+      state.failures == groupAB,
+      state.committedGroups == Set(),
     }
 
-  val resultIsUnambiguous: bool =
-    not(state.returnedSuccess and state.returnedFailure)
+  val shutdownFencesAdmissionAndForceFlush: bool =
+    not(state.closed) or and {
+      state.admitted == state.admittedAtClose,
+      state.forceFlushes == state.forceFlushesAtClose,
+    }
+
+  val committedCallerNeverFails: bool =
+    state.committedGroups.forall(group =>
+      group.intersect(state.failures) == Set())
 
   val exporterSafety: bool = and {
-    acknowledgementIsDurable,
-    barrierFollowsInsert,
-    emptyBatchSkipsPersistence,
-    resultIsUnambiguous,
+    successBelongsToExactlyOneCommittedGroup,
+    noPreCommitSuccess,
+    exactlyOneSettlement,
+    fifoReplayOrder,
+    terminalFailureRetainsWal,
+    shutdownFencesAdmissionAndForceFlush,
+    committedCallerNeverFails,
   }
 
-  val emptySuccessReached: bool =
-    state.phase == Succeeded and not(state.wrote)
+  val atomicGroupCommittedReached: bool =
+    state.committedGroups == Set(groupAB) and state.successes == groupAB
 
-  val insertFailureReached: bool =
-    state.phase == Failed and state.wrote and not(state.inserted)
+  val atomicGroupFailureRetainedReached: bool =
+    state.barrierFailed and state.retainedWal == orderAB and state.failures == groupAB
 
-  val barrierFailureReached: bool =
-    state.phase == Failed and state.inserted and state.barrierAttempted
+  val atomicGroupAmbiguousRetainedReached: bool =
+    state.barrierAmbiguous and state.retainedWal == orderAB and state.failures == groupAB
 
-  val durableSuccessReached: bool =
-    state.returnedSuccess and state.wrote and state.durable
+  val forceFlushEmptyReached: bool = state.forceFlushes > 0
+
+  val shutdownFencedReached: bool =
+    state.closed and shutdownFencesAdmissionAndForceFlush
+
+  val separatedRequestsCommitBThenFailB: bool =
+    state.committedGroups == Set(groupAB) and state.failures == Set(B)
 }
 
 module durableExportAckCorrected {
-  import durableExportAck(ALLOW_PRE_BARRIER_ACK = false).*
+  import durableExportAck(ALLOW_SEPARATE_REQUESTS = false).*
 }
 
 module durableExportAckMutant {
-  import durableExportAck(ALLOW_PRE_BARRIER_ACK = true).*
+  import durableExportAck(ALLOW_SEPARATE_REQUESTS = true).*
 }
 ```
 
@@ -201,56 +312,61 @@ module durableExportAckMutant {
 
 ```quint target/formal/quint/durableExportAckTest.qnt +=
 module durableExportAckCorrectedTest {
-  import durableExportAck(ALLOW_PRE_BARRIER_ACK = false).* from "./durableExportAck"
+  import durableExportAck(ALLOW_SEPARATE_REQUESTS = false).* from "./durableExportAck"
 
-  run emptySuccessTest =
+  run atomicGroupSuccessTest =
     init
-      .then(emptySuccess)
+      .then(atomicGroupSuccess)
       .expect(and {
-        emptySuccessReached,
-        acknowledgementIsDurable,
-        emptyBatchSkipsPersistence,
+        atomicGroupCommittedReached,
+        exporterSafety,
+        successBelongsToExactlyOneCommittedGroup,
+        exactlyOneSettlement,
       })
 
-  run insertFailureTest =
+  run atomicGroupFailureTest =
     init
-      .then(insertFailure)
+      .then(atomicGroupFailure)
       .expect(and {
-        insertFailureReached,
-        not(state.returnedSuccess),
-        acknowledgementIsDurable,
+        atomicGroupFailureRetainedReached,
+        exporterSafety,
+        terminalFailureRetainsWal,
       })
 
-  run barrierFailureTest =
+  run atomicGroupAmbiguousTest =
     init
-      .then(insertSuccess)
-      .then(barrierFailure)
+      .then(atomicGroupAmbiguous)
       .expect(and {
-        barrierFailureReached,
-        not(state.returnedSuccess),
-        acknowledgementIsDurable,
+        atomicGroupAmbiguousRetainedReached,
+        exporterSafety,
+        terminalFailureRetainsWal,
       })
 
-  run durableSuccessTest =
+  run forceFlushShutdownFenceTest =
     init
-      .then(insertSuccess)
-      .then(barrierSuccess)
-      .then(returnSuccess)
+      .then(forceFlushEmpty)
+      .then(shutdown)
       .expect(and {
-        durableSuccessReached,
-        acknowledgementIsDurable,
-        barrierFollowsInsert,
-        resultIsUnambiguous,
+        forceFlushEmptyReached,
+        shutdownFencedReached,
+        exporterSafety,
       })
 }
 
 module durableExportAckMutantTest {
-  import durableExportAck(ALLOW_PRE_BARRIER_ACK = true).* from "./durableExportAck"
+  import durableExportAck(ALLOW_SEPARATE_REQUESTS = true).* from "./durableExportAck"
 
-  run preBarrierAcknowledgementMutantTest =
+  run separatedRequestsCommitBThenFailBMutantTest =
     init
-      .then(insertSuccess)
-      .then(returnSuccess)
-      .expect(not(acknowledgementIsDurable))
+      .then(separateExecuteA)
+      .then(separateExecuteB)
+      .then(separateFlushA)
+      .then(separateFlushB)
+      .expect(and {
+        separatedRequestsCommitBThenFailB,
+        state.committedOrder == orderAB,
+        state.failures == Set(B),
+        not(committedCallerNeverFails),
+      })
 }
 ```

@@ -58,14 +58,14 @@ quint test "$tests" \
 sample_log="$target/corrected-sampled.log"
 quint run "$model" \
   --main durableExportAckCorrected \
-  --invariants acknowledgementIsDurable barrierFollowsInsert emptyBatchSkipsPersistence resultIsUnambiguous \
-  --witnesses emptySuccessReached insertFailureReached barrierFailureReached durableSuccessReached \
-  --max-steps 3 \
+  --invariants successBelongsToExactlyOneCommittedGroup noPreCommitSuccess exactlyOneSettlement fifoReplayOrder terminalFailureRetainsWal shutdownFencesAdmissionAndForceFlush committedCallerNeverFails \
+  --witnesses atomicGroupCommittedReached atomicGroupFailureRetainedReached atomicGroupAmbiguousRetainedReached forceFlushEmptyReached shutdownFencedReached \
+  --max-steps 2 \
   --max-samples 10000 \
   --backend typescript \
   --verbosity 1 | tee "$sample_log"
 
-for witness in emptySuccessReached insertFailureReached barrierFailureReached durableSuccessReached
+for witness in atomicGroupCommittedReached atomicGroupFailureRetainedReached atomicGroupAmbiguousRetainedReached forceFlushEmptyReached shutdownFencedReached
 do
   if ! grep -Eq "^${witness} was witnessed in [1-9][0-9]* trace" "$sample_log"
   then
@@ -77,20 +77,20 @@ done
 quint verify "$model" \
   --main durableExportAckCorrected \
   --invariant exporterSafety \
-  --max-steps 3 \
+  --max-steps 2 \
   --backend apalache \
   --apalache-version 0.56.1 \
   --verbosity 1
 
-mutant_log="$target/pre-barrier-ack-mutant.log"
+mutant_log="$target/separated-requests-ack-mutant.log"
 set +e
 quint verify "$model" \
   --main durableExportAckMutant \
-  --invariant acknowledgementIsDurable \
-  --max-steps 2 \
+  --invariant committedCallerNeverFails \
+  --max-steps 4 \
   --backend apalache \
   --apalache-version 0.56.1 \
-  --out-itf "$target/pre-barrier-ack-mutant.itf.json" \
+  --out-itf "$target/separated-requests-ack-mutant.itf.json" \
   --verbosity 1 >"$mutant_log" 2>&1
 mutant_status=$?
 set -e
@@ -98,9 +98,9 @@ set -e
 if [[ $mutant_status -eq 0 ]] || ! grep -Eq '^\[violation\] Found an issue' "$mutant_log"
 then
   cat "$mutant_log" >&2
-  echo "pre-barrier acknowledgement mutant did not produce a counterexample" >&2
+  echo "separated-request acknowledgement mutant did not produce a counterexample" >&2
   exit 1
 fi
 
-echo "[expected counterexample] pre-barrier acknowledgement mutant"
+echo "[expected counterexample] separated requests commit B then settle B false"
 cat "$mutant_log"
