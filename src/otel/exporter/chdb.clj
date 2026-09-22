@@ -214,6 +214,47 @@
    "Links.TraceState" #(mapv (fn [e] (trace-state-string (get-in e [:span-context :trace-state]))) (or (:links %) []))
    "Links.Attributes" #(mapv (fn [e] (attrs (:attributes e))) (or (:links %) []))})
 
+;; These columns are common enough in trace batches that retaining their
+;; already-produced `data.json` bytes within one payload avoids repeatedly
+;; rebuilding the same scalar attribute maps.  The cache is deliberately
+;; batch-local: it neither retains telemetry after an acknowledged call nor
+;; crosses exporter threads.
+(def ^:private untyped-span-attribute-accessors
+  {"ResourceAttributes" #(get-in % [:resource :attributes])
+   "SpanAttributes" :attributes})
+
+(def ^:private untyped-attribute-cache-max-entries 64)
+(def ^:private untyped-attribute-cache-max-chars (* 1024 1024))
+
+(def ^:dynamic ^:private *untyped-attribute-wire-cache* nil)
+
+(defn- untyped-attribute-cache []
+  {:entries (java.util.HashMap.)
+   :chars (java.util.concurrent.atomic.AtomicLong. 0)})
+
+(defn- cached-untyped-attrs-wire [source]
+  ;; `data.json` emits map entries in the received map's iteration order.
+  ;; Keep that ordered source sequence in the key rather than treating maps
+  ;; with equal contents as wire-equivalent.  Cached values are exact output
+  ;; from the maintained writer, never a second JSON implementation.
+  (let [source (or source {})
+        cache *untyped-attribute-wire-cache*]
+    (if-not cache
+      (json/write-str (attrs source))
+      (let [entries (:entries cache)
+            key (vec source)
+            cached (.get entries key)]
+        (if cached
+          cached
+          (let [encoded (json/write-str (attrs source))
+                size (count encoded)
+                chars (:chars cache)]
+            (when (and (< (.size entries) untyped-attribute-cache-max-entries)
+                       (<= (+ (.get chars) size) untyped-attribute-cache-max-chars))
+              (.put entries key encoded)
+              (.addAndGet chars size))
+            encoded))))))
+
 (defn- untyped-scalar? [x] (or (nil? x) (string? x) (boolean? x)
                          (and (integer? x) (<= -9223372036854775808 x 9223372036854775807))))
 (defn- untyped-attributes? [x]
@@ -243,13 +284,34 @@
 (defn- compile-untyped-span-encoder []
   (let [order (vec (keys (span-row untyped-span-shape nil)))]
     (when (= (set order) (set (keys untyped-span-accessors)))
-      (let [slots (mapv (fn [index column]
-                          [(str (if (zero? index) "{" ",") (json/write-str column) ":")
-                           (get untyped-span-accessors column)]) (range) order)
-            emit (reduce (fn [next [fragment value-at]]
+      (let [empty-links-wire
+            {"LinksJSON" (json/write-str (json/write-str []))
+             "Links.TraceId" (json/write-str [])
+             "Links.SpanId" (json/write-str [])
+             "Links.TraceState" (json/write-str [])
+             "Links.Attributes" (json/write-str [])}
+            slots (mapv (fn [index column]
+                          (let [value-at (get untyped-span-accessors column)
+                                attribute-at (get untyped-span-attribute-accessors column)
+                                write-value
+                                (cond
+                                  (contains? empty-links-wire column)
+                                  (let [wire (get empty-links-wire column)]
+                                    (fn [out _] (.write out wire)))
+
+                                  attribute-at
+                                  (fn [out span]
+                                    (.write out (cached-untyped-attrs-wire (attribute-at span))))
+
+                                  :else
+                                  (fn [out span]
+                                    (json/write (value-at span) out)))]
+                            [(str (if (zero? index) "{" ",") (json/write-str column) ":")
+                             write-value])) (range) order)
+            emit (reduce (fn [next [fragment write-value]]
                            (fn [out span]
                              (.append out fragment)
-                             (json/write (value-at span) out)
+                             (write-value out span)
                              (next out span)))
                          (fn [out _] (.append out "}")) (reverse slots))]
         (fn [span]
@@ -262,15 +324,16 @@
   ([encoder spans limit]
    ;; Do not use mapv/map here: even chunked map can evaluate later rows before
    ;; the current row's limit check. Only request next after acceptance.
-   (loop [remaining limit rows (seq spans) out (StringBuilder.)]
-     (if rows
-       (let [encoded (encoder (first rows))
-             size (inc (alength (.getBytes encoded "UTF-8")))]
-         (when (> size remaining)
-           (throw (ex-info "chDB telemetry export batch exceeds 8 MiB" {:limit limit})))
-         (.append out encoded) (.append out "\n")
-         (recur (- remaining size) (next rows) out))
-       (.toString out)))))
+   (binding [*untyped-attribute-wire-cache* (untyped-attribute-cache)]
+     (loop [remaining limit rows (seq spans) out (StringBuilder.)]
+       (if rows
+         (let [encoded (encoder (first rows))
+               size (inc (alength (.getBytes encoded "UTF-8")))]
+           (when (> size remaining)
+             (throw (ex-info "chDB telemetry export batch exceeds 8 MiB" {:limit limit})))
+           (.append out encoded) (.append out "\n")
+           (recur (- remaining size) (next rows) out))
+         (.toString out))))))
 
 
 (def ^:private untyped-span-encoder (delay (compile-untyped-span-encoder)))

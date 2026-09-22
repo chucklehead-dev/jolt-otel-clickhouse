@@ -58,6 +58,31 @@
     (is (failed? #(#'exporter/untyped-span-payload encoder [:first :invalid :later])))
     (is (= [:first :invalid] @seen))))
 
+(deftest untyped-attribute-wire-cache-is-batch-local-and-order-safe
+  (let [encoder (#'exporter/compile-untyped-span-encoder)
+        same {"stable" "λ"}
+        ordered-a (array-map "first" "a" "second" "b")
+        ordered-b (array-map "second" "b" "first" "a")
+        encode #(#'exporter/untyped-span-payload encoder %)
+        baseline-payload #(apply str (map (fn [span] (str (baseline span) "\n")) %))]
+    ;; One resource map and one span map are serialized exactly once per
+    ;; payload despite appearing in two rows.  The writer sees only data.json
+    ;; output; no custom JSON escaping is introduced by this cache.
+    (let [calls (atom 0) original @#'exporter/attrs
+          spans [(assoc shape :attributes same) (assoc shape :attributes same)]
+          expected (baseline-payload spans)]
+      (with-redefs [exporter/attrs (fn [m] (swap! calls inc) (original m))]
+        (is (= expected (encode spans)))
+        (is (= 2 @calls))))
+    ;; Equal logical maps with a distinct ordered entry sequence must not share
+    ;; a wire cache entry.  data.json follows received iteration order.
+    (let [calls (atom 0) original @#'exporter/attrs
+          spans [(assoc shape :attributes ordered-a) (assoc shape :attributes ordered-b)]
+          expected (baseline-payload spans)]
+      (with-redefs [exporter/attrs (fn [m] (swap! calls inc) (original m))]
+        (is (= expected (encode spans)))
+        (is (= 3 @calls))))))
+
 (defn target [extra]
   (exporter/->ChdbExporter {} false #{:spans}
     (atom (support/exporter-state (merge {:closed-signals #{} :durable? true

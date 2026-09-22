@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reuse bounded, batch-local `data.json` wire strings for repeated untyped
+  Durable span/resource attribute maps and known-empty link fields.  The
+  optimized path retains exact JSONEachRow bytes, the 8 MiB per-batch bound,
+  and the ordinary fallback for unsupported span shapes.
+
 - Specialize the default `data.json` writer call path used by untyped Durable
   span encoding, and add an opt-in, provenance-bound phase-profile launcher.
   The launcher records aggregate payload, native execution, and confirmation
