@@ -424,21 +424,160 @@
     "BucketCounts" (and (sequential? value) (every? uint64? value))
     (valid-json-value? value)))
 
+(declare validate-ordinary-row!)
+
 (defn- ordinary-payload [columns rows]
   ;; Check every row before encoding or entering the driver. Error data never
   ;; retains row values, attribute names, or the encoded telemetry payload.
-  (let [rows (vec rows)
-        expected (set columns)]
+  (let [rows (vec rows)]
     (doseq [row rows]
-      (when-not (and (map? row) (= expected (set (keys row)))
-                     (every? string? (keys row))
-                     (every? (fn [[column value]] (valid-row-value? column value)) row))
-        (throw (ex-info "Invalid chDB telemetry row"
-                        {:type ::invalid-ordinary-row}))))
+      (validate-ordinary-row! columns row))
     ;; The batch-local StringBuilder checks each complete maintained data.json
     ;; row plus LF in UTF-8 before appending, preserving the pre-overflow
     ;; rejection boundary while avoiding chunk sequencing/final concatenation.
     (json-each-row-payload rows)))
+
+(defn- jolt-runtime?
+  "The direct log writer is a Jolt-only implementation detail.
+
+  JVM Clojure and Babashka keep the maintained map/data.json path even though
+  both happen to provide StringBuilder.  The property is set by Jolt itself;
+  checking it before forcing the delayed encoder keeps this a capability gate,
+  not a host-specific change in JSON behavior."
+  []
+  (string? (System/getProperty "jolt.version")))
+
+(def ^:private untyped-log-shape
+  {:timestamp-unix-nano 0 :observed-time-unix-nano 0
+   :attributes {} :resource {:attributes {}} :scope {:attributes {}}})
+
+;; Accessors are selected once when the closed ClickStack log schema is
+;; confirmed below.  The accepted path does not construct an intermediate
+;; physical row map; unknown SDK shapes retain `log-row` and data.json.
+(def ^:private untyped-log-accessors
+  {"Timestamp" #(timestamp (log-timestamp-nanos %))
+   "TraceId" #(or (:trace-id %) "")
+   "SpanId" #(or (:span-id %) "")
+   "TraceFlags" #(uint8 (:trace-flags %))
+   "SeverityText" #(or (:severity-text %) "")
+   "SeverityNumber" #(uint8 (:severity-number %))
+   "ServiceName" #(service-name (:resource %) "")
+   "Body" #(value-string (:body %))
+   "ResourceSchemaUrl" #(or (get-in % [:resource :schema-url]) "")
+   "ResourceAttributes" #(attrs (get-in % [:resource :attributes]))
+   "ScopeSchemaUrl" #(or (get-in % [:scope :schema-url]) "")
+   "ScopeName" #(or (get-in % [:scope :name]) "")
+   "ScopeVersion" #(or (get-in % [:scope :version]) "")
+   "ScopeAttributes" #(attrs (get-in % [:scope :attributes]))
+   "LogAttributes" #(attrs (:attributes %))
+   "EventName" #(or (:event-name %) "")})
+
+(defn- plain-json-string? [value]
+  ;; data.json's default writer has the exact escaping authority.  This tiny
+  ;; direct subset deliberately excludes every escaping/Unicode boundary,
+  ;; including slash, so all such values continue through data.json.
+  (and (string? value)
+       (loop [index 0]
+         (if (= index (.length value))
+           true
+           (let [code (int (.charAt value index))]
+             (if (and (<= 32 code 126)
+                      (not= code 34) (not= code 47) (not= code 92))
+               (recur (inc index))
+               false))))))
+
+(defn- append-direct-log-scalar! [^StringBuilder out value]
+  ;; Do not create a second general JSON encoder.  Dynamic attributes and any
+  ;; string that needs escaping stay on the maintained public writer.
+  (cond
+    (nil? value) (.append out "null")
+    (true? value) (.append out "true")
+    (false? value) (.append out "false")
+    (integer? value) (.append out (str value))
+    (plain-json-string? value) (do (.append out (char 34))
+                                  (.append out value)
+                                  (.append out (char 34)))
+    :else (json/write value out)))
+
+(defn- untyped-log-eligible? [record]
+  ;; Pure, conservative shape admission.  In particular, maps are accepted
+  ;; only where `attrs` has its normal input; unusual application values take
+  ;; the old row-construction route and therefore preserve its error/order.
+  (and (map? record)
+       (every? #(or (nil? %) (map? %)) [(:resource record) (:scope record)])
+       (every? #(or (nil? %) (map? %))
+               [(:attributes record)
+                (get-in record [:resource :attributes])
+                (get-in record [:scope :attributes])])
+       (every? #(or (nil? %) (and (integer? %) (<= 0 % 9223372036854775807)))
+               [(:timestamp-unix-nano record) (:observed-time-unix-nano record)])
+       (every? #(or (nil? %) (string? %))
+               [(:trace-id record) (:span-id record) (:severity-text record)
+                (:event-name record) (get-in record [:resource :schema-url])
+                (get-in record [:scope :schema-url]) (get-in record [:scope :name])
+                (get-in record [:scope :version])])
+       (every? #(or (nil? %) (integer? %))
+               [(:trace-flags record) (:severity-number record)])))
+
+(defn- log-key-fragments [order]
+  (mapv (fn [index column]
+          (str (if (zero? index) "{" ",") (json/write-str column) ":"))
+        (range) order))
+
+(defn- validate-ordinary-row! [columns row]
+  (let [expected (set columns)]
+    (when-not (and (map? row) (= expected (set (keys row)))
+                   (every? string? (keys row))
+                   (every? (fn [[column value]] (valid-row-value? column value)) row))
+      (throw (ex-info "Invalid chDB telemetry row"
+                      {:type ::invalid-ordinary-row}))))
+  row)
+
+(defn- compile-untyped-log-encoder []
+  ;; Set equality is the schema fence; the legacy map construction order is the
+  ;; byte-parity oracle. JSONEachRow is name-addressed, so insert-column order
+  ;; need not equal data.json's map iteration order. A field addition/removal
+  ;; returns nil and selects the generic path until consciously updated.
+  (when (jolt-runtime?)
+    (let [order (vec (keys (log-row untyped-log-shape nil)))]
+      (when (= (set order) (set schema/clickstack-log-insert-columns))
+        (when (= (set order) (set (keys untyped-log-accessors)))
+          (let [fragments (log-key-fragments order)]
+            (fn [record]
+              (if-not (untyped-log-eligible? record)
+                (let [row (log-row record nil)]
+                  (validate-ordinary-row! order row)
+                  (json/write-str row))
+                (let [out (StringBuilder.)]
+                  (loop [columns order fragments fragments]
+                    (when-let [column (first columns)]
+                      (let [value ((get untyped-log-accessors column) record)]
+                        (when-not (valid-row-value? column value)
+                          (throw (ex-info "Invalid chDB telemetry row"
+                                          {:type ::invalid-ordinary-row})))
+                        (.append out (first fragments))
+                        (append-direct-log-scalar! out value)
+                        (recur (next columns) (next fragments)))))
+                  (.append out \})
+                  (.toString out))))))))))
+
+(def ^:private untyped-log-encoder (delay (compile-untyped-log-encoder)))
+
+(defn- untyped-log-payload
+  "Encode records incrementally, preserving the no-later-record-after-overflow
+  rule.  Every admitted record has already passed physical validation; fallback
+  records validate through the ordinary maintained row path."
+  [encoder records]
+  (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
+    (if-let [record (first records)]
+      (let [encoded (encoder record)
+            bytes (inc (alength (.getBytes encoded "UTF-8")))]
+        (when (> bytes remaining)
+          (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                          {:limit max-insert-bytes})))
+        (.append out encoded) (.append out "\n")
+        (recur (- remaining bytes) (next records) out))
+      (.toString out))))
 
 (declare execute-durable-sql!)
 
@@ -453,6 +592,31 @@
     (let [payload (ordinary-payload columns rows)]
       (context/with-instrumentation-suppressed
         (chdb/insert-json-rows! connection table columns payload)))))
+
+(defn- insert-untyped-log-records!
+  "Jolt's closed untyped-log encoder is selected only after its schema fence.
+
+  The generic `insert-batch!` remains the sole path for typed logs and for
+  JVM/BB.  The selected Jolt path feeds the same exact JSONEachRow bytes into
+  the same ordinary/Durable ownership boundaries; it only avoids physical row
+  map construction for conservatively admitted SDK records."
+  [connection state records]
+  (let [snapshot @state
+        typed-projector (:typed-log-projector snapshot)
+        encoder (when-not typed-projector @untyped-log-encoder)]
+    (if-not encoder
+      (insert-batch! connection state "otel_logs"
+                     (:log-insert-columns snapshot)
+                     (selected-log-insert-query typed-projector)
+                     (map #(log-row % typed-projector) records))
+      (let [payload (untyped-log-payload encoder records)
+            query (selected-log-insert-query nil)]
+        (if (:durable? snapshot)
+          (execute-durable-sql!
+           connection (str query " FORMAT JSONEachRow\n" payload))
+          (context/with-instrumentation-suppressed
+            (chdb/insert-json-rows! connection "otel_logs"
+                                    (:log-insert-columns snapshot) payload)))))))
 
 (defn- typed-columns [fields]
   (vec (mapcat (fn [field]
@@ -764,11 +928,7 @@
       false
       (try
         (when (seq records)
-          (let [typed-projector (:typed-log-projector @state)]
-            (insert-batch! connection state "otel_logs"
-                               (:log-insert-columns @state)
-                               (selected-log-insert-query typed-projector)
-                               (map #(log-row % typed-projector) records))))
+          (insert-untyped-log-records! connection state records))
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
