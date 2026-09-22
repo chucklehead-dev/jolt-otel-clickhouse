@@ -54,7 +54,7 @@
 
 (defn- child-test-executable
   ([] (child-test-executable (System/getenv "JOLT_TEST_CHILD_EXECUTABLE")))
-  ([selected]
+  ([selected
   ;; Local qualification supplies an absolute, checksum-guarded command:
   ;; the mandatory Chez wrapper prepends ~/.local/bin to PATH.
     (if (nil? selected)
@@ -64,7 +64,7 @@
                        (.isAbsolute (java.io.File. selected)))
           (throw (ex-info "Invalid child test executable"
                           {:type ::invalid-child-test-executable})))
-        selected))))
+        selected))]))
 
 (defn- finish-checks! []
   (if (zero? @failures)
@@ -326,11 +326,11 @@
         original-check check]
    (with-redefs [check (fn [& arguments]
                         (swap! observed inc)
-                        (apply original-check arguments))]
+                        (apply original-check arguments))]))
   (let [path (System/getenv "JOLT_PERSISTENT_MIGRATION_PATH")
         db-spec (str "chdb:" path)]
     (when-not (and (string? path) (not (str/blank? path)))
-      (throw (ex-info "Persistent migration child path missing" {})))
+      (throw (ex-info "Persistent migration child path missing" {}))
       (with-open [conn (jdbc/connection db-spec)]
         (schema/migrate! conn))
       (with-open [conn (jdbc/connection db-spec)]
@@ -344,7 +344,7 @@
              :assertions @observed :failures failure-count)
     (when qualified?
       (println :persistent-migration-child-confirmed))
-    (System/exit (if qualified? 0 1)))))
+    (System/exit (if qualified? 0 1))))
 
 (defn- run-persistent-migration-process-check []
   ;; Use the same explicit child executable contract as clean-source checks.
@@ -363,7 +363,7 @@
        ;; Publish ownership before any potentially throwing wait/output read.
        (reset! owned-child child)
       (let [result (deref child 120000 ::timeout)]
-       (reset! terminal? (and (map? result) (integer? (:exit result))))
+       (reset! terminal? (and (map? result) (integer? (:exit result)))))))
     ;; Validate a completed child and its unique assertion/summary witnesses.
     ;; A failed/timeout child increments the parent's existing failure counter.
     (check "persistent migrations qualify in a separate native process"
@@ -374,7 +374,7 @@
                 (= 1 (count (re-seq #"(?m)^:persistent-migration-child-confirmed$"
                                    (str (:out result)))))
                 (str/includes? (str (:out result))
-                               ":persistent-migration-child-result :assertions 1 :failures 0")))))
+                               ":persistent-migration-child-result :assertions 1 :failures 0"))
      (catch Throwable _
        (check "persistent migration child setup remains an accounted failure" true false))
      (finally
@@ -647,9 +647,9 @@
 (defn- run-instrumentation-suppression-checks []
   (println "telemetry database self-observation suppression")
   (with-open [connection (test-support/connection)]
-   (let [seen (atom [])
-        exporter (test-support/call-with-qualified-native #(chdb-export/exporter
-                  {:connection connection :create-schema? false :signals #{:spans}}))
+   (let [seen (atom [])]
+        exporter (test-support/call-with-qualified-native #(chdb-export/exporter)
+                  {:connection connection :create-schema? false :signals #{:spans}})
         span {:name "test"
               :kind :internal
               :start-time-unix-nano 1
@@ -661,7 +661,7 @@
               :attributes {}
               :events []
               :links []
-              :status {:code :unset}}]
+              :status {:code :unset}}
     (with-redefs [jdbc.chdb/insert-json-rows!
                   (fn [actual-connection _ _ _]
                     (check "suppression probe reaches the actual ordinary connection"
@@ -728,20 +728,38 @@
                   (fn [_] (swap! calls conj :checkpoint) {:status :committed})
                   durable/flush!
                   (fn [_] (swap! calls conj :barrier) {:status :committed})
-                  jdbc/execute!
-                  (fn [& _] (swap! calls conj :insert) {:count 1})]
-      (let [exporter (test-support/call-with-qualified-native #(chdb-export/exporter
-                      {:connection :fake :durable? true :signals #{:spans}}))]
+                  durable/execute-and-flush!
+                  (fn [_ _] (swap! calls conj :atomic) {:status :committed})]
+      (let [exporter (test-support/call-with-qualified-native #(chdb-export/exporter)
+                      {:connection :fake :durable? true :signals #{:spans}})]
         (check "Durable startup preflights before schema checkpoint"
                [:role :schema :checkpoint] @calls)
         (check "non-empty Durable span batch succeeds" true
                (export/export-spans! exporter [span]))
-        (check "batch success follows its persistence barrier"
-               [:role :schema :checkpoint :insert :barrier] @calls)
+        (check "batch success is one atomic Durable writer request"
+               [:role :schema :checkpoint :atomic] @calls)
         (check "force flush reaches the same persistence barrier" true
                (export/flush-exporter! exporter))
         (check "force flush completes after the barrier"
-               [:role :schema :checkpoint :insert :barrier :barrier] @calls))))
+               [:role :schema :checkpoint :atomic :barrier] @calls)))
+    (let [calls (atom [])
+          exporter
+          (chdb-export/->ChdbExporter
+           :generic false #{:spans}
+           (atom {:closed-signals #{}
+                  :connection-close-claimed? false
+                  :connection-close-status :open
+                  :connection-closed? false
+                  :durable? false
+                  :persistence-barrier
+                  (fn [_] (swap! calls conj :generic-barrier) true)
+                  :last-error nil}))]
+      (with-redefs [chdb/insert-json-rows!
+                    (fn [& _] (swap! calls conj :ordinary-insert))]
+        (check "custom generic barrier remains post-batch" true
+               (export/export-spans! exporter [span])))
+      (check "custom generic barrier preserves insert then barrier order"
+             [:ordinary-insert :generic-barrier] @calls)))
   (let [span {:name "unconfirmed-span" :kind :internal
               :start-time-unix-nano 1 :end-time-unix-nano 2
               :span-context {:trace-id "" :span-id ""}
@@ -754,13 +772,12 @@
                 :connection-close-claimed? false
                 :connection-close-status :open
                 :connection-closed? false
-                :persistence-barrier (fn [_] {:status :empty})
                 :durable? true :last-error nil}))]
-    (with-redefs [jdbc/execute! (fn [& _] {:count 1})]
-      (check "non-empty batch rejects an empty Durable flush" false
+    (with-redefs [durable/execute-and-flush! (fn [& _] {:status :empty})]
+      (check "non-empty batch rejects an unconfirmed atomic Durable result" false
              (export/export-spans! exporter [span])))
     (check "unconfirmed Durable publication is diagnosable"
-           :otel.exporter.chdb/durable-barrier-unconfirmed
+           :otel.exporter.chdb/durable-atomic-execution-unconfirmed
            (:type (ex-data (chdb-export/last-error exporter)))))
   (let [calls (atom [])]
     (with-redefs [durable/connection-role

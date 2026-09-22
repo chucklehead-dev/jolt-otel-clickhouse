@@ -412,11 +412,16 @@
     ;; rejection boundary while avoiding chunk sequencing/final concatenation.
     (json-each-row-payload rows)))
 
+(declare execute-durable-sql!)
+
 (defn- insert-batch! [connection state table columns query rows]
   (if (:durable? @state)
-    ;; Durable V1 records exact materialized SQL; its preparation, WAL and
-    ;; acknowledgement protocol must not enter the ordinary transport.
-    (insert-json-rows! connection query rows)
+    ;; Durable V1 records the exact materialized SQL.  Its execute and
+    ;; publication acknowledgement are one writer request: splitting this
+    ;; into JDBC execute! plus flush! would let another caller intervene.
+    (execute-durable-sql!
+     connection
+     (str query " FORMAT JSONEachRow\n" (json-each-row-payload rows)))
     (let [payload (ordinary-payload columns rows)]
       (context/with-instrumentation-suppressed
         (chdb/insert-json-rows! connection table columns payload)))))
@@ -526,14 +531,16 @@
 (def ^:private confirmed-durable-statuses #{:committed :reconciled})
 
 (def ^:private durable-phase-names
-  [:payload-built :native-execute-returned :persistence-barrier-returned])
+  [:payload-built :atomic-execute-and-flush-returned])
 
 (defn durable-phase-receipts
   "Create an opt-in, caller-owned aggregate sink for the acknowledged untyped
   Durable span path. Supply the returned atom as :durable-phase-receipts to
-  `exporter`. Each phase contains only a completed count, total elapsed
-  nanoseconds, and span count; payloads, rows, and attribute values are never
-  retained. Omit the option (the default) to avoid timing and aggregation."
+  `exporter`. `:atomic-execute-and-flush-returned` is one combined chDB writer
+  boundary, not invented per-native-execute and per-publication timings. Each
+  phase contains only a completed count, total elapsed nanoseconds, and span
+  count; payloads, rows, and attribute values are never retained. Omit the
+  option (the default) to avoid timing and aggregation."
   []
   (atom (zipmap durable-phase-names
                 (repeat {:count 0 :nanos 0 :spans 0}))))
@@ -554,6 +561,16 @@
                             :spans (+ (:spans current) span-count)})))))
       (catch Throwable _ nil))))
 
+(defn- execute-durable-sql! [connection sql]
+  (let [result
+        (context/with-instrumentation-suppressed
+          (durable/execute-and-flush! connection sql))]
+    (when-not (contains? confirmed-durable-statuses (:status result))
+      (throw (ex-info "Durable atomic execution did not confirm publication"
+                      {:type ::durable-atomic-execution-unconfirmed
+                       :status (:status result)})))
+    result))
+
 (defn- persistence-barrier! [connection state publication-required?]
   (when-let [barrier (:persistence-barrier @state)]
     (let [result
@@ -572,14 +589,14 @@
 
 (defn- complete-batch!
   ([connection state wrote?]
-   (when wrote?
+   (when (and wrote? (not (:durable? @state)))
      (persistence-barrier! connection state true))
    true)
   ([connection state wrote? receipts span-count]
-   (when wrote?
+   (when (and wrote? (not (:durable? @state)))
      (let [started (System/nanoTime)]
        (persistence-barrier! connection state true)
-       (record-durable-phase! receipts :persistence-barrier-returned
+       (record-durable-phase! receipts :atomic-execute-and-flush-returned
                               (- (System/nanoTime) started) span-count)))
    true))
 
@@ -647,16 +664,22 @@
                         (record-durable-phase! receipts :payload-built
                                                (- (System/nanoTime) payload-start) span-count)
                         (let [execute-start (System/nanoTime)]
-                          (context/with-instrumentation-suppressed
-                            (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload)))
-                          (record-durable-phase! receipts :native-execute-returned
-                                                 (- (System/nanoTime) execute-start) span-count))
+                          (execute-durable-sql!
+                           connection
+                           (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
+                          ;; chDB performs native execution and persistence
+                          ;; inside one writer request.  Report that combined
+                          ;; boundary; separate timings would be invented.
+                          (record-durable-phase!
+                           receipts :atomic-execute-and-flush-returned
+                           (- (System/nanoTime) execute-start) span-count))
                         receipts)
                       ;; Keep the disabled default path free of clocks,
                       ;; aggregation, or diagnostic callbacks.
                       (let [payload (untyped-span-payload encoder spans)]
-                        (context/with-instrumentation-suppressed
-                          (jdbc/execute! connection (str "insert into otel_traces FORMAT JSONEachRow\n" payload)))
+                        (execute-durable-sql!
+                         connection
+                         (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
                         nil))
                     (do
                       (insert-batch! connection state "otel_traces"
@@ -734,8 +757,9 @@
   through a false result and last-error. Unless :create-schema? is false,
   startup applies and validates the ordered schema migration registry in that
   selected database. With :durable? true, startup requires a Durable writer and,
-  when this exporter creates the schema, checkpoints it; every non-empty logical
-  signal batch returns true only after its WAL flush commits or reconciles.
+  when this exporter creates the schema, checkpoints it; every non-empty
+  physical signal insert uses one `execute-and-flush!` writer request and
+  returns true only after its WAL publication commits or reconciles.
   :persistence-barrier supplies the same post-batch contract for another
   persistence implementation and is mutually exclusive with :durable?.
   Ordinary connections must expose the chDB driver context; startup rejects

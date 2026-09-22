@@ -4,6 +4,7 @@
             [clojure.data.json :as json]
             [jdbc.core :as jdbc]
             [jdbc.chdb :as chdb]
+            [jdbc.chdb.durable :as durable]
             [otel.sdk.export :as export]
             [otel.exporter.chdb :as exporter]
             [otel.exporter.chdb-untyped-encoder-native-test :as native-gate]
@@ -92,7 +93,8 @@
   (let [encoder (#'exporter/compile-untyped-span-encoder)]
     (doseq [projector [nil (fn [_] {"Extra" 7})]]
       (let [calls (atom []) t (target {:typed-span-projector projector})]
-        (with-redefs [jdbc/execute! (fn [_ sql] (swap! calls conj sql))]
+        (with-redefs [durable/execute-and-flush!
+                      (fn [_ sql] (swap! calls conj sql) {:status :committed})]
           (export/export-spans! t [shape])
           (with-encoder t [shape]
             (if projector (fn [_] (throw (ex-info "typed must bypass" {}))) encoder)))
@@ -106,13 +108,13 @@
   (let [receipts (exporter/durable-phase-receipts)
         calls (atom [])
         t (target {:durable-phase-receipts receipts})]
-    (with-redefs [jdbc/execute! (fn [_ sql] (swap! calls conj sql))]
+    (with-redefs [durable/execute-and-flush!
+                  (fn [_ sql] (swap! calls conj sql) {:status :committed})]
       (is (true? (export/export-spans! t [shape shape]))))
     ;; Receipt data proves each acknowledged boundary completed, but retains no
     ;; query/payload/row/attribute material from the spans.
     (is (= {:payload-built {:count 1 :spans 2}
-            :native-execute-returned {:count 1 :spans 2}
-            :persistence-barrier-returned {:count 1 :spans 2}}
+            :atomic-execute-and-flush-returned {:count 1 :spans 2}}
            (into {} (map (fn [[phase values]]
                            [phase (select-keys values [:count :spans])]) @receipts))))
     (is (every? #(and (integer? (:nanos %)) (not (neg? (:nanos %))))
@@ -122,11 +124,10 @@
   (let [receipts (exporter/durable-phase-receipts)
         t (target {:typed-span-projector (fn [_] {"Extra" 7})
                    :durable-phase-receipts receipts})]
-    (with-redefs [jdbc/execute! (fn [& _] nil)]
+    (with-redefs [durable/execute-and-flush! (fn [& _] {:status :committed})]
       (is (true? (export/export-spans! t [shape]))))
     (is (= {:payload-built {:count 0 :nanos 0 :spans 0}
-            :native-execute-returned {:count 0 :nanos 0 :spans 0}
-            :persistence-barrier-returned {:count 0 :nanos 0 :spans 0}}
+            :atomic-execute-and-flush-returned {:count 0 :nanos 0 :spans 0}}
            @receipts))))
 
 (deftest phase-receipts-cannot-change-durable-acknowledgement
@@ -134,19 +135,19 @@
         t (target {:durable-phase-receipts receipts})]
     (add-watch receipts ::throwing-watch (fn [& _] (throw (ex-info "diagnostic failure" {}))))
     (try
-      (with-redefs [jdbc/execute! (fn [& _] nil)]
+      (with-redefs [durable/execute-and-flush! (fn [& _] {:status :committed})]
         (is (true? (export/export-spans! t [shape]))))
       (finally
         (remove-watch receipts ::throwing-watch)))))
 
-(deftest failed-durable-barrier-has-no-completed-barrier-receipt
+(deftest failed-durable-atomic-execution-has-no-completed-receipt
   (let [receipts (exporter/durable-phase-receipts)
-        t (target {:durable-phase-receipts receipts
-                   :persistence-barrier (fn [_] (throw (ex-info "barrier failed" {})))})]
-    (with-redefs [jdbc/execute! (fn [& _] nil)]
+        t (target {:durable-phase-receipts receipts})]
+    (with-redefs [durable/execute-and-flush!
+                  (fn [& _] (throw (ex-info "atomic execution failed" {})))]
       (is (false? (export/export-spans! t [shape]))))
     (is (= {:count 0 :nanos 0 :spans 0}
-           (:persistence-barrier-returned @receipts)))))
+           (:atomic-execute-and-flush-returned @receipts)))))
 
 (deftest invalid-or-oversize-never-reaches-jdbc-or-later-row
   (doseq [oversize? [false true]]
@@ -155,7 +156,7 @@
           encoder (fn [s] (swap! seen conj (:name s))
                     (if (= "second" (:name s))
                       (if oversize? big (throw (ex-info "invalid" {}))) "{}"))]
-      (with-redefs [jdbc/execute! (fn [& _] (swap! calls inc))]
+      (with-redefs [durable/execute-and-flush! (fn [& _] (swap! calls inc))]
         (is (false? (with-encoder (target {})
                        (mapv #(assoc shape :name %) ["first" "second" "later"]) encoder))))
       (is (= ["first" "second"] @seen))
