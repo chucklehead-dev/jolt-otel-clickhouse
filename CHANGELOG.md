@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Specialize the default `data.json` writer call path used by untyped Durable
+  span encoding, and add an opt-in, provenance-bound phase-profile launcher.
+  The launcher records aggregate payload, native execution, and confirmation
+  barrier timing without retaining telemetry values; it is diagnostic and
+  disabled outside explicit benchmark invocation.
+
 - Add opt-in aggregate-only phase receipts for the untyped Durable span path.
   They record payload construction, native execution, and confirmed persistence
   barrier elapsed time and span counts without retaining telemetry values or
