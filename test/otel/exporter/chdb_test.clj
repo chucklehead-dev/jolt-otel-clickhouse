@@ -10,6 +10,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-untyped-encoder-test]
+            [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
             [otel.exporter.chdb-ordinary-transport-diagnostics-test]
             [otel.exporter.chdb-ordinary-typed-rows-test :as ordinary-typed-rows-test]
@@ -323,6 +324,8 @@
   (reset! failures 0)
   (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
     (check "untyped schema encoder contracts" true (zero? (+ (:fail result) (:error result)))))
+  (when (pos? @failures) (finish-checks!))
+  (untyped-native/run (child-test-executable))
   (let [observed (atom 0)
         original-check check]
    (with-redefs [check (fn [& arguments]
