@@ -395,13 +395,12 @@
          (println :persistent-migration-cleanup-terminal-unconfirmed))))))
 
 (defn- run-untyped-schema-encoder-checks []
-  ;; Keep the new encoder suite in the aggregate, but do not overload the
-  ;; migration-child contract: that child must prove only reopen persistence.
+  ;; The pure encoder contract is release-compiler compatible. Its native
+  ;; writer/reader parity runs later in CI under the root-qualified Durable
+  ;; compiler, not under this ordinary aggregate's v0.8.6 executable.
   (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
     (check "untyped schema encoder contracts" true
-           (zero? (+ (:fail result) (:error result)))))
-  (when (pos? @failures) (finish-checks!))
-  (untyped-native/run (child-test-executable)))
+           (zero? (+ (:fail result) (:error result))))))
 
 (defn- run-migration-checks []
   (println "versioned chDB schema migrations")
