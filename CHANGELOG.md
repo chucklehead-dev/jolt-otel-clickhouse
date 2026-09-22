@@ -7,6 +7,12 @@
   optimized path retains exact JSONEachRow bytes, the 8 MiB per-batch bound,
   and the ordinary fallback for unsupported span shapes.
 
+- Extend the literate Durable acknowledgement model to independently admitted
+  callers and ordered writer requests. The checked red separated-request mutant
+  demonstrates B being committed then settled false; the corrected bounded
+  model covers caller-owned atomic settlement, retained-WAL
+  failure/ambiguity, positioned force flushes, and FIFO close processing.
+
 - Specialize the default `data.json` writer call path used by untyped Durable
   span encoding, and add an opt-in, provenance-bound phase-profile launcher.
   The launcher records aggregate payload, native execution, and confirmation
