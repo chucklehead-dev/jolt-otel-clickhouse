@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Update OTel to the merged SDK lifecycle fixes and default scalar attribute
+  normalization shortcut. Attribute values and ClickStack payloads retain their
+  existing representation; this update does not change exporter durability semantics.
+
 - Assemble each ordinary and Durable JSONEachRow export batch in one
   batch-local `StringBuilder`, retaining pinned `data.json` per-row bytes, row
   order, and trailing-newline wire contract while avoiding the intermediate
