@@ -355,6 +355,17 @@
 
 (def ^:private untyped-span-encoder (delay (compile-untyped-span-encoder)))
 
+(defn- compile-typed-span-encoder [projector]
+  ;; A nil result is the intentional structural fallback (for example, a
+  ;; promoted column collides with a base column). An exception is not an
+  ;; eligibility result: fail construction instead of silently disabling the
+  ;; fast path. Do not retain the cause, which may contain attribute values.
+  (try
+    (compile-untyped-span-encoder projector)
+    (catch Throwable _
+      (throw (ex-info "Typed span encoder compilation failed"
+                      {:type ::typed-span-encoder-compilation-failed})))))
+
 (defn- json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
 
@@ -819,9 +830,7 @@
                                 (attribute-projection/trace-projector
                                  typed-span-descriptors conn))
          typed-span-encoder (when typed-span-projector
-                              (try
-                                (compile-untyped-span-encoder typed-span-projector)
-                                (catch Throwable _ nil)))
+                              (compile-typed-span-encoder typed-span-projector))
          typed-log-projector (when typed-log-descriptors
                                (attribute-projection/log-projector
                                 typed-log-descriptors conn))

@@ -51,6 +51,22 @@
   (is (= "shadow" (get (#'exporter/span-row shape
                          (fn [_] {"SpanName" "shadow"})) "SpanName"))))
 
+(deftest unexpected-typed-encoder-compilation-fails-closed-and-redacted
+  (let [error (try
+                (#'exporter/compile-typed-span-encoder
+                 (fn [_]
+                   (throw (ex-info "sensitive-value-canary"
+                                   {:attribute "sensitive-value-canary"}))))
+                nil
+                (catch clojure.lang.ExceptionInfo error error))]
+    (is (some? error))
+    (is (= :otel.exporter.chdb/typed-span-encoder-compilation-failed
+           (:type (ex-data error))))
+    (is (= {:type :otel.exporter.chdb/typed-span-encoder-compilation-failed}
+           (ex-data error)))
+    (is (= "Typed span encoder compilation failed" (.getMessage error)))
+    (is (nil? (.getCause error)))))
+
 (deftest typed-payload-enforces-utf8-and-lf-byte-bound
   (let [limit (* 8 1024 1024)
         seen (atom [])
