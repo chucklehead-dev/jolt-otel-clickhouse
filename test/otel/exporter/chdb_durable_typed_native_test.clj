@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-durable-typed-native-test
   "Explicit two-process Durable typed acceptance; never a canonical runner replacement."
   (:require [db.jdbc] [jdbc.core :as jdbc]
+            [clojure.data.json :as json]
             [jdbc.chdb.durable :as durable]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.chdb.durable.local-posix :as local]
@@ -209,6 +210,18 @@
                                           :typed-gauge-descriptors gauges
                                           :typed-sum-descriptors sums})]
             (try
+              (let [encoder (:typed-span-encoder @(:state writer))
+                    projector (:typed-span-projector @(:state writer))
+                    samples (conj (mapv span-record (range 4))
+                                  (assoc (span-record 0)
+                                         :name "quote\" slash/ backslash\\ newline\n emoji😀"
+                                         :links [{:span-context {:trace-id "abc" :span-id "def"}
+                                                  :attributes {"escaped" "a/b\n"}}]))]
+                (check! :typed-encoder-active true (ifn? encoder))
+                (check! :typed-json-each-row-byte-parity true
+                        (every? (fn [span]
+                                  (= (json/write-str (#'exporter/span-row span projector))
+                                     (encoder span))) samples)))
               (check! :spans-accepted true (export/export-spans! writer (mapv span-record (range 4))))
               (check! :logs-accepted true (logs/export-logs! writer (mapv log-record (range 4))))
               (check! :metrics-accepted true

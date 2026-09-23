@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Extend the Durable JSONEachRow span encoder to installer-confirmed typed
+  columns. It writes the established column order and public `data.json` values
+  without building the outer physical row map; unsupported shapes and unsafe
+  column plans retain the row-map fallback. The Durable SQL/WAL path is unchanged.
+
 - Adopt chDB's caller-atomic Durable `execute-and-flush!` writer request for
   every non-empty exporter physical insert. Typed, fallback, and untyped span
   paths no longer split a Durable JDBC execute from its publication barrier;
