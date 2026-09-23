@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import signal
 import subprocess
 import time
 
@@ -20,13 +21,13 @@ REPO = Path(__file__).resolve().parents[1]
 CONTROL = Path("/home/chuck/ai-src/worktrees/jolt-otel-clickhouse-log-control")
 DRIVER = Path("/home/chuck/ai-src/worktrees/chdb-datajson-default-writer-512")
 OTEL = Path("/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2")
-COMPILER = Path("/home/chuck/ai-src/worktrees/jolt-v0810-durable-wal-private-hint/target/release/jolt")
+COMPILER = Path("/home/chuck/ai-src/worktrees/jolt-v0810-aspects-writer-wal/target/release/jolt")
 WRAPPER = Path("/home/chuck/ai-src/tools/jolt-with-chez-10.4.1")
 NATIVE = Path("/home/chuck/.cache/chdb-rust/v26.7.3/linux-x86_64-libchdb/libchdb.so")
 CONTROL_SHA = "96d56e2a136d61f0f0222304a0fdb5afefedfcfb"
 DRIVER_SHA = "060bcb49933e3d15b99098c5b345302b31fe9836"
 OTEL_SHA = "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"
-COMPILER_SHA256 = "7de7a1e4d0dbc77d16165982c98785ff98482335377dc2bf33667339cf7997b5"
+COMPILER_SHA256 = "ced7f29face473791548e77e283e1bb1070e1c3fe67d0e11c304ed93e98d5101"
 NATIVE_SHA256 = "36ad4e999882821ef13cf2d0f52c93f48e6ee1b4498b35a201c23ce4b8d15bf5"
 DATA_JSON_SHA = "0f51b99101bc5e840f957c073f87b6f877309a25"
 HARNESS_FILES = (
@@ -99,10 +100,16 @@ def command(arm, *args):
 
 
 def environment(cell, arm, phase):
-    env = os.environ.copy()
-    env.pop("BENCH_PHASE_RECEIPTS", None)
-    env.update(
-        PATH=str(COMPILER.parent) + os.pathsep + env.get("PATH", ""),
+    # No caller AWS, Langfuse, OTLP, proxy, token, or tracing environment is
+    # inherited into synthetic telemetry children. -Srepro also excludes
+    # user dependency configuration.
+    env = dict(
+        HOME=os.environ.get("HOME", "/home/chuck"),
+        USER=os.environ.get("USER", "chuck"),
+        PATH=str(COMPILER.parent) + ":/usr/local/bin:/usr/bin:/bin",
+        LANG="C.UTF-8",
+        LC_ALL="C.UTF-8",
+        TMPDIR="/tmp",
         JOLT_CACHE_DIR=str(cell / ("cache-" + phase)),
         JOLT_CHDB_LIB=str(NATIVE),
         BENCH_ARM=arm,
@@ -111,14 +118,39 @@ def environment(cell, arm, phase):
     return env
 
 
+class ChildTimeout(RuntimeError):
+    pass
+
+
 def run_child(cmd, log, env, timeout=300):
-    with open(log, "w") as output:
-        result = subprocess.run(
+    cap = 1024 * 1024
+    with open(log, "wb") as output:
+        child = subprocess.Popen(
             ["timeout", "--signal=TERM", "--kill-after=5s", str(timeout), *cmd],
-            cwd=REPO, env=env, stdout=output, stderr=subprocess.STDOUT,
+            cwd=REPO, env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            start_new_session=True,
         )
-    require(log.stat().st_size <= 1024 * 1024, f"unbounded child log: {log}")
-    require(result.returncode == 0, f"child exited {result.returncode}: {log}")
+        written = 0
+        try:
+            while True:
+                chunk = child.stdout.read(65536)
+                if not chunk:
+                    break
+                available = cap - written
+                output.write(chunk[:available])
+                written += min(len(chunk), available)
+                if len(chunk) > available:
+                    os.killpg(child.pid, signal.SIGTERM)
+                    raise RuntimeError(f"child log exceeded 1 MiB: {log}")
+            result = child.wait()
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGKILL)
+                child.wait()
+            child.stdout.close()
+    if result in (124, 137):
+        raise ChildTimeout(f"bounded child timeout/kill ({result}): {log}")
+    require(result == 0, f"child exited {result}: {log}")
 
 
 def classpath(arm, text):
@@ -158,7 +190,8 @@ def run_arm(root, arm, samples):
         cmd = command(arm, "-m", "otel.exporter.log-durable-ab",
                       phase, str(cell), arm, str(samples))
         (cell / f"{phase}.command.json").write_text(json.dumps(cmd) + "\n")
-        run_child(cmd, cell / f"{phase}.log", environment(cell, arm, phase))
+        run_child(cmd, cell / f"{phase}.log", environment(cell, arm, phase),
+                  timeout=180 if samples == 5 else 600)
         receipt = cell / f"{phase}-report.edn"
         require(receipt.is_file(), f"missing {phase} terminal report")
         (cell / f"{phase}.complete").write_text(sha(receipt) + "\n")
@@ -208,6 +241,9 @@ def main():
                 }, indent=2) + "\n")
             require(pins(args.candidate_sha) == initial, "pins changed during run")
             terminal["status"] = "green"
+        except ChildTimeout:
+            terminal["status"] = "infrastructure-timeout"
+            raise
         finally:
             terminal["finished"] = time.time()
             (root / "terminal.json").write_text(json.dumps(terminal) + "\n")
