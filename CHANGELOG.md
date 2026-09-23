@@ -6,7 +6,14 @@
   exporter. Admitted records avoid physical row maps while retaining exact
   `data.json` JSONEachRow bytes, the 8 MiB bound, and the same ordinary or
   caller-atomic Durable write boundary. Typed logs, other hosts, and batches
-  with any non-admitted record retain the existing generic path.
+  with any non-admitted record retain the existing generic path. A local
+  public-exporter/Durable A/B (3 warmups, 100 measured 512-record batches per
+  arm) measured generic p50/p99 158.8/234.1 ms and 3,348 aggregate rows/s,
+  versus specialized 89.2/126.5 ms and 5,725 rows/s. Both arms produced
+  identical 251,426-byte SQL and 52,736 full physical rows with independent
+  fresh-reader digest parity. This distinct log fixture and provisional chDB
+  #204 dependency do not meet the 25k p50/20k p99 rows/s target; they do
+  not qualify S3 or other telemetry shapes.
 
 - Extend the Durable JSONEachRow span encoder to installer-confirmed typed
   columns. It writes the established column order and public `data.json` values
