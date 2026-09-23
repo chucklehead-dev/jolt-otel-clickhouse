@@ -146,6 +146,29 @@
       (is (= (var-get #'exporter/generic-untyped-log-payload)
              (batch [base-log ineligible]))))))
 
+(deftest closed-batch-accessors-stay-within-ordinary-column-domains
+  ;; The batch renderer deliberately skips per-column generic validation.
+  ;; Protect that choice at the closed accessor boundary, including narrowed
+  ;; UInt8s, the DateTime64 upper edge, and canonicalized non-string bodies.
+  (let [batch (#'exporter/compile-untyped-log-batch-encoder)
+        records [base-log
+                 (assoc base-log :timestamp-unix-nano 0
+                        :observed-time-unix-nano 9223372036854775807
+                        :trace-flags -1 :severity-number 9223372036854775807
+                        :body true
+                        :resource {:attributes {"service.name" true}})
+                 (assoc base-log :body nil :event-name nil
+                        :scope {:attributes {"nested" {"x" [false 0]}}})]]
+    (is (ifn? batch))
+    (doseq [record records]
+      (let [row (#'exporter/log-row record nil)
+            encoded (batch [record])]
+        (is (#'exporter/untyped-log-eligible? record))
+        (is (string? encoded))
+        (is (= (utf8 (str (json/write-str row) "\n")) (utf8 encoded)))
+        (doseq [[column value] row]
+          (is (#'exporter/valid-row-value? column value) column))))))
+
 (deftest direct-batch-log-renderer-stops-before-later-record-after-overflow
   (let [batch (#'exporter/compile-untyped-log-batch-encoder)
         exact (assoc base-log :body "direct-boundary-one")
@@ -229,6 +252,9 @@
 (deftest fallback-and-host-capability-contract
   (let [encoder (#'exporter/compile-untyped-log-encoder)
         fallback (assoc base-log :attributes ["not-an-attribute-map"])]
+    ;; Direct private-call diagnostic only: the public path sees this shape
+    ;; before invoking either encoder and reruns the whole batch generically.
+    ;; Public Durable/ordinary fallback contracts are checked below.
     (is (not (#'exporter/untyped-log-eligible? fallback)))
     (is (= (utf8 (baseline fallback)) (utf8 (encoder fallback))))
     (with-redefs [exporter/jolt-runtime? (constantly false)]

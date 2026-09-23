@@ -560,6 +560,11 @@
   "Return an exact UTF-8 byte count for the direct scalar subset, or nil.
   Its strings are ASCII by admission and JSON numbers are ASCII by grammar."
   [value]
+  ;; This is not a general replacement for valid-row-value?. The closed log
+  ;; accessors produce only checked Timestamp, UInt8 flags/severity, and
+  ;; strings for non-attribute columns; attributes retain attrs/data.json.
+  ;; A new accessor/value domain must update the admission proof and tests or
+  ;; return nil here so the entire batch takes the generic path.
   (cond
     (nil? value) 4
     (true? value) 4
@@ -622,6 +627,10 @@
           (let [fragments (log-key-fragments order)]
             (fn [record]
               (if-not (untyped-log-eligible? record)
+                ;; Defensive private-call behavior only. Public log export
+                ;; tests eligibility before invoking this row encoder and
+                ;; sends a rejected whole batch through insert-batch!, which
+                ;; intentionally has different Durable/ordinary validation.
                 (let [row (log-row record nil)]
                   (validate-ordinary-row! order row)
                   (json/write-str row))
