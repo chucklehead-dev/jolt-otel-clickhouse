@@ -162,25 +162,29 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C .qualification-driver rev-parse HEAD)" = "$EXPECTED_DRIVER_REVISION"
-          # Add only exact checked-out test support, never override driver code.
-          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro \
-            -Sdeps '{:aliases {:capability-negative {:extra-paths [".qualification-driver/test"]}}}' \
-            -A:test:capability-negative -e '
-              (require (quote jdbc.chdb-durable-writer-test))
-              (let [gate (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote run-capability-checks!))
-                    check (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote check))
-                    n (atom 0)]
-                (assert (and gate check (fn? (deref gate)) (fn? (deref check))))
-                (let [supported? (with-redefs-fn
-                                   {check (fn [_ expected actual]
-                                            (swap! n inc)
-                                            (assert (= expected actual)))}
-                                   (fn [] ((deref gate))))]
-                  (assert (false? supported?))
-                  (assert (= 4 @n))
-                  (println "PASS official unsupported capability boundary 4")))' \
+          # The root driver guards both public opens before storage or native
+          # effects. Do not depend on a driver test helper that may be renamed.
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -e '
+              (require (quote jdbc.chdb.durable))
+              (let [capable? (ns-resolve (quote jdbc.chdb.durable)
+                                         (quote strict-utf8-decoder-capable?))
+                    calls (atom 0)
+                    options {:operations {:durable-capability
+                                           (fn [] (swap! calls inc) {:status :supported})}}
+                    expected :jdbc.chdb.durable/strict-utf8-decoder-unavailable]
+                (assert (and capable? (fn? (deref capable?))))
+                (assert (false? ((deref capable?))))
+                (doseq [open! [jdbc.chdb.durable/open-reader!
+                               jdbc.chdb.durable/open-writer!]]
+                  (let [actual (try (open! options)
+                                    nil
+                                    (catch Throwable error
+                                      (:type (ex-data error))))]
+                    (assert (= expected actual))))
+                (assert (zero? @calls))
+                (println "PASS official unsupported capability boundary 2"))' \
             | tee "$RUNNER_TEMP/exporter-official-capability-negative.log"
-          test "$(grep -Fxc 'PASS official unsupported capability boundary 4' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
+          test "$(grep -Fxc 'PASS official unsupported capability boundary 2' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
 
       # The root chDB pin deliberately rejects the released runtime here: its
       # Durable writer needs the fixed strict decoder and ranged writer append.
