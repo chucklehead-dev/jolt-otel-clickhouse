@@ -215,6 +215,12 @@
         descriptor-set (:descriptor-set installation)
         target (::target installation)
         projector (projection/trace-projector descriptor-set target)
+        fields (projection/confirmed-span-fields descriptor-set target)
+        expected-columns (set (mapcat (fn [field]
+                                        [(get-in field [:physical :value-column])
+                                         (get-in field [:physical :status-column])])
+                                      fields))
+        absent (projector (span {}))
         source (assoc (span {"shared.location" "span"})
                       :resource {:attributes {"shared.location" "resource"}}
                       :scope {:name "typed-test"
@@ -227,6 +233,17 @@
                         [(get row (:value-column physical))
                          (get row (:status-column physical))]))
                     [:resource-attributes :scope-attributes :span-attributes])]
+    (check "confirmed trace projection always emits the fixed value/status key set"
+           [expected-columns expected-columns]
+           [(set (keys absent)) (set (keys row))])
+    (check "all absent trace locations retain companion status and typed default"
+           [["" 1] ["" 1] ["" 1]]
+           (mapv (fn [location]
+                   (let [physical (:physical
+                                   (field installation location "shared.location"))]
+                     [(get absent (:value-column physical))
+                      (get absent (:status-column physical))]))
+                 [:resource-attributes :scope-attributes :span-attributes]))
     (check "one capability projects equal keys independently at all trace locations"
            [["resource" 3] ["" 2] ["span" 3]]
            pairs)

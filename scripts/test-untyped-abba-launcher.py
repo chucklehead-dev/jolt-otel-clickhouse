@@ -64,6 +64,29 @@ class Contracts(unittest.TestCase):
         self.assertIn("provenance changed before green terminal", source)
         self.assertIn("perturbs-measured-total", source)
 
+    def test_current_phase_data_json_pin_tracks_root_declaration(self):
+        self.assertEqual(
+            current_launcher.declared_data_json_source_root(),
+            "https___github.com_casselc_data.json.git/"
+            "0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
+        with tempfile.TemporaryDirectory() as parent:
+            root = Path(parent)
+            declaration = ('org.clojure/data.json '
+                           '{:git/url "https://github.com/casselc/data.json.git" '
+                           ':git/sha "' + "a" * 40 + '"}')
+            with patch.object(current_launcher, "REPO", root):
+                (root / "deps.edn").write_text("{:deps {" + declaration + "}}")
+                self.assertIn("/" + "a" * 40 + "/src/main/clojure",
+                              current_launcher.declared_data_json_source_root())
+                for source in ("{:deps {}}",
+                               "{:deps {" + declaration + " " + declaration + "}}",
+                               "{:deps {org.clojure/data.json "
+                               '{:git/url "https://github.com/clojure/data.json.git" '
+                               ':git/sha "' + "a" * 40 + '"}}'):
+                    (root / "deps.edn").write_text(source)
+                    with self.assertRaises(RuntimeError):
+                        current_launcher.declared_data_json_source_root()
+
     def test_phase_receipt_key_set_is_exact(self):
         source = (launcher.REPO / "bench/otel/exporter/scalar_abba.clj").read_text()
         self.assertIn("aggregate phase receipt key set", source)

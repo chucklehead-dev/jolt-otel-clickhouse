@@ -162,25 +162,29 @@ jobs:
         run: |
           set -euo pipefail
           test "$(git -C .qualification-driver rev-parse HEAD)" = "$EXPECTED_DRIVER_REVISION"
-          # Add only exact checked-out test support, never override driver code.
-          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro \
-            -Sdeps '{:aliases {:capability-negative {:extra-paths [".qualification-driver/test"]}}}' \
-            -A:test:capability-negative -e '
-              (require (quote jdbc.chdb-durable-writer-test))
-              (let [gate (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote run-capability-checks!))
-                    check (ns-resolve (quote jdbc.chdb-durable-writer-test) (quote check))
-                    n (atom 0)]
-                (assert (and gate check (fn? (deref gate)) (fn? (deref check))))
-                (let [supported? (with-redefs-fn
-                                   {check (fn [_ expected actual]
-                                            (swap! n inc)
-                                            (assert (= expected actual)))}
-                                   (fn [] ((deref gate))))]
-                  (assert (false? supported?))
-                  (assert (= 4 @n))
-                  (println "PASS official unsupported capability boundary 4")))' \
+          # The root driver guards both public opens before storage or native
+          # effects. Do not depend on a driver test helper that may be renamed.
+          timeout --signal=TERM --kill-after=5s 90s "$JOLT_BIN" -Srepro -e '
+              (require (quote jdbc.chdb.durable))
+              (let [capable? (ns-resolve (quote jdbc.chdb.durable)
+                                         (quote strict-utf8-decoder-capable?))
+                    calls (atom 0)
+                    options {:operations {:durable-capability
+                                           (fn [] (swap! calls inc) {:status :supported})}}
+                    expected :jdbc.chdb.durable/strict-utf8-decoder-unavailable]
+                (assert (and capable? (fn? (deref capable?))))
+                (assert (false? ((deref capable?))))
+                (doseq [open! [jdbc.chdb.durable/open-reader!
+                               jdbc.chdb.durable/open-writer!]]
+                  (let [actual (try (open! options)
+                                    nil
+                                    (catch Throwable error
+                                      (:type (ex-data error))))]
+                    (assert (= expected actual))))
+                (assert (zero? @calls))
+                (println "PASS official unsupported capability boundary 2"))' \
             | tee "$RUNNER_TEMP/exporter-official-capability-negative.log"
-          test "$(grep -Fxc 'PASS official unsupported capability boundary 4' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
+          test "$(grep -Fxc 'PASS official unsupported capability boundary 2' "$RUNNER_TEMP/exporter-official-capability-negative.log")" = 1
 
       # The root chDB pin deliberately rejects the released runtime here: its
       # Durable writer needs the fixed strict decoder and ranged writer append.
@@ -235,7 +239,26 @@ jobs:
           [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
           test -d "$root" && test ! -L "$root"
           test "$(realpath "$root")" = "$root"
-          test "$(grep -Fxc ':observed-checks 23' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
+      - name: Reopen typed Durable WAL after verified writer crash
+        id: durable_crash_reopen
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s \
+            bash scripts/qualify-durable-typed-native.sh --wal-crash-reopen \
+            | tee "$RUNNER_TEMP/exporter-durable-crash-native.log"
+          test "$(grep -Fxc 'durable-typed-wal-crash-replay-qualified' "$RUNNER_TEMP/exporter-durable-crash-native.log")" = 1
+          test "$(grep -c '^EVIDENCE_ROOT=' "$RUNNER_TEMP/exporter-durable-crash-native.log")" = 1
+          root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$RUNNER_TEMP/exporter-durable-crash-native.log")
+          [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
+          test -d "$root" && test ! -L "$root"
+          test "$(realpath "$root")" = "$root"
+          test "$(cat "$root/crash-receipt.txt")" = 'verified-writer-sigkill status=137'
+          test "$(grep -Fxc ':wal-ready' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':reader-verified' "$root/reader.log")" = 1
           test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
       - name: Retain only synthetic native fixture logs and status
         if: always()
@@ -247,14 +270,15 @@ jobs:
           TYPED_HISTOGRAM_SOCKET_OUTCOME: ${{ steps.typed_histogram_socket.outcome }}
           UNTYPED_ENCODER_OUTCOME: ${{ steps.untyped_encoder_native.outcome }}
           DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
+          DURABLE_CRASH_OUTCOME: ${{ steps.durable_crash_reopen.outcome }}
           DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
           DURABLE_COMPILER_REVISION: ${{ steps.durable_jolt.outputs.source-sha }}
         run: |
           set -euo pipefail
           evidence="$RUNNER_TEMP/exporter-native-evidence"
           mkdir -p "$evidence"
-          printf 'ordinary-step=%s\ntyped-metric-step=%s\ntyped-metric-socket-step=%s\ntyped-histogram-socket-step=%s\nuntyped-encoder-step=%s\ndurable-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
-            "$ORDINARY_OUTCOME" "$TYPED_METRIC_OUTCOME" "$TYPED_METRIC_SOCKET_OUTCOME" "$TYPED_HISTOGRAM_SOCKET_OUTCOME" "$UNTYPED_ENCODER_OUTCOME" "$DURABLE_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
+          printf 'ordinary-step=%s\ntyped-metric-step=%s\ntyped-metric-socket-step=%s\ntyped-histogram-socket-step=%s\nuntyped-encoder-step=%s\ndurable-step=%s\ndurable-crash-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
+            "$ORDINARY_OUTCOME" "$TYPED_METRIC_OUTCOME" "$TYPED_METRIC_SOCKET_OUTCOME" "$TYPED_HISTOGRAM_SOCKET_OUTCOME" "$UNTYPED_ENCODER_OUTCOME" "$DURABLE_OUTCOME" "$DURABLE_CRASH_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
           # Only public authentication diagnostics/boundary fixture output.
           for kind in official-capability-negative; do
             log="$RUNNER_TEMP/exporter-$kind.log"
@@ -264,7 +288,7 @@ jobs:
             fi
           done
           # Never traverse or upload native stores, WAL, databases or env files.
-          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable; do
+          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable durable-crash; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
@@ -298,6 +322,20 @@ jobs:
               done
             else printf 'durable-root=unconfirmed\n' >> "$evidence/status.txt"; fi
           else printf 'durable-root=missing-or-ambiguous\n' >> "$evidence/status.txt"; fi
+          log="$RUNNER_TEMP/exporter-durable-crash-native.log"
+          if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
+            root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
+            if [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ &&
+                  -d "$root" && ! -L "$root" && "$(realpath "$root")" == "$root" ]]; then
+              for child in writer reader; do
+                log="$root/$child.log"
+                if [[ -f "$log" && ! -L "$log" && "$(realpath "$log")" == "$root/$child.log" ]]; then
+                  cp "$log" "$evidence/crash-$child.log"
+                  sha256sum "$evidence/crash-$child.log" >> "$evidence/status.txt"
+                else printf 'crash-%s-log=missing-or-unconfirmed\n' "$child" >> "$evidence/status.txt"; fi
+              done
+            else printf 'durable-crash-root=unconfirmed\n' >> "$evidence/status.txt"; fi
+          else printf 'durable-crash-root=missing-or-ambiguous\n' >> "$evidence/status.txt"; fi
       - name: Upload the explicit synthetic-log allowlist
         if: always()
         uses: actions/upload-artifact@v4
@@ -312,6 +350,9 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/typed-metric-socket.log
             ${{ runner.temp }}/exporter-native-evidence/untyped-encoder.log
             ${{ runner.temp }}/exporter-native-evidence/durable.log
+            ${{ runner.temp }}/exporter-native-evidence/durable-crash.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
+            ${{ runner.temp }}/exporter-native-evidence/crash-writer.log
+            ${{ runner.temp }}/exporter-native-evidence/crash-reader.log
             ${{ runner.temp }}/exporter-native-evidence/official-capability-negative.log

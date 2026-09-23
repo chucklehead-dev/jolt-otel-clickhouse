@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import time
 
@@ -22,7 +23,6 @@ DRIVER = Path("/home/chuck/ai-src/qualification-worktrees/jolt-chdb-9ec4d6b-dura
 NATIVE = Path("/home/chuck/.cache/chdb-rust/v26.7.3/linux-x86_64-libchdb/libchdb.so")
 FIXTURE = Path("/home/chuck/ai-src/evidence/direct-encoder-canonical-no-durable-20260922T0415Z/fixture-batch-0.edn")
 OTEL = Path("/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2")
-DATA_JSON_CLASS_PATH = "d8763cb8b38771285f5111dad9316762cd02a700/src/main/clojure"
 HARNESS_SOURCES = (
     REPO / "bench/otel/exporter/scalar_abba.clj",
     REPO / "bench/otel/exporter/scalar_abba_support.clj",
@@ -42,6 +42,18 @@ def sha(path):
 
 def git(root, *args):
     return subprocess.check_output(["git", "-C", str(root), *args], text=True).strip()
+
+def declared_data_json_source_root():
+    """Follow the current root pin, rejecting a missing or ambiguous coordinate."""
+    source = (REPO / "deps.edn").read_text()
+    blocks = re.findall(r"org\.clojure/data\.json\s*\{([^{}]*)\}", source)
+    require(len(blocks) == 1, "one declared data.json coordinate")
+    urls = re.findall(r':git/url\s+"([^"]+)"', blocks[0])
+    revisions = re.findall(r':git/sha\s+"([a-f0-9]{40})"', blocks[0])
+    require(urls == ["https://github.com/casselc/data.json.git"] and len(revisions) == 1,
+            "exact casselc data.json pin")
+    return ("https___github.com_casselc_data.json.git/" + revisions[0]
+            + "/src/main/clojure")
 
 def lock(path=Path("/tmp/jolt-current-durable-phase.lock")):
     handle = open(path, "a")
@@ -103,7 +115,10 @@ def normalize_classpath(text):
     exporters = [path for path in paths if (Path(path) / "otel/exporter/chdb.clj").is_file()]
     require(exporters == [source], "exactly one selected current exporter source")
     require(str(DRIVER / "src") in paths, "qualified driver resolved")
-    require(any(DATA_JSON_CLASS_PATH in path for path in paths), "data.json pin")
+    expected_json = declared_data_json_source_root()
+    json_roots = [path for path in paths if "casselc_data.json.git/" in path]
+    require(len(json_roots) == 1 and json_roots[0].endswith("/" + expected_json),
+            "data.json pin")
     return [path.replace(source, "<EXPORTER-SRC>") for path in paths]
 
 def current_provenance(classpath):

@@ -137,6 +137,12 @@ env JOLT_BIN=/path/to/qualified/jolt \
   bash scripts/qualify-durable-typed-native.sh
 ```
 
+On Linux, run the same command with `--wal-crash-reopen` to verify the
+compiled typed span encoder survives a task-owned writer crash: the launcher
+checks the writer identity and WAL-ready marker, kills only that writer's
+process group, then starts a separate fresh reader. CI runs both variants and
+requires `durable-typed-wal-crash-replay-qualified` from the crash variant.
+
 The default `root-pin` mode uses the original dependency pins without overrides,
 attesting unique clean driver and SDK providers before starting the writer.
 For explicit source-only review evidence, add
@@ -146,9 +152,10 @@ For explicit source-only review evidence, add
 That opt-in mode overrides only the driver and does not qualify root resolution.
 The selected SDK checkpoint is merged SDK main. Published pins alone still do
 not establish a particular application's runtime/native or hosted-CI qualification.
-The gate verifies typed spans/logs plus bounded typed gauge, sum, and histogram fields
-through fresh-reader WAL replay while the writer remains alive, rather than a
-shutdown checkpoint.
+The default gate verifies typed spans/logs plus bounded typed gauge, sum, and
+histogram fields through fresh-reader WAL replay while the writer remains
+alive, rather than a shutdown checkpoint. The crash variant reads after the
+verified writer has been killed, without a graceful checkpoint.
 Child environments strip credentials; evidence is retained without retries.
 An unconfirmed surviving process reports incomplete cleanup without signaling
 an unverified owner; this lane does not guarantee cleanup of arbitrary orphans.

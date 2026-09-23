@@ -281,9 +281,19 @@
                               (or (nil? (:name %)) (string? (:name %)))
                               (untyped-attributes? (:attributes %))) (:events span))))))
 
-(defn- compile-untyped-span-encoder []
-  (let [order (vec (keys (span-row untyped-span-shape nil)))]
-    (when (= (set order) (set (keys untyped-span-accessors)))
+;; A confirmed typed projector may add physical columns, but it need not force
+;; construction of the outer row map. Retain the projector's value/status rules
+;; and derive the precise persistent-map iteration order from the same row
+;; constructor used by the fallback. If its keys overlap a base column or the
+;; shape cannot be compiled, startup keeps the original row-map path.
+(defn- compile-untyped-span-encoder
+  ([] (compile-untyped-span-encoder nil))
+  ([typed-projector]
+   (let [order (vec (keys (span-row untyped-span-shape typed-projector)))
+        base-columns (set (keys untyped-span-accessors))
+        typed-shape (when typed-projector (typed-projector untyped-span-shape))]
+    (when (and (= (set order) (into base-columns (keys typed-shape)))
+               (empty? (filter base-columns (keys typed-shape))))
       (let [empty-links-wire
             {"LinksJSON" (json/write-str (json/write-str []))
              "Links.TraceId" (json/write-str [])
@@ -297,27 +307,34 @@
                                 (cond
                                   (contains? empty-links-wire column)
                                   (let [wire (get empty-links-wire column)]
-                                    (fn [out _] (.write out wire)))
+                                    (fn [out _ _] (.write out wire)))
 
                                   attribute-at
-                                  (fn [out span]
+                                  (fn [out span _]
                                     (.write out (cached-untyped-attrs-wire (attribute-at span))))
 
+                                  value-at
+                                  (fn [out span _]
+                                    (json/write (value-at span) out))
+
                                   :else
-                                  (fn [out span]
-                                    (json/write (value-at span) out)))]
+                                  (fn [out _ typed-values]
+                                    (json/write (get typed-values column) out)))]
                             [(str (if (zero? index) "{" ",") (json/write-str column) ":")
                              write-value])) (range) order)
             emit (reduce (fn [next [fragment write-value]]
-                           (fn [out span]
+                           (fn [out span typed-values]
                              (.append out fragment)
-                             (write-value out span)
-                             (next out span)))
-                         (fn [out _] (.append out "}")) (reverse slots))]
+                             (write-value out span typed-values)
+                             (next out span typed-values)))
+                         (fn [out _ _] (.append out "}")) (reverse slots))]
         (fn [span]
           (if (untyped-span-eligible? span)
-            (let [out (java.io.StringWriter.)] (emit out span) (.toString out))
-            (json/write-str (span-row span nil))))))))
+            (let [out (java.io.StringWriter.)
+                  typed-values (when typed-projector (typed-projector span))]
+              (emit out span typed-values)
+              (.toString out))
+            (json/write-str (span-row span typed-projector)))))))))
 
 (defn- untyped-span-payload
   ([encoder spans] (untyped-span-payload encoder spans max-insert-bytes))
@@ -337,6 +354,17 @@
 
 
 (def ^:private untyped-span-encoder (delay (compile-untyped-span-encoder)))
+
+(defn- compile-typed-span-encoder [projector]
+  ;; A nil result is the intentional structural fallback (for example, a
+  ;; promoted column collides with a base column). An exception is not an
+  ;; eligibility result: fail construction instead of silently disabling the
+  ;; fast path. Do not retain the cause, which may contain attribute values.
+  (try
+    (compile-untyped-span-encoder projector)
+    (catch Throwable _
+      (throw (ex-info "Typed span encoder compilation failed"
+                      {:type ::typed-span-encoder-compilation-failed})))))
 
 (defn- json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
@@ -653,8 +681,10 @@
               (when (seq spans)
                 (let [snapshot @state
                       encoder (when (and (:durable? snapshot)
-                                         (nil? (:typed-span-projector snapshot)))
-                                @untyped-span-encoder)
+                                         (or (nil? (:typed-span-projector snapshot))
+                                             (:typed-span-encoder snapshot)))
+                                (or (:typed-span-encoder snapshot)
+                                    @untyped-span-encoder))
                       receipts (when encoder (:durable-phase-receipts snapshot))]
                   (if encoder
                     (if receipts
@@ -799,6 +829,8 @@
          typed-span-projector (when typed-span-descriptors
                                 (attribute-projection/trace-projector
                                  typed-span-descriptors conn))
+         typed-span-encoder (when typed-span-projector
+                              (compile-typed-span-encoder typed-span-projector))
          typed-log-projector (when typed-log-descriptors
                                (attribute-projection/log-projector
                                 typed-log-descriptors conn))
@@ -869,6 +901,7 @@
                               :connection-closed? false
                               :persistence-barrier barrier
                               :typed-span-projector typed-span-projector
+                              :typed-span-encoder typed-span-encoder
                               :typed-log-projector typed-log-projector
                               :typed-metric-projectors
                               (cond-> {}

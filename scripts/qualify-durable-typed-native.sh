@@ -101,6 +101,13 @@ if [[ "${1:-}" == --check-reviewed-source ]]; then
   exit
 fi
 
+crash_reopen=false
+case "${1:-}" in
+  '') [[ "$#" == 0 ]] || exit 64 ;;
+  --wal-crash-reopen) [[ "$#" == 1 ]] || exit 64; crash_reopen=true ;;
+  *) echo invalid-native-gate-argument >&2; exit 64 ;;
+esac
+
 # Linux-only bounded acceptance lane. Run under an outer 210s timeout.
 [[ "$(uname -s)" == Linux ]] || { echo unsupported-process-ownership-host; exit 1; }
 worktree=$(cd "$(dirname "$0")/.." && pwd -P)
@@ -132,6 +139,7 @@ task_token="durable-native-${root##*/}"
 writer_pid= writer_start=
 
 own_writer() {
+  local -a argv=()
   [[ -n "$writer_pid" && -r "/proc/$writer_pid/stat" ]] || return 1
   [[ "$(awk '{print $22}' "/proc/$writer_pid/stat")" == "$writer_start" ]] || return 1
   [[ "$(awk '{print $4}' "/proc/$writer_pid/stat")" == "$$" ]] || return 1
@@ -141,6 +149,9 @@ own_writer() {
   [[ "$(cat "$root/writer-receipt")" == "$(awk '{print $1, $4, $5, $6, $22}' "/proc/$writer_pid/stat")" ]] || return 1
   [[ "$(readlink "/proc/$writer_pid/exe")" == "$jolt" ]] || return 1
   [[ "$(readlink "/proc/$writer_pid/cwd")" == "$worktree" ]] || return 1
+  mapfile -d '' -t argv < "/proc/$writer_pid/cmdline" || return 1
+  [[ "${argv[0]:-}" == "$jolt" && "${argv[1]:-}" == -Srepro ]] || return 1
+  [[ "${argv[${#argv[@]}-1]:-}" == "$writer_form" ]] || return 1
   tr '\0' '\n' <"/proc/$writer_pid/environ" | grep -Fxq "JOLT_DURABLE_DRAFT_TOKEN=$task_token" || return 1
 }
 cleanup() {
@@ -235,15 +246,37 @@ until [[ -f "$root/wal-ready" ]]; do
   (( SECONDS < deadline )) || { echo writer-readiness-deadline; exit 1; }
   sleep 0.1
 done
+if "$crash_reopen"; then
+  # The writer has published a typed batch and is parked on its test-only
+  # reader handshake. Kill only the verified, task-owned process group, then
+  # reopen from persisted WAL in a new reader process. Never use a guessed PID.
+  own_writer || { echo writer-before-crash-identity-failed; exit 1; }
+  [[ "$(cat "$root/wal-ready")" == ready ]] || { echo writer-wal-readiness-invalid; exit 1; }
+  kill -KILL -- "-$writer_pid"
+  set +e
+  wait "$writer_pid"
+  crash_status=$?
+  set -e
+  [[ "$crash_status" == 137 ]] || { echo writer-crash-status-unexpected; exit 1; }
+  kill -0 -- "-$writer_pid" 2>/dev/null && { echo writer-group-residual; exit 1; }
+  printf 'verified-writer-sigkill status=%s\n' "$crash_status" > "$root/crash-receipt.txt"
+  writer_pid=
+fi
 timeout --signal=TERM --kill-after=5s 90s "${launch[@]}" "${runtime[@]}" "$reader_form" >"$root/reader.log" 2>&1
 [[ -f "$root/reader-done" ]]
-deadline=$((SECONDS + 10))
-while [[ -r "/proc/$writer_pid/stat" ]] && [[ "$(awk '{print $3}' "/proc/$writer_pid/stat")" != Z ]]; do
-  (( SECONDS < deadline )) || { echo writer-close-deadline; exit 1; }
-  sleep 0.1
-done
-wait "$writer_pid"
-kill -0 -- "-$writer_pid" 2>/dev/null && { echo writer-group-residual; exit 1; }
-writer_pid=
+if ! "$crash_reopen"; then
+  deadline=$((SECONDS + 10))
+  while [[ -r "/proc/$writer_pid/stat" ]] && [[ "$(awk '{print $3}' "/proc/$writer_pid/stat")" != Z ]]; do
+    (( SECONDS < deadline )) || { echo writer-close-deadline; exit 1; }
+    sleep 0.1
+  done
+  wait "$writer_pid"
+  kill -0 -- "-$writer_pid" 2>/dev/null && { echo writer-group-residual; exit 1; }
+  writer_pid=
+fi
 sha256sum "$root/writer.log" "$root/reader.log"
-echo durable-typed-native-qualified
+if "$crash_reopen"; then
+  echo durable-typed-wal-crash-replay-qualified
+else
+  echo durable-typed-native-qualified
+fi
