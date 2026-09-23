@@ -424,21 +424,349 @@
     "BucketCounts" (and (sequential? value) (every? uint64? value))
     (valid-json-value? value)))
 
+(declare validate-ordinary-row!)
+
 (defn- ordinary-payload [columns rows]
   ;; Check every row before encoding or entering the driver. Error data never
   ;; retains row values, attribute names, or the encoded telemetry payload.
-  (let [rows (vec rows)
-        expected (set columns)]
+  (let [rows (vec rows)]
     (doseq [row rows]
-      (when-not (and (map? row) (= expected (set (keys row)))
-                     (every? string? (keys row))
-                     (every? (fn [[column value]] (valid-row-value? column value)) row))
-        (throw (ex-info "Invalid chDB telemetry row"
-                        {:type ::invalid-ordinary-row}))))
+      (validate-ordinary-row! columns row))
     ;; The batch-local StringBuilder checks each complete maintained data.json
     ;; row plus LF in UTF-8 before appending, preserving the pre-overflow
     ;; rejection boundary while avoiding chunk sequencing/final concatenation.
     (json-each-row-payload rows)))
+
+(defn- jolt-runtime?
+  "The direct log writer is a Jolt-only implementation detail.
+
+  JVM Clojure and Babashka keep the maintained map/data.json path even though
+  both happen to provide StringBuilder.  The property is set by Jolt itself;
+  checking it before forcing the delayed encoder keeps this a capability gate,
+  not a host-specific change in JSON behavior."
+  []
+  (string? (System/getProperty "jolt.version")))
+
+(def ^:private untyped-log-shape
+  {:timestamp-unix-nano 0 :observed-time-unix-nano 0
+   :attributes {} :resource {:attributes {}} :scope {:attributes {}}})
+
+;; Accessors are selected once when the closed ClickStack log schema is
+;; confirmed below.  The accepted path does not construct an intermediate
+;; physical row map; unknown SDK shapes retain `log-row` and data.json.
+(def ^:private untyped-log-accessors
+  {"Timestamp" #(timestamp (log-timestamp-nanos %))
+   "TraceId" #(or (:trace-id %) "")
+   "SpanId" #(or (:span-id %) "")
+   "TraceFlags" #(uint8 (:trace-flags %))
+   "SeverityText" #(or (:severity-text %) "")
+   "SeverityNumber" #(uint8 (:severity-number %))
+   "ServiceName" #(service-name (:resource %) "")
+   "Body" #(value-string (:body %))
+   "ResourceSchemaUrl" #(or (get-in % [:resource :schema-url]) "")
+   "ResourceAttributes" #(attrs (get-in % [:resource :attributes]))
+   "ScopeSchemaUrl" #(or (get-in % [:scope :schema-url]) "")
+   "ScopeName" #(or (get-in % [:scope :name]) "")
+   "ScopeVersion" #(or (get-in % [:scope :version]) "")
+   "ScopeAttributes" #(attrs (get-in % [:scope :attributes]))
+   "LogAttributes" #(attrs (:attributes %))
+   "EventName" #(or (:event-name %) "")})
+
+;; Attribute maps recur heavily in collector log batches: resource and scope
+;; maps are normally shared by every record, and application log attributes
+;; often repeat too.  Preserve data.json as the only JSON authority, but keep
+;; its exact already-produced wire text in a bounded cache for this one
+;; payload.  In particular, map equality is not sufficient: data.json follows
+;; the supplied map's iteration order, so the ordered entry vector is part of
+;; the key.  The dynamic binding below gives the cache request-local lifetime;
+;; it cannot retain telemetry across exporter calls or threads.
+(def ^:private untyped-log-attribute-accessors
+  {"ResourceAttributes" #(get-in % [:resource :attributes])
+   "ScopeAttributes" #(get-in % [:scope :attributes])
+   "LogAttributes" :attributes})
+
+(def ^:private untyped-log-attribute-cache-max-entries 64)
+(def ^:private untyped-log-attribute-cache-max-chars (* 1024 1024))
+
+(def ^:dynamic ^:private *untyped-log-attribute-wire-cache* nil)
+
+(defn- untyped-log-attribute-cache []
+  {:entries (java.util.HashMap.)
+   :chars (java.util.concurrent.atomic.AtomicLong. 0)})
+
+(defn- utf8-byte-count [text]
+  ;; This is deliberately byte based rather than `(count text)`: Jolt's
+  ;; strings are not an UTF-8 byte container.  The direct batch renderer uses
+  ;; this only for data.json-owned attribute wires; its scalar subset is ASCII
+  ;; and has constant-time byte counts below.  Keeping this authority here
+  ;; makes a future native byte counter an isolated substitution, not a wire
+  ;; semantic change.
+  (alength (.getBytes text "UTF-8")))
+
+(defn- cached-untyped-log-attrs-entry [source]
+  (let [source (or source {})
+        cache *untyped-log-attribute-wire-cache*]
+    (if-not cache
+      (let [wire (json/write-str (attrs source))]
+        {:wire wire :utf8-bytes (utf8-byte-count wire)})
+      (let [entries (:entries cache)
+            ;; Do not use `source` itself here: associative equality erases
+            ;; insertion order, while JSON bytes must preserve it.
+            key (vec source)
+            cached (.get entries key)]
+        (if cached
+          cached
+          (let [encoded (json/write-str (attrs source))
+                size (count encoded)
+                entry {:wire encoded :utf8-bytes (utf8-byte-count encoded)}
+                chars (:chars cache)]
+            (when (and (< (.size entries) untyped-log-attribute-cache-max-entries)
+                       (<= (+ (.get chars) size) untyped-log-attribute-cache-max-chars))
+              (.put entries key entry)
+              (.addAndGet chars size))
+            entry))))))
+
+(defn- cached-untyped-log-attrs-wire [source]
+  (:wire (cached-untyped-log-attrs-entry source)))
+
+(defn- plain-json-string? [value]
+  ;; data.json's default writer has the exact escaping authority.  This tiny
+  ;; direct subset deliberately excludes every escaping/Unicode boundary,
+  ;; including slash, so all such values continue through data.json.
+  (and (string? value)
+       (loop [index 0]
+         (if (= index (.length value))
+           true
+           (let [code (int (.charAt value index))]
+             (if (and (<= 32 code 126)
+                      (not= code 34) (not= code 47) (not= code 92))
+               (recur (inc index))
+               false))))))
+
+(defn- append-direct-log-scalar! [^StringBuilder out value]
+  ;; Do not create a second general JSON encoder.  Dynamic attributes and any
+  ;; string that needs escaping stay on the maintained public writer.
+  (cond
+    (nil? value) (.append out "null")
+    (true? value) (.append out "true")
+    (false? value) (.append out "false")
+    (integer? value) (.append out (str value))
+    (plain-json-string? value) (do (.append out (char 34))
+                                  (.append out value)
+                                  (.append out (char 34)))
+    :else (json/write value out)))
+
+(defn- batch-direct-log-scalar-bytes
+  "Return an exact UTF-8 byte count for the direct scalar subset, or nil.
+  Its strings are ASCII by admission and JSON numbers are ASCII by grammar."
+  [value]
+  ;; This is not a general replacement for valid-row-value?. The closed log
+  ;; accessors produce only checked Timestamp, UInt8 flags/severity, and
+  ;; strings for non-attribute columns; attributes retain attrs/data.json.
+  ;; A new accessor/value domain must update the admission proof and tests or
+  ;; return nil here so the entire batch takes the generic path.
+  (cond
+    (nil? value) 4
+    (true? value) 4
+    (false? value) 5
+    (integer? value) (count (str value))
+    (plain-json-string? value) (+ 2 (count value))
+    :else nil))
+
+(defn- append-batch-direct-log-scalar! [^StringBuilder out value]
+  (cond
+    (nil? value) (.append out "null")
+    (true? value) (.append out "true")
+    (false? value) (.append out "false")
+    (integer? value) (.append out (str value))
+    :else (do (.append out (char 34)) (.append out value) (.append out (char 34)))))
+
+(defn- untyped-log-eligible? [record]
+  ;; Pure, conservative shape admission.  In particular, maps are accepted
+  ;; only where `attrs` has its normal input; unusual application values take
+  ;; the old row-construction route and therefore preserve its error/order.
+  (and (map? record)
+       (every? #(or (nil? %) (map? %)) [(:resource record) (:scope record)])
+       (every? #(or (nil? %) (map? %))
+               [(:attributes record)
+                (get-in record [:resource :attributes])
+                (get-in record [:scope :attributes])])
+       (every? #(or (nil? %) (and (integer? %) (<= 0 % 9223372036854775807)))
+               [(:timestamp-unix-nano record) (:observed-time-unix-nano record)])
+       (every? #(or (nil? %) (string? %))
+               [(:trace-id record) (:span-id record) (:severity-text record)
+                (:event-name record) (get-in record [:resource :schema-url])
+                (get-in record [:scope :schema-url]) (get-in record [:scope :name])
+                (get-in record [:scope :version])])
+       (every? #(or (nil? %) (integer? %))
+               [(:trace-flags record) (:severity-number record)])))
+
+(defn- log-key-fragments [order]
+  (mapv (fn [index column]
+          (str (if (zero? index) "{" ",") (json/write-str column) ":"))
+        (range) order))
+
+(defn- validate-ordinary-row! [columns row]
+  (let [expected (set columns)]
+    (when-not (and (map? row) (= expected (set (keys row)))
+                   (every? string? (keys row))
+                   (every? (fn [[column value]] (valid-row-value? column value)) row))
+      (throw (ex-info "Invalid chDB telemetry row"
+                      {:type ::invalid-ordinary-row}))))
+  row)
+
+(defn- compile-untyped-log-encoder []
+  ;; Set equality is the schema fence; the legacy map construction order is the
+  ;; byte-parity oracle. JSONEachRow is name-addressed, so insert-column order
+  ;; need not equal data.json's map iteration order. A field addition/removal
+  ;; returns nil and selects the generic path until consciously updated.
+  (when (jolt-runtime?)
+    (let [order (vec (keys (log-row untyped-log-shape nil)))]
+      (when (= (set order) (set schema/clickstack-log-insert-columns))
+        (when (= (set order) (set (keys untyped-log-accessors)))
+          (let [fragments (log-key-fragments order)]
+            (fn [record]
+              (if-not (untyped-log-eligible? record)
+                ;; Defensive private-call behavior only. Public log export
+                ;; tests eligibility before invoking this row encoder and
+                ;; sends a rejected whole batch through insert-batch!, which
+                ;; intentionally has different Durable/ordinary validation.
+                (let [row (log-row record nil)]
+                  (validate-ordinary-row! order row)
+                  (json/write-str row))
+                (let [out (StringBuilder.)]
+                  (loop [columns order fragments fragments]
+                    (when-let [column (first columns)]
+                      (let [attribute-at (get untyped-log-attribute-accessors column)
+                            value (if attribute-at
+                                    (cached-untyped-log-attrs-wire (attribute-at record))
+                                    ((get untyped-log-accessors column) record))]
+                        ;; Attribute wires come directly from `(attrs source)`
+                        ;; and data.json, therefore represent the same valid
+                        ;; Map(String,String) value the old accessor supplied.
+                        ;; Other columns retain the existing explicit check.
+                        (when (and (not attribute-at)
+                                   (not (valid-row-value? column value)))
+                          (throw (ex-info "Invalid chDB telemetry row"
+                                          {:type ::invalid-ordinary-row})))
+                        (.append out (first fragments))
+                        (if attribute-at
+                          (.append out value)
+                          (append-direct-log-scalar! out value))
+                        (recur (next columns) (next fragments)))))
+                  (.append out \})
+                  (.toString out))))))))))
+
+(def ^:private untyped-log-encoder (delay (compile-untyped-log-encoder)))
+
+(def ^:private generic-untyped-log-payload ::generic-untyped-log-payload)
+
+(defn- compile-untyped-log-batch-encoder []
+  ;; The row encoder above has an intentionally broader admitted subset: it
+  ;; can delegate one scalar to data.json and then check the completed row.
+  ;; This batch form has a stricter admission rule because it must know every
+  ;; record's UTF-8 size *before* looking at the next record, without turning
+  ;; each row into a final String.  Escaped/structured scalar values therefore
+  ;; select the existing all-generic path for the whole batch.
+  (when (jolt-runtime?)
+    (let [order (vec (keys (log-row untyped-log-shape nil)))]
+      (when (and (= (set order) (set schema/clickstack-log-insert-columns))
+                 (= (set order) (set (keys untyped-log-accessors))))
+        (let [fragments (log-key-fragments order)
+              fragment-bytes (mapv utf8-byte-count fragments)
+              emit (fn [records limit]
+                     (loop [remaining limit
+                   records (seq records)
+                   out (StringBuilder.)]
+              ;; Do not use `if-let`: false/nil raw records must choose the
+              ;; generic route rather than ending the batch early.
+              (if records
+                (let [record (first records)]
+                  (if-not (untyped-log-eligible? record)
+                    generic-untyped-log-payload
+                    (let [row-start-bytes 2 ; closing brace plus LF
+                          row-bytes (volatile! row-start-bytes)
+                          direct? (loop [columns order
+                                         fragments fragments
+                                         fragment-bytes fragment-bytes]
+                                    (if-let [column (first columns)]
+                                      (let [attribute-at (get untyped-log-attribute-accessors column)
+                                            value (if attribute-at
+                                                    (cached-untyped-log-attrs-entry
+                                                     (attribute-at record))
+                                                    ((get untyped-log-accessors column) record))]
+                                        ;; No StringBuilder mutation happens
+                                        ;; before the scalar's direct-admission
+                                        ;; decision. A rejected field returns
+                                        ;; the generic sentinel, and the
+                                        ;; request-local builder is discarded.
+                                        (if attribute-at
+                                          (do (.append out (first fragments))
+                                              (.append out (:wire value))
+                                              (vswap! row-bytes + (first fragment-bytes)
+                                                      (:utf8-bytes value))
+                                              (recur (next columns) (next fragments)
+                                                     (next fragment-bytes)))
+                                          (let [scalar-bytes
+                                                (batch-direct-log-scalar-bytes value)]
+                                            (if (nil? scalar-bytes)
+                                              false
+                                              (do (.append out (first fragments))
+                                                  (append-batch-direct-log-scalar! out value)
+                                                  (vswap! row-bytes + (first fragment-bytes)
+                                                          scalar-bytes)
+                                                  (recur (next columns) (next fragments)
+                                                         (next fragment-bytes)))))))
+                                      true))]
+                      (if-not direct?
+                        generic-untyped-log-payload
+                        (let [bytes @row-bytes]
+                          ;; This is the pre-next-record boundary. The
+                          ;; builder is request-local and has not reached a
+                          ;; JDBC/Durable/WAL boundary at this point.
+                          (when (> bytes remaining)
+                            (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                                            {:limit limit})))
+                          (.append out \}) (.append out "\n")
+                          (recur (- remaining bytes) (next records) out))))))
+                (.toString out))))]
+          (fn
+            ([records] (emit records max-insert-bytes))
+            ([records limit] (emit records limit))))))))
+
+(def ^:private untyped-log-batch-encoder (delay (compile-untyped-log-batch-encoder)))
+
+(defn- untyped-log-payload
+  "Encode an all-eligible batch incrementally, preserving the
+  no-later-record-after-overflow rule.
+
+  A non-eligible raw record returns the generic payload sentinel before it is
+  encoded. The caller then restarts the whole batch through the old log-row
+  path: Durable retains its historical write semantics (which do not run
+  ordinary-row validation), while ordinary transport retains its existing
+  whole-batch validation. Do not pre-scan the input: that could observe a
+  later record after an earlier direct row would overflow."
+  [encoder records]
+  ;; The selected encoder is Jolt-only; retain that boundary here as well so a
+  ;; direct/private caller cannot accidentally change JVM or BB behavior.
+  (binding [*untyped-log-attribute-wire-cache*
+            (when (jolt-runtime?) (untyped-log-attribute-cache))]
+    (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
+      ;; Test sequence presence, not the record: raw SDK callers can supply a
+      ;; falsey record, which must retain the ordinary `log-row` fallback rather
+      ;; than terminating this batch and dropping subsequent records.
+      (if records
+        (let [record (first records)]
+          (if-not (untyped-log-eligible? record)
+            generic-untyped-log-payload
+            (let [encoded (encoder record)
+                  bytes (inc (alength (.getBytes encoded "UTF-8")))]
+              (when (> bytes remaining)
+                (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                                {:limit max-insert-bytes})))
+              (.append out encoded) (.append out "\n")
+              (recur (- remaining bytes) (next records) out))))
+        (.toString out)))))
 
 (declare execute-durable-sql!)
 
@@ -453,6 +781,50 @@
     (let [payload (ordinary-payload columns rows)]
       (context/with-instrumentation-suppressed
         (chdb/insert-json-rows! connection table columns payload)))))
+
+(defn- insert-untyped-log-records!
+  "Jolt's closed untyped-log encoder is selected only after its schema fence.
+
+  The generic `insert-batch!` remains the sole path for typed logs and for
+  JVM/BB.  The selected Jolt path feeds the same exact JSONEachRow bytes into
+  the same ordinary/Durable ownership boundaries; it only avoids physical row
+  map construction for conservatively admitted SDK records."
+  [connection state records]
+  (let [snapshot @state
+        typed-projector (:typed-log-projector snapshot)
+        ;; This fixed writer owns precisely the untyped collector schema. A
+        ;; constructed or mutated exporter state with a different ordered
+        ;; column vector must retain insert-batch!'s generic validation and
+        ;; query construction rather than pairing its payload with that state.
+        encoder (when (and (not typed-projector)
+                           (= (:log-insert-columns snapshot)
+                              schema/clickstack-log-insert-columns))
+                  @untyped-log-encoder)
+        batch-encoder (when encoder @untyped-log-batch-encoder)]
+    (if-not encoder
+      (insert-batch! connection state "otel_logs"
+                     (:log-insert-columns snapshot)
+                     (selected-log-insert-query typed-projector)
+                     (map #(log-row % typed-projector) records))
+      (let [payload (if batch-encoder
+                      (binding [*untyped-log-attribute-wire-cache*
+                                (untyped-log-attribute-cache)]
+                        (batch-encoder records))
+                      (untyped-log-payload encoder records))
+            query (selected-log-insert-query nil)]
+        (if (= generic-untyped-log-payload payload)
+          ;; Keep every non-admitted raw shape on the historical path. In
+          ;; particular Durable deliberately serializes this path without the
+          ;; ordinary transport's physical-row validation.
+          (insert-batch! connection state "otel_logs"
+                         (:log-insert-columns snapshot) query
+                         (map #(log-row % nil) records))
+          (if (:durable? snapshot)
+            (execute-durable-sql!
+             connection (str query " FORMAT JSONEachRow\n" payload))
+            (context/with-instrumentation-suppressed
+              (chdb/insert-json-rows! connection "otel_logs"
+                                      (:log-insert-columns snapshot) payload))))))))
 
 (defn- typed-columns [fields]
   (vec (mapcat (fn [field]
@@ -764,11 +1136,7 @@
       false
       (try
         (when (seq records)
-          (let [typed-projector (:typed-log-projector @state)]
-            (insert-batch! connection state "otel_logs"
-                               (:log-insert-columns @state)
-                               (selected-log-insert-query typed-projector)
-                               (map #(log-row % typed-projector) records))))
+          (insert-untyped-log-records! connection state records))
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
