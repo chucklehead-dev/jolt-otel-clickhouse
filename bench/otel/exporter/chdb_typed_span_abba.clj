@@ -89,7 +89,10 @@
               _ (insist (= (= route "B") (ifn? (:typed-span-encoder selected)))
                         :selected-route)
               rows (mapv #(#'exporter/span-row % typed-projector) spans)
-              old-encode #(#'exporter/json-each-row-payload rows)
+              ;; Include row construction in A's timed encoding boundary;
+              ;; the public row-map path constructs these maps per batch.
+              old-encode #(#'exporter/json-each-row-payload
+                            (map #(#'exporter/span-row % typed-projector) spans))
               new-encode #(#'exporter/untyped-span-payload encoder spans)
               old-payload (old-encode)
               new-payload (new-encode)
