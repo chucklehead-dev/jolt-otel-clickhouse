@@ -94,11 +94,24 @@
   (into {} (map (fn [[key value]] [key (- (get after key) value)]) before)))
 
 (defn- options [root phase]
-  {:namespace-backend (local/local-backend (str root "/objects"))
-   :object-id "log-qualification"
-   :scratch-parent (str root "/scratch-" phase)
-   :owner "log-qualification" :instance "writer-1" :database "otel"
-   :lease-ttl-ms 900000 :heartbeat-interval-ms 300000})
+  (cond-> {:namespace-backend (local/local-backend (str root "/objects"))
+           :object-id "log-qualification"
+           :scratch-parent (str root "/scratch-" phase)}
+    (= phase "writer")
+    (assoc :owner "log-qualification" :instance "writer-1" :database "otel"
+           :lease-ttl-ms 900000 :heartbeat-interval-ms 300000)))
+
+(defn- options-contract! [root]
+  (check! (= #{:namespace-backend :object-id :scratch-parent}
+             (set (keys (options root "reader"))))
+          "snapshot has no writer-only keys")
+  ;; The selected provisional chDB #204 constructor is the authority on the
+  ;; accepted option sets; this phase does not open a DB or touch object data.
+  (check! (:read-only? (durable/snapshot-dbspec (options root "reader")))
+          "snapshot dbspec accepted")
+  (check! (= "writer-1" (:instance (durable/writer-dbspec (options root "writer"))))
+          "writer dbspec accepted")
+  (println :log-options-green))
 
 (defn- writer! [root arm samples]
   (native/ensure-loaded!)
@@ -211,6 +224,7 @@
 
 (defn -main [phase root arm sample-text]
   (case phase
+    "options" (options-contract! root)
     "writer" (writer! root arm (Long/parseLong sample-text))
     "reader" (reader! root)
     (throw (ex-info "Expected writer or reader phase" {}))))

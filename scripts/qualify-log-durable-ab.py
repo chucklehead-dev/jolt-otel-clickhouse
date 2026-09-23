@@ -223,6 +223,9 @@ def main():
                 resolved.append(classpath(arm, log.read_text()))
                 run_child(command(arm, "-e", "(require 'otel.exporter.log-durable-ab) (println :harness-load-ok)"),
                           cell / "harness-load.log", environment(cell, arm, "writer"))
+                run_child(command(arm, "-m", "otel.exporter.log-durable-ab", "options",
+                                  str(cell), arm, "0"),
+                          cell / "options-contract.log", environment(cell, arm, "writer"))
             require(resolved[0] == resolved[1], "non-exporter classpath mismatch")
             (root / "pins.json").write_text(json.dumps(initial, indent=2) + "\n")
             if args.mode != "preflight":
