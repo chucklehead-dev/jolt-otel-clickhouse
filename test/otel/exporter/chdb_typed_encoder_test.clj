@@ -51,6 +51,43 @@
   (is (= "shadow" (get (#'exporter/span-row shape
                          (fn [_] {"SpanName" "shadow"})) "SpanName"))))
 
+(deftest typed-payload-enforces-utf8-and-lf-byte-bound
+  (let [limit (* 8 1024 1024)
+        seen (atom [])
+        projector (fn [span]
+                    (swap! seen conj (:name span))
+                    (projected span))
+        encoder (#'exporter/compile-untyped-span-encoder projector)
+        empty-row (encoder (assoc shape :name ""))
+        overhead (inc (alength (.getBytes empty-row "UTF-8")))
+        full (assoc shape :name (apply str (repeat (- limit overhead) "x")))
+        next-row (assoc shape :name "next")
+        later (assoc shape :name "must-not-start")]
+    (is (ifn? encoder))
+    (reset! seen [])
+    (let [payload (#'exporter/untyped-span-payload encoder [full])]
+      (is (= limit (alength (.getBytes payload "UTF-8"))))
+      (is (= [(get full :name)] @seen)))
+    (reset! seen [])
+    (let [error (try
+                  (#'exporter/untyped-span-payload encoder [full next-row later])
+                  nil
+                  (catch clojure.lang.ExceptionInfo error error))]
+      (is (some? error))
+      (is (= {:limit limit} (ex-data error)))
+      (is (= [(:name full) "next"] @seen)))
+    ;; A UTF-8 scalar consumes two bytes, even though it is one character.
+    (let [ascii (assoc shape :name "x")
+          accented (assoc shape :name "é")
+          ascii-limit (inc (alength (.getBytes (encoder ascii) "UTF-8")))]
+      (is (= ascii-limit
+             (alength (.getBytes (#'exporter/untyped-span-payload encoder [ascii]
+                               ascii-limit) "UTF-8"))))
+      (is (some? (try
+                   (#'exporter/untyped-span-payload encoder [accented] ascii-limit)
+                   nil
+                   (catch clojure.lang.ExceptionInfo error error)))))))
+
 (defn -main [& _]
   (let [result (run-tests 'otel.exporter.chdb-typed-encoder-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
