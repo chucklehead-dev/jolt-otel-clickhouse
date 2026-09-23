@@ -99,12 +99,6 @@
                       {:limit insert-byte-limit :wire-bytes wire-bytes})))
     (update candidate :body #(subs % 0 (- (count %) adjustment)))))
 
-(defn- with-log-encoder [encoder thunk]
-  ;; This is an observational seam only: production retains its delayed,
-  ;; schema-fenced compiler-selected encoder. It lets the route tests prove
-  ;; that a rejected row never requests construction of a later raw record.
-  (with-redefs-fn {#'exporter/untyped-log-encoder (delay encoder)} thunk))
-
 (deftest exact-utf8-pathological-corpus
   (let [encoder (#'exporter/compile-untyped-log-encoder)
         corpus (into [base-log
@@ -187,31 +181,30 @@
                        (apply str (map #(str (baseline %) "\n") records))))
            (utf8 (first @calls))))))
 
-(deftest direct-log-8mib-boundary-preserves-route-and-construction-order
+(deftest large-log-8mib-boundary-keeps-exact-payload-and-no-driver-overflow
   (let [direct (#'exporter/compile-untyped-log-encoder)
         exact (exact-limit-record direct)
         overflow (assoc exact :body (str (:body exact) "x"))
-        later (assoc base-log :body "must-not-be-constructed")
         payload (#'exporter/untyped-log-payload direct [exact])]
     (is (= insert-byte-limit (alength (.getBytes payload "UTF-8"))))
-    ;; Check the low-level direct writer's strict sequencing first. Public
-    ;; ordinary/Durable route checks below install this same observation.
+    ;; A giant SDK body may choose the generic batch route after the OTel
+    ;; canonicalizer renders it with quotes. The row writer's old bound still
+    ;; has a strict no-later-record rule, while public routes below only claim
+    ;; exact payload and no driver effect on overflow.
     (let [seen (atom [])
           observed (fn [record]
-                     (swap! seen conj (:body record))
-                     (direct record))]
+                     (swap! seen conj (count (:body record)))
+                     (direct record))
+          later (assoc base-log :body "must-not-be-constructed")]
       (is (thrown-with-msg? clojure.lang.ExceptionInfo
                             #"exceeds 8 MiB"
                             (#'exporter/untyped-log-payload observed [exact overflow later])))
-      (is (= [(:body exact) (:body overflow)] @seen)))
+      (is (= [(count (:body exact)) (count (:body overflow))] @seen)))
     (doseq [durable? [false true]]
       (let [target (log-target durable?)
-            writes (atom [])
-            seen (atom [])
-            observed (fn [record]
-                       (swap! seen conj (:body record))
-                       (direct record))]
-        ;; Exact payloads remain on the direct route for both transport modes.
+            writes (atom [])]
+        ;; Both transports accept the exact boundary, whether the conservative
+        ;; batch admission chooses direct or generic encoding.
         (if durable?
           (with-redefs [durable/execute-and-flush!
                         (fn [_ sql] (swap! writes conj sql) {:status :committed})]
@@ -221,19 +214,17 @@
             (is (true? (logs/export-logs! target [exact])))))
         (is (= 1 (count @writes)))
         (reset! writes [])
-        ;; Overflow cannot enter either driver boundary, and the next raw
-        ;; record remains unobserved. This is particularly important for
-        ;; Durable: it prevents a partial SQL/WAL candidate from being built.
-        (with-log-encoder observed
-          #(if durable?
-             (with-redefs [durable/execute-and-flush!
-                           (fn [_ sql] (swap! writes conj sql) {:status :committed})]
-               (is (false? (logs/export-logs! target [exact overflow later]))))
-             (with-redefs [chdb/insert-json-rows!
-                           (fn [& arguments] (swap! writes conj arguments))]
-               (is (false? (logs/export-logs! target [exact overflow later]))))))
+        ;; Overflow cannot enter either driver boundary or WAL.
+        (if durable?
+          (with-redefs [durable/execute-and-flush!
+                        (fn [_ sql] (swap! writes conj sql) {:status :committed})]
+            (is (false? (logs/export-logs! target [overflow]))))
+          (with-redefs [chdb/insert-json-rows!
+                        (fn [& arguments] (swap! writes conj arguments))]
+            (is (false? (logs/export-logs! target [overflow])))))
         (is (empty? @writes))
-        (is (= [(:body exact) (:body overflow)] @seen))))))
+        (is (= "chDB telemetry export batch exceeds 8 MiB"
+               (some-> (exporter/last-error target) ex-message)))))))
 
 (deftest fallback-and-host-capability-contract
   (let [encoder (#'exporter/compile-untyped-log-encoder)
@@ -313,6 +304,28 @@
       (is (true? (logs/export-logs! target records))))
     (is (= [(utf8 expected)] (mapv utf8 @calls)))))
 
+(deftest typed-log-route-keeps-merged-generic-projector
+  (let [projector (fn [record] {"promoted_value" (get-in record [:attributes "answer"])})
+        target (exporter/->ChdbExporter
+                :writer false #{:logs}
+                (atom {:closed-signals #{} :durable? true
+                       :typed-log-projector projector
+                       :log-insert-columns (conj (:log-insert-columns @(:state (log-target true)))
+                                                 "promoted_value")}))
+        records [base-log (assoc base-log :body "typed second")]
+        expected (str "insert into otel_logs FORMAT JSONEachRow\n"
+                      (apply str (map #(str (json/write-str (#'exporter/log-row % projector)) "\n")
+                                      records)))
+        calls (atom [])]
+    ;; A typed log must never force the fixed-schema encoder, even when all raw
+    ;; records otherwise satisfy its admission predicate.
+    (with-redefs [exporter/untyped-log-encoder (delay (throw (ex-info "typed log selected untyped encoder" {})))
+                  durable/execute-and-flush! (fn [_ sql]
+                                               (swap! calls conj sql)
+                                               {:status :committed})]
+      (is (true? (logs/export-logs! target records))))
+    (is (= [(utf8 expected)] (mapv utf8 @calls)))))
+
 (deftest falsey-records-retain-generic-rows-and-durable-route
   ;; A raw caller can pass nil or false even though normal SDK records are
   ;; maps. The generic path materializes their default log rows; the fast path
@@ -356,12 +369,13 @@
         record (assoc base-log :resource {:schema-url :legacy-keyword
                                           :attributes {"service.name" "fallback"}})
         query "insert into otel_logs (Timestamp, TraceId, SpanId, TraceFlags, SeverityText, SeverityNumber, ServiceName, Body, ResourceSchemaUrl, ResourceAttributes, ScopeSchemaUrl, ScopeName, ScopeVersion, ScopeAttributes, LogAttributes, EventName) FORMAT JSONEachRow\n"
-        expected (str query (baseline record) "\n")
+        records [base-log record]
+        expected (str query (baseline base-log) "\n" (baseline record) "\n")
         calls (atom [])]
     (is (not (#'exporter/untyped-log-eligible? record)))
     (with-redefs [durable/execute-and-flush! (fn [_ sql]
                                                (swap! calls conj sql) {:status :committed})]
-      (is (true? (logs/export-logs! target [record]))))
+      (is (true? (logs/export-logs! target records))))
     (is (= [(utf8 expected)] (mapv utf8 @calls)))))
 
 (deftest noneligible-record-keeps-ordinary-validation

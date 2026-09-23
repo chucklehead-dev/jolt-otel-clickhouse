@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a Jolt-only, schema-fenced untyped log batch encoder to the production
+  exporter. Admitted records avoid physical row maps while retaining exact
+  `data.json` JSONEachRow bytes, the 8 MiB bound, and the same ordinary or
+  caller-atomic Durable write boundary. Typed logs, other hosts, and batches
+  with any non-admitted record retain the existing generic path.
+
 - Extend the Durable JSONEachRow span encoder to installer-confirmed typed
   columns. It writes the established column order and public `data.json` values
   without building the outer physical row map; unsupported shapes and unsafe
