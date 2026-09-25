@@ -529,6 +529,73 @@
                    :exporter-in-flight-shutdown-drain
                    :grouped-publication-or-exactly-once]}))))))
 
+(defn- check-wire-routing! [captured]
+  (check! (= 2 (count captured))
+          "otel-exporter/wire-capture-count"
+          "span and log exports did not each reach the transport spy" {})
+  (let [[[span-table span-columns] [log-table log-columns]] captured]
+    (check! (= "otel_traces" span-table)
+            "otel-exporter/span-table-routing" "span used the wrong table" {})
+    (check! (= "otel_logs" log-table)
+            "otel-exporter/log-table-routing" "log used the wrong table" {})
+    (check! (= (into schema/clickstack-trace-insert-columns
+                     ["EventsJSON" "LinksJSON"])
+               span-columns)
+            "otel-exporter/span-insert-columns"
+            "span insert columns differ from the pinned collector order" {})
+    (check! (= schema/clickstack-log-insert-columns log-columns)
+            "otel-exporter/log-insert-columns"
+            "log insert columns differ from the pinned collector order" {})))
+
+(defn- rejected-wire-origin [captured]
+  (try
+    (check-wire-routing! captured)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (:hegel/origin (ex-data error)))))
+
+(defn- wire-routing-negative-controls! []
+  ;; Capture the real public exporter calls through the same four-argument
+  ;; transport API as the generated property, then corrupt only that capture.
+  (let [captured (atom [])
+        exporter (chdb-export/->ChdbExporter
+                  {} false #{:spans :logs}
+                  (atom (support/exporter-state
+                         {:closed-signals #{}
+                          :connection-closed? false :last-error nil})))]
+    (with-redefs [chdb/insert-json-rows!
+                  (fn [_ table columns payload]
+                    (swap! captured conj [table columns payload])
+                    0)]
+      (check! (export/export-spans! exporter [(sample-span)])
+              "otel-exporter/negative-control-span-export"
+              "span fixture did not reach the transport spy" {})
+      (check! (sdk-logs/export-logs! exporter [(sample-log)])
+              "otel-exporter/negative-control-log-export"
+              "log fixture did not reach the transport spy" {}))
+    (let [actual @captured
+          span-columns (get-in actual [0 1])
+          log-columns (get-in actual [1 1])]
+      (check-wire-routing! actual)
+      (doseq [[label mutated expected-origin]
+              [["wrong span table" (assoc-in actual [0 0] "otel_logs")
+                "otel-exporter/span-table-routing"]
+               ["wrong log table" (assoc-in actual [1 0] "otel_traces")
+                "otel-exporter/log-table-routing"]
+               ["wrong span column" (assoc-in actual [0 1]
+                                             (assoc (vec span-columns) 0 "WrongColumn"))
+                "otel-exporter/span-insert-columns"]
+               ["reordered span columns" (assoc-in actual [0 1]
+                                                 (vec (reverse span-columns)))
+                "otel-exporter/span-insert-columns"]
+               ["reordered log columns" (assoc-in actual [1 1]
+                                                (vec (reverse log-columns)))
+                "otel-exporter/log-insert-columns"]]]
+        (check! (= expected-origin (rejected-wire-origin mutated))
+                "otel-exporter/wire-routing-negative-control"
+                "transport spy accepted a wrong table or column order"
+                {:control label})))))
+
 (defn- wire-json-property []
   (h/run-test!
    {:name "otel exporter JSON safety and correlation"
@@ -584,20 +651,10 @@
                  "otel-exporter/span-export" "span export failed" {})
          (check! (sdk-logs/export-logs! exporter [log])
                  "otel-exporter/log-export" "log export failed" {}))
-       (let [[[span-table span-columns span-lines] [log-table log-columns log-lines]] @captured
+       (check-wire-routing! @captured)
+       (let [[[_ _ span-lines] [_ _ log-lines]] @captured
              span-wire (json/read-str (first span-lines))
              log-wire (json/read-str (first log-lines))]
-         (check! (= "otel_traces" span-table)
-                 "otel-exporter/table-routing" "signal used the wrong table" {})
-         (check! (= "otel_logs" log-table)
-                 "otel-exporter/table-routing" "signal used the wrong table" {})
-         (check! (= (into schema/clickstack-trace-insert-columns ["EventsJSON" "LinksJSON"])
-                    span-columns)
-                 "otel-exporter/span-insert-columns"
-                 "span insert columns differ from the pinned collector order" {})
-         (check! (= schema/clickstack-log-insert-columns log-columns)
-                 "otel-exporter/log-insert-columns"
-                 "log insert columns differ from the pinned collector order" {})
          (check! (= [trace-id span-id trace-id span-id]
                     [(get span-wire "TraceId") (get span-wire "SpanId")
                      (get log-wire "TraceId") (get log-wire "SpanId")])
@@ -1135,6 +1192,7 @@
                    {:first-bucket first-bucket})))))))
 
 (defn run-properties! []
+  (wire-routing-negative-controls!)
   [{:label "per-signal lifecycle swarm" :result (lifecycle-property)}
    {:label "durable acknowledgement history"
     :result (durable-atomic-history-property)}

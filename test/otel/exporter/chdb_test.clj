@@ -71,6 +71,48 @@
     (println "all checks passed")
     (throw (ex-info (str @failures " checks failed") {:failures @failures}))))
 
+(defn- run-hegel-properties! []
+  (doseq [{:keys [label result]} (property/run-properties!)]
+    (println "  hegel" label "seed" (:seed result))
+    (check (str "Hegel " label) true (:passed? result))
+    (check (str "Hegel " label " is deterministic") false (:flaky? result))))
+
+(defn- synthetic-hegel-terminal [result]
+  (let [isolated-failures (atom 0)]
+    (with-redefs [failures isolated-failures
+                  property/run-properties!
+                  (fn [] [{:label "synthetic verdict" :result result}])]
+      (binding [*out* (java.io.StringWriter.)]
+        (run-hegel-properties!)
+        {:count @isolated-failures
+         :terminal (thrown-data finish-checks!)}))))
+
+(defn- run-hegel-verdict-negative-controls! []
+  ;; These exercise the maintained custom runner without loading libhegel or
+  ;; creating a native connection. An exception from a Hegel run must also
+  ;; escape unchanged; the outer entrypoint then terminates unsuccessfully.
+  (check "Hegel failed but non-flaky result remains a runner failure"
+         {:count 1 :terminal {:failures 1}}
+         (synthetic-hegel-terminal {:passed? false :flaky? false
+                                    :status :failed}))
+  (check "Hegel flaky result remains a runner failure"
+         {:count 1 :terminal {:failures 1}}
+         (synthetic-hegel-terminal {:passed? true :flaky? true
+                                    :status :error}))
+  (check "Hegel error result remains a runner failure"
+         {:count 2 :terminal {:failures 2}}
+         (synthetic-hegel-terminal {:passed? false :flaky? true
+                                    :status :error}))
+  (let [sentinel (ex-info "synthetic Hegel run error"
+                          {:type ::synthetic-hegel-run-error})
+        observed (with-redefs [property/run-properties! (fn [] (throw sentinel))]
+                   (try
+                     (run-hegel-properties!)
+                     nil
+                     (catch Throwable error error)))]
+    (check "Hegel run exception reaches the outer failing entrypoint"
+           true (identical? sentinel observed))))
+
 (defn- run-ordinary-transport-diagnostics-checks []
   (let [suite 'otel.exporter.chdb-ordinary-transport-diagnostics-test
         names '[known-schema-categories-are-closed
@@ -1064,9 +1106,7 @@
            (:signal (ex-data (chdb-export/last-error exporter))))
     (check "declared signal still owns shutdown" true
            (export/shutdown-exporter! exporter)))
-  (doseq [{:keys [label result]} (property/run-properties!)]
-    (println "  hegel" label "seed" (:seed result))
-    (check (str "Hegel " label) true (:passed? result))
-    (check (str "Hegel " label " is deterministic") false (:flaky? result)))
+  (run-hegel-verdict-negative-controls!)
+  (run-hegel-properties!)
   (explorer-test/run check)
   (finish-checks!))

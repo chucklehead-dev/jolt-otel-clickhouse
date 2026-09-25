@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add mock-only negative controls for the exporter transport spy's actual
+  table and ordered-column arguments, and for the maintained Hegel runner's
+  failed, flaky, and thrown-error verdicts. These controls do not qualify
+  native lifetime, fresh-reader parity, or benchmark behavior.
+
 - Align the Durable acknowledgement model's integration notes and Hegel ITF
   replay with the adopted per-call `execute-and-flush!` boundary. The replay
   checks two sequential confirmed exports; exporter admission and shutdown
