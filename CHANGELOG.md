@@ -3,11 +3,13 @@
 ## Unreleased
 
 - Fence exporter shutdown and call admission in one lifecycle state transition.
-  Each signal's shutdown waits for its admitted calls; an exporter-owned
-  connection closes only after admitted span, metric, log, and span-flush calls
-  have released it. Concurrent/repeated shutdowns observe the terminal close
-  result. Interrupted shutdown waiters cannot abandon the pending close, and
-  shared connections remain application-owned.
+  Each signal's shutdown waits for calls admitted to that signal; this
+  per-signal drain does not itself close the connection. Only shutdown of the
+  final declared signal closes an exporter-owned connection, after all
+  admitted span, metric, log, and span-flush calls have released it.
+  Concurrent/repeated shutdowns observe the terminal close result.
+  Interrupted shutdown waiters retain their interrupt flag without abandoning
+  the pending close; shared connections remain application-owned.
 
 - Add a Jolt-only, schema-fenced untyped log batch encoder to the production
   exporter. Admitted records avoid physical row maps while retaining exact

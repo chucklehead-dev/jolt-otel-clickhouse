@@ -121,11 +121,12 @@
           (let [shutdown (future
                            (.interrupt (Thread/currentThread))
                            (try
-                             (export/shutdown-exporter! exporter)
+                             (let [result (export/shutdown-exporter! exporter)]
+                               [result (Thread/interrupted)])
                              (finally (Thread/interrupted))))]
             (is (true? (await! fenced)))
-            (is (false? (await! shutdown))
-                "interrupted waiter reports failure without canceling close")
+            (is (= [false true] (await! shutdown))
+                "interrupted waiter reports failure and retains its interrupt flag")
             (is (= 0 @closes))
             (deliver release true)
             (is (true? (await! writer)))
@@ -133,6 +134,71 @@
             (is (= 1 @closes))
             (is (= :closed (:connection-close-status @state))))
           (finally (deliver release true)))))))
+
+(deftest interrupted-waiter-on-terminal-close-result-preserves-flag
+  ;; The first signal's drain is already complete. This waiter reaches the
+  ;; *second* promise (the owned connection's close result), not only the
+  ;; per-signal drain promise tested above.
+  (let [close-entered (promise) release-close (promise)
+        closes (atom 0)
+        {:keys [state exporter]}
+        (fixture (fn []
+                   (swap! closes inc)
+                   (deliver close-entered true)
+                   @release-close) true #{:spans :logs})]
+    (is (true? (export/shutdown-exporter! exporter)))
+    (let [owner (future (logs/shutdown-log-exporter! exporter))]
+      (try
+        (is (true? (await! close-entered)))
+        (let [waiter (future
+                       (.interrupt (Thread/currentThread))
+                       (try
+                         (let [result (logs/shutdown-log-exporter! exporter)]
+                           [result (Thread/interrupted)])
+                         (finally (Thread/interrupted))))]
+          (is (= [false true] (await! waiter)))
+          (is (= 1 @closes))
+          (is (= :closing (:connection-close-status @state)))
+          (deliver release-close true)
+          (is (true? (await! owner)))
+          (is (true? (logs/shutdown-log-exporter! exporter)))
+          (is (= 1 @closes)))
+        (finally (deliver release-close true))))))
+
+(deftest racing-shutdown-observes-terminal-close-failure-without-retry
+  (let [close-entered (promise) release-close (promise)
+        racer-crossed-state (promise)
+        failure (ex-info "synthetic close failure" {:type ::racing-close-failure})
+        closes (atom 0)
+        {:keys [state exporter]}
+        (fixture (fn []
+                   (swap! closes inc)
+                   (deliver close-entered true)
+                   @release-close
+                   (throw failure)) true #{:spans :logs})]
+    (is (true? (export/shutdown-exporter! exporter)))
+    (let [owner (future (logs/shutdown-log-exporter! exporter))]
+      (try
+        (is (true? (await! close-entered)))
+        ;; Jolt atom watches fire even for the repeated close-signal! swap
+        ;; that leaves state unchanged. The owner is blocked in .close, so
+        ;; this next state transition is the racing shutdown itself.
+        (add-watch state ::racer-crossed-state
+                   (fn [_ _ _ _] (deliver racer-crossed-state true)))
+        (let [racer (future (logs/shutdown-log-exporter! exporter))]
+          (is (true? (await! racer-crossed-state)))
+          (is (= ::pending (deref racer 10 ::pending)))
+          (is (= 1 @closes))
+          (deliver release-close true)
+          (is (false? (await! owner)))
+          (is (false? (await! racer)))
+          (is (false? (logs/shutdown-log-exporter! exporter)))
+          (is (= 1 @closes))
+          (is (= :failed (:connection-close-status @state)))
+          (is (identical? failure (chdb-export/last-error exporter))))
+        (finally
+          (remove-watch state ::racer-crossed-state)
+          (deliver release-close true))))))
 
 (deftest nonterminal-and-shared-signal-shutdown-drain-admitted-calls
   (doseq [owned? [true false]]

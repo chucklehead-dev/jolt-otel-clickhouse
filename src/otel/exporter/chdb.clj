@@ -1057,6 +1057,9 @@
     (catch java.lang.InterruptedException error
       ;; The final admitted caller still owns drain and terminal close.
       (swap! state assoc :last-error error)
+      ;; Promise deref clears Java's interrupted status when throwing. Keep
+      ;; the caller's cancellation signal intact even though close proceeds.
+      (.interrupt (Thread/currentThread))
       false)))
 
 (defn- close-signal! [connection owned? expected-signals state signal]
