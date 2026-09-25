@@ -172,15 +172,32 @@
                        "non-terminal signal shutdown failed"
                        {:signal signal :expected expected}))
            winner (future (invoke! terminal-signal))]
-       (try
-         (await! close-entered "otel-exporter/close-race-enter-timeout")
-         (doseq [signal racing-signals]
-           (check! (invoke! signal)
+       (let [racers (atom [])
+             racers-entered (promise)]
+         (try
+           (await! close-entered "otel-exporter/close-race-enter-timeout")
+           (let [base-entered (count (filter #(and (= :shutdown (:kind %))
+                                                   (= :enter (:phase %))) @journal))
+                 required (+ base-entered (count racing-signals))]
+             ;; A spawned future is not an entered shutdown. Retain the close
+             ;; gate until every generated racer has recorded its invocation.
+             (add-watch journal ::racer-entry
+                        (fn [_ _ _ events]
+                          (when (<= required
+                                    (count (filter #(and (= :shutdown (:kind %))
+                                                           (= :enter (:phase %))) events)))
+                            (deliver racers-entered true))))
+             (doseq [signal racing-signals]
+               (swap! racers conj [signal (future (invoke! signal))]))
+             (await! racers-entered "otel-exporter/close-race-entry-timeout"))
+           (finally
+             (remove-watch journal ::racer-entry)
+             (deliver release-close true)))
+         (doseq [[signal task] @racers]
+           (check! (await! task "otel-exporter/racing-shutdown-timeout")
                    "otel-exporter/racing-shutdown-result"
                    "shutdown racing an accepted close did not succeed"
-                   {:signal signal :expected expected}))
-         (finally
-           (deliver release-close true)))
+                   {:signal signal :expected expected})))
        (check! (await! winner "otel-exporter/close-race-winner-timeout")
                "otel-exporter/close-race-winner-result"
                "winning shutdown did not complete successfully"
