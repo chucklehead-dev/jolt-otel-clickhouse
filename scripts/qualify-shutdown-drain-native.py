@@ -95,7 +95,8 @@ def main():
     path = run("classpath", base + ["-Spath"], env, root, timeout=90).strip().splitlines()[-1]
     providers = [Path(entry).resolve() for entry in path.split(":")
                  if (Path(entry) / "jdbc" / "chdb.clj").is_file()]
-    require(providers == [driver], "chDB override not the unique resolved provider")
+    require(providers == [(driver / "src").resolve()],
+            "chDB override not the unique resolved provider")
     (root / "classpath-provider.txt").write_text(str(driver) + "\n")
     for phase in ("writer", "reader"):
         output = run(phase, base + ["-m", "otel.exporter.chdb-shutdown-drain-native-test",
