@@ -27,13 +27,20 @@ boundary, not an exporter mutex.
 
 ## Runtime integration boundary
 
-chDB now implements the writer-level primitive (jolt-chdb #188); this model is
-not evidence that the exporter has adopted or integration-trace-qualified it.
-Today the exporter exercises one ordinary insert, persistence barrier, and
-return path. The Hegel property therefore validates the checked-in ITF as a
-model witness separately from that current single-export runtime contract. It
-must not equate `Atomic`, `ForceFlush`, or `Close` model actions with exporter
-calls until exporter adoption and integration trace tests land.
+chDB implements the writer-level primitive (jolt-chdb #188), and the exporter
+now uses one `execute-and-flush!` call for each non-empty Durable physical
+insert. The Hegel ITF replay checks this per-call runtime boundary separately
+from the model's two-caller witness. A native two-process shutdown trace also
+checks that two admitted exports keep their own confirmed results while final
+owned shutdown waits, then a fresh reader compares their full physical rows.
+
+The current model is still a **writer-queue** abstraction: its `Close` request
+waits behind earlier writer requests, but it has no state for exporter calls
+that have returned from the writer yet remain in flight before their `finally`
+release. Thus it does not prove the exporter's admission fence or in-flight
+shutdown drain. `ForceFlush` is likewise a writer request, not a proof of
+every exporter flush path. It also does not prove grouped publication or
+exactly-once delivery; those are separate work (#80).
 
 The modeled state is one cohesive record:
 
@@ -56,7 +63,8 @@ committed caller cannot be settled false.
 | `separateExecute*` / `separateFlush*` | existing separate `execute!` then `flush!` queue requests |
 | `Atomic(A)` / `Atomic(B)` | merged writer-level `execute-and-flush!` admission and terminal settlement (#188) |
 | `ForceFlush` / `Close` | positioned force flush and shutdown fencing behind admitted requests |
-| event ordering | `durable-barrier-history-property` in `test/otel/exporter/chdb_property_test.clj` |
+| per-call result and event ordering | `durable-atomic-history-property` and `durable-itf-replay-property` in `test/otel/exporter/chdb_property_test.clj` |
+| exporter in-flight drain | causal tests in `test/otel/exporter/chdb_shutdown_drain_test.clj` and the opt-in two-process native shutdown gate; not yet represented in this Quint model |
 
 The corrected module disables separated requests. The mutant enables them; its
 deterministic test and bounded Apalache check produce the required state in
@@ -72,8 +80,9 @@ corrected bounded check, and the required mutant counterexample with:
 scripts/check-durable-export-quint.sh
 ```
 
-The corrected path models separate A/B admission, one atomic worker transition
-per caller, a positioned force flush, and a FIFO close with queued callers.
+The corrected path models separate A/B writer admission, one atomic worker
+transition per caller, a positioned force flush, and a FIFO writer close with
+queued callers. It does not yet model exporter call release after worker ACK.
 The red interleave takes four separated requests. This bounded check is not a
 claim about the lower-level distributed Durable protocol.
 

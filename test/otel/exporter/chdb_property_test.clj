@@ -450,7 +450,7 @@
 
 (defn- durable-itf-replay-property []
   (h/run-test!
-   {:name "Quint durable queue witness and runtime boundary"
+   {:name "Quint durable queue witness and adopted atomic runtime boundary"
     :database "" :verbosity :quiet :derandomize? true :test-cases 1}
    (fn [_]
      (let [trace (json/read-str
@@ -463,31 +463,39 @@
            expected-final (get final-model-state state-key)
            tag-set (fn [itf-set]
                      (set (map #(get % "tag") (get itf-set "#set"))))
-           implementation-actions (atom ["init"])
-           ;; The ITF is a witness for the merged chDB writer queue. The
-           ;; current exporter still owns one ordinary insert -> barrier ->
-           ;; return path; it has not adopted or integration-trace-qualified
-           ;; Atomic/ForceFlush/Close writer operations.
+           implementation-actions (atom [])
+           ;; The ITF witnesses two independently settled writer requests.
+           ;; These sequential runtime calls check adoption of that per-call
+           ;; boundary, not the ITF's concurrent admission or shutdown order.
            exporter
            (chdb-export/->ChdbExporter
             :fake false #{:spans}
-            (atom {:span-insert-columns (:span-insert-columns (support/exporter-state {}))
-                   :closed-signals #{}
-                   :connection-close-claimed? false
-                   :connection-close-status :open
-                   :connection-closed? false
-                   :persistence-barrier
-                   (fn [_]
-                     (swap! implementation-actions conj "barrierSuccess"))
-                   :last-error nil}))]
-       (let [result
-             (with-redefs [chdb/insert-json-rows!
+            (atom (support/exporter-state
+                   {:closed-signals #{}
+                    :connection-close-claimed? false
+                    :connection-close-status :open
+                    :connection-closed? false
+                    :durable? true
+                    :persistence-barrier
+                    (fn [_]
+                      (fail! "otel-exporter/quint-obsolete-barrier"
+                             "Durable export used a separate barrier" {}))
+                    :last-error nil})))]
+       (let [results
+             (with-redefs [durable/execute-and-flush!
+                           (fn [_ sql]
+                             (check! (str/includes? sql "FORMAT JSONEachRow")
+                                     "otel-exporter/quint-atomic-sql"
+                                     "Durable call did not carry physical insert SQL"
+                                     {:sql sql})
+                             (swap! implementation-actions conj :atomic-confirmed)
+                             {:status :committed})
+                           chdb/insert-json-rows!
                            (fn [& _]
-                             (swap! implementation-actions conj "insertSuccess")
-                             {:count 1})]
-               (export/export-spans! exporter [(sample-span)]))]
-         (when result
-           (swap! implementation-actions conj "returnSuccess"))
+                             (fail! "otel-exporter/quint-ordinary-insert"
+                                    "Durable export used ordinary insert" {}))]
+               [(export/export-spans! exporter [(sample-span)])
+                (export/export-spans! exporter [(sample-span)])])]
          (check! (= ["init" "admitA" "admitB" "atomicA" "atomicBSuccess"]
                     model-actions)
                  "otel-exporter/quint-itf-queue-witness"
@@ -508,17 +516,18 @@
                  "otel-exporter/quint-itf-queue-final-state"
                  "Durable ITF no longer proves the atomic caller queue witness"
                  {:final-state expected-final})
-         (check! (= ["init" "insertSuccess" "barrierSuccess" "returnSuccess"]
-                    @implementation-actions)
-                 "otel-exporter/quint-runtime-boundary"
-                 "current single-exporter insert/barrier contract changed"
+         (check! (and (= [true true] results)
+                      (= [:atomic-confirmed :atomic-confirmed]
+                         @implementation-actions))
+                 "otel-exporter/quint-runtime-atomic-boundary"
+                 "each non-empty Durable export must own one confirmed atomic call"
                  {:runtime-actions @implementation-actions
                   :model-actions model-actions
-                  :runtime-integration :single-exporter-barrier
-                  :exporter-adoption-boundaries
-                  [:execute-and-flush-adoption
-                   :multi-caller-atomic-trace
-                   :force-flush-and-close-integration-trace]}))))))
+                  :runtime-integration :per-call-execute-and-flush
+                  :not-proven-by-this-replay
+                  [:concurrent-admission-order
+                   :exporter-in-flight-shutdown-drain
+                   :grouped-publication-or-exactly-once]}))))))
 
 (defn- wire-json-property []
   (h/run-test!
