@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Align the Durable acknowledgement model's integration notes and Hegel ITF
+  replay with the adopted per-call `execute-and-flush!` boundary. The replay
+  checks two sequential confirmed exports; exporter admission and shutdown
+  drain remain runtime-test obligations, not claims of the writer-queue model.
+
 - Add an explicit, bounded two-process native gate for exporter shutdown:
   two concurrently admitted Durable span calls race final owned shutdown, a
   post-fence call is rejected, and a fresh reader compares every selected
