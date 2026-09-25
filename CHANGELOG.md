@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicit, bounded two-process native gate for exporter shutdown:
+  two concurrently admitted Durable span calls race final owned shutdown, a
+  post-fence call is rejected, and a fresh reader compares every selected
+  physical column against independently populated expected rows. This gate is
+  opt-in and does not change production export behavior.
+
 - Fence exporter shutdown and call admission in one lifecycle state transition.
   Each signal's shutdown waits for calls admitted to that signal; this
   per-signal drain does not itself close the connection. Only shutdown of the
