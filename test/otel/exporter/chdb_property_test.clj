@@ -172,15 +172,18 @@
                        "non-terminal signal shutdown failed"
                        {:signal signal :expected expected}))
            winner (future (invoke! terminal-signal))]
+       (let [racers (atom [])]
        (try
          (await! close-entered "otel-exporter/close-race-enter-timeout")
          (doseq [signal racing-signals]
-           (check! (invoke! signal)
-                   "otel-exporter/racing-shutdown-result"
-                   "shutdown racing an accepted close did not succeed"
-                   {:signal signal :expected expected}))
+           (swap! racers conj [signal (future (invoke! signal))]))
          (finally
            (deliver release-close true)))
+       (doseq [[signal task] @racers]
+         (check! (await! task "otel-exporter/racing-shutdown-timeout")
+                 "otel-exporter/racing-shutdown-result"
+                 "shutdown racing an accepted close did not succeed"
+                 {:signal signal :expected expected})))
        (check! (await! winner "otel-exporter/close-race-winner-timeout")
                "otel-exporter/close-race-winner-result"
                "winning shutdown did not complete successfully"

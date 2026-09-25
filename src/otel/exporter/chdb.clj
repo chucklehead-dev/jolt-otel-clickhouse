@@ -917,16 +917,25 @@
         (doseq [[table columns payload] prepared]
           (chdb/insert-json-rows! connection table columns payload))))))
 
-(defn- signal-open? [owned? expected-signals state signal]
-  (cond
-    (and owned? (not (contains? expected-signals signal)))
-    (do (swap! state assoc :last-error
-               (ex-info (str "OTel signal is not enabled for this exporter: " (name signal))
-                        {:signal signal :expected-signals expected-signals}))
-        false)
-
-    (contains? (:closed-signals @state) signal) false
-    :else true))
+(defn- admit-signal! [owned? expected-signals state signal]
+  ;; Admission and shutdown's signal fence must linearize on this same atom.
+  ;; A prior open? read cannot protect an in-progress native writer request.
+  (let [undeclared? (and owned? (not (contains? expected-signals signal)))
+        [old new]
+        (swap-vals! state
+                    (fn [snapshot]
+                      (cond
+                        undeclared?
+                        (assoc snapshot :last-error
+                               (ex-info (str "OTel signal is not enabled for this exporter: "
+                                             (name signal))
+                                        {:signal signal :expected-signals expected-signals}))
+                        (contains? (:closed-signals snapshot) signal) snapshot
+                        :else (-> snapshot
+                                  (update :in-flight (fnil inc 0))
+                                  (update-in [:in-flight-by-signal signal] (fnil inc 0))))))]
+    (and (not undeclared?)
+         (= (inc (or (:in-flight old) 0)) (:in-flight new)))))
 
 (def ^:private confirmed-durable-statuses #{:committed :reconciled})
 
@@ -1000,53 +1009,92 @@
                               (- (System/nanoTime) started) span-count)))
    true))
 
-(defn- close-signal! [connection owned? expected-signals state signal]
-  ;; Claim the terminal close in the same atomic transition that records the
-  ;; last signal.  Marking the connection closed only after the external call
-  ;; leaves a window where another signal can invoke .close a second time.
-  (let [[old new]
-        (swap-vals!
-         state
-         (fn [snapshot]
-           (let [next (update snapshot :closed-signals conj signal)]
-             (if (and owned?
-                      (not (:connection-close-claimed? next))
-                      (every? (:closed-signals next) expected-signals))
-               (assoc next
-                      :connection-close-claimed? true
-                      :connection-close-status :closing)
-               next))))
-        claimed? (and (not (:connection-close-claimed? old))
-                      (:connection-close-claimed? new))]
-    (if-not claimed?
-      ;; A shutdown racing the owner observes that close has been accepted.
-      ;; Once it completes, every repeated shutdown returns its stable result.
-      (if (contains? new :connection-close-result)
-        (:connection-close-result new)
-        true)
-      (try
-        (.close connection)
-        (swap! state assoc
-               :connection-closed? true
-               :connection-close-status :closed
-               :connection-close-result true)
-        true
-        (catch Throwable error
-          ;; Closing an owned native handle is terminal even on failure: a
-          ;; blind retry could double-free a resource that closed partially.
-          ;; Keep the failed claim and expose the original error diagnostically.
+(defn- complete-owned-close! [connection state]
+  (let [result
+        (try
+          (.close connection)
           (swap! state assoc
-                 :connection-closed? false
-                 :connection-close-status :failed
-                 :connection-close-result false
-                 :connection-close-error error
-                 :last-error error)
-          false)))))
+                 :connection-closed? true
+                 :connection-close-status :closed
+                 :connection-close-result true)
+          true
+          (catch Throwable error
+            ;; A partly closed native handle is terminal; never retry it.
+            (swap! state assoc
+                   :connection-closed? false
+                   :connection-close-status :failed
+                   :connection-close-result false
+                   :connection-close-error error
+                   :last-error error)
+            false))]
+    (deliver (:connection-close-completion @state) result)
+    result))
+
+(defn- release-signal! [connection owned? state signal]
+  (let [[old new]
+        (swap-vals! state
+                    (fn [snapshot]
+                      (let [next (-> snapshot
+                                     (update :in-flight dec)
+                                     (update-in [:in-flight-by-signal signal] dec))]
+                        (if (and owned?
+                                 (zero? (:in-flight next))
+                                 (:connection-close-claimed? next)
+                                 (not (:connection-close-started? next)))
+                          (assoc next :connection-close-started? true)
+                          next))))]
+    (when (and (contains? (:closed-signals new) signal)
+               (pos? (get-in old [:in-flight-by-signal signal] 0))
+               (zero? (get-in new [:in-flight-by-signal signal] 0)))
+      (deliver (get-in new [:signal-drained signal]) true))
+    (when (and (not (:connection-close-started? old))
+               (:connection-close-started? new))
+      (complete-owned-close! connection state))))
+
+(defn- await-shutdown-completion! [state completion]
+  (try
+    @completion
+    (catch java.lang.InterruptedException error
+      ;; The final admitted caller still owns drain and terminal close.
+      (swap! state assoc :last-error error)
+      false)))
+
+(defn- close-signal! [connection owned? expected-signals state signal]
+  ;; The last expected signal fences new admissions atomically. An admitted
+  ;; caller owns its connection use through its finally/release transition.
+  (let [[old new]
+        (swap-vals! state
+                    (fn [snapshot]
+                      (let [next (if (contains? (:closed-signals snapshot) signal)
+                                   snapshot
+                                   (-> snapshot
+                                       (update :closed-signals conj signal)
+                                       (assoc-in [:signal-drained signal] (promise))))]
+                        (if (and owned?
+                                 (not (:connection-close-claimed? next))
+                                 (every? (:closed-signals next) expected-signals))
+                          (cond-> (assoc next
+                                         :connection-close-claimed? true
+                                         :connection-close-status :closing
+                                         :connection-close-completion (promise))
+                            (zero? (or (:in-flight next) 0))
+                            (assoc :connection-close-started? true))
+                          next))))
+        start-close? (and (not (:connection-close-started? old))
+                          (:connection-close-started? new))]
+    (when start-close?
+      (complete-owned-close! connection state))
+    (when (zero? (get-in new [:in-flight-by-signal signal] 0))
+      (deliver (get-in new [:signal-drained signal]) true))
+    (and (await-shutdown-completion! state (get-in new [:signal-drained signal]))
+         (if-let [completion (:connection-close-completion new)]
+           (await-shutdown-completion! state completion)
+           true))))
 
 (defrecord ChdbExporter [connection owned? expected-signals state]
   export/SpanExporter
   (export-spans! [_ spans]
-    (if-not (signal-open? owned? expected-signals state :spans)
+    (if-not (admit-signal! owned? expected-signals state :spans)
       false
       (try
         (let [receipts
@@ -1094,20 +1142,24 @@
             (complete-batch! connection state (boolean (seq spans)))))
         (catch Throwable e
           (swap! state assoc :last-error e)
-          false))))
+          false)
+        (finally (release-signal! connection owned? state :spans)))))
   (flush-exporter! [_]
-    (try
-      (persistence-barrier! connection state false)
-      true
-      (catch Throwable e
-        (swap! state assoc :last-error e)
-        false)))
+    (if-not (admit-signal! owned? expected-signals state :spans)
+      false
+      (try
+        (persistence-barrier! connection state false)
+        true
+        (catch Throwable e
+          (swap! state assoc :last-error e)
+          false)
+        (finally (release-signal! connection owned? state :spans)))))
   (shutdown-exporter! [_]
     (close-signal! connection owned? expected-signals state :spans))
 
   export/MetricExporter
   (export-metrics! [_ resource collected]
-    (if-not (signal-open? owned? expected-signals state :metrics)
+    (if-not (admit-signal! owned? expected-signals state :metrics)
       false
       (try
         (let [rows (vec
@@ -1126,13 +1178,14 @@
           (complete-batch! connection state (boolean (seq rows))))
         (catch Throwable e
           (swap! state assoc :last-error e)
-          false))))
+          false)
+        (finally (release-signal! connection owned? state :metrics)))))
   (shutdown-metric-exporter! [_]
     (close-signal! connection owned? expected-signals state :metrics))
 
   logs/LogRecordExporter
   (export-logs! [_ records]
-    (if-not (signal-open? owned? expected-signals state :logs)
+    (if-not (admit-signal! owned? expected-signals state :logs)
       false
       (try
         (when (seq records)
@@ -1140,7 +1193,8 @@
         (complete-batch! connection state (boolean (seq records)))
         (catch Throwable e
           (swap! state assoc :last-error e)
-          false))))
+          false)
+        (finally (release-signal! connection owned? state :logs)))))
   (shutdown-log-exporter! [_]
     (close-signal! connection owned? expected-signals state :logs)))
 
@@ -1264,6 +1318,9 @@
                               :status (:status result)})))))
        (->ChdbExporter conn owned? (set signals)
                        (atom {:closed-signals #{}
+                              :in-flight 0
+                              :in-flight-by-signal {}
+                              :signal-drained {}
                               :connection-close-claimed? false
                               :connection-close-status :open
                               :connection-closed? false
