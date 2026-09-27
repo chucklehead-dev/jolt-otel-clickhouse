@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update chDB to the maintained JDBC callback-domain provider and current
+  Durable fixes, including plain-key head decoding. Domain-capable runtimes
+  avoid scalar JDBC class-helper work; this does not change exporter
+  acknowledgement semantics or claim a measured exporter throughput gain.
+
 - Add mock-only negative controls for the exporter transport spy's actual
   table and ordered-column arguments, and for the maintained Hegel runner's
   failed, flaky, and thrown-error verdicts. These controls do not qualify
