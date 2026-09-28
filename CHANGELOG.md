@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update chDB to retain the exact head-scanner character vocabulary and reuse
+  identical decoded head bytes within a reference commit. Fresh reads,
+  persistence acknowledgements and telemetry values are unchanged; no exporter
+  throughput gain is claimed.
+
 - Update chDB to the maintained JDBC callback-domain provider and current
   Durable fixes, including plain-key head decoding. Domain-capable runtimes
   avoid scalar JDBC class-helper work; this does not change exporter
