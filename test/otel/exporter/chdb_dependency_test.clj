@@ -7,7 +7,7 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
+  "https___github.com_casselc_otel.git/19fc49d20b3a75906f0ccbb8b50c7e48b03e4813/")
 
 (def ^:private data-json-source-root
   "https___github.com_casselc_data.json.git/56db146d5b3d4edcb8db59ccee05db1945ea39fd/src/main/clojure")
@@ -77,8 +77,9 @@
        selected))))
 
 (defn run-oracle-controls! [check]
-  ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/"
+  ;; Freeze the candidate pin independently of deps.edn and the oracle. This
+  ;; tests exact resolution; independent review remains a separate merge gate.
+  (let [fixture-root "https___github.com_casselc_otel.git/19fc49d20b3a75906f0ccbb8b50c7e48b03e4813/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -91,8 +92,12 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"
+                             "19fc49d20b3a75906f0ccbb8b50c7e48b03e4813"
                              "0e701ceff526d159884fadae98dcca61272ef6e0"))))
+    (check "SDK previous scalar-result pin is rejected" false
+           (boolean (oracle (str/replace source
+                             "19fc49d20b3a75906f0ccbb8b50c7e48b03e4813"
+                             "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))
     (check "SDK repeated source provider is rejected" false
@@ -155,7 +160,7 @@
         (check "crypto resolves once from canonical upstream at the full SHA"
                true
                (exact-resolution? classpath "jolt-crypto" canonical-root))
-        (check "OTel resolves once from casselc/otel at the reviewed full SHA"
+        (check "OTel resolves once from casselc/otel at the selected full SHA"
                true
                (exact-coordinate? classpath "casselc_otel.git" otel-root))
         (check "data.json resolves once from casselc/data.json at the declared full SHA"

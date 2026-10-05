@@ -110,3 +110,15 @@ Local component receipt/driver:
 `evidence/exporter-scalar-attribute-screen-20261005.{clj,edn}`.
 Native receipt: `evidence/exporter-scalar-attribute-durable-20261005.edn`
 and `.recovery.edn`.
+
+Follow-up integration gate: the full exporter aggregate initially failed its
+frozen OTel dependency oracle, which still expected `8110c12`. Correcting the
+independent candidate witness to `19fc49d` retains exact-checkout uniqueness
+and explicitly rejects the previous pin; all 32 dependency controls pass.
+The corrected full aggregate completed with terminal exit 0, including typed
+native/socket readback and ordinary validation controls. Parent and child
+processes selected composed Jolt `976dd9d`, Chez 10.4.1, AOT disabled.
+Log: `evidence/exporter-scalar-aggregate-pin-fix-20261005.log`.
+This does not qualify the combined typed Durable key-cache path or S3/tails.
+Claude authentication remains unavailable; no independent Claude review is
+claimed and final PR/merge remains review-gated.
