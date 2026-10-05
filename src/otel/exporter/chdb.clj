@@ -860,14 +860,9 @@
    "Exemplars.SpanId" []
    "Exemplars.TraceId" []})
 
-(defn- metric-rows
-  ([resource collected] (metric-rows resource collected nil))
-  ([resource collected typed-metric-projectors]
-   (for [{:keys [scope metrics]} collected
-         metric metrics
-         point (:data-points metric)
-         :let [typed-projector (get typed-metric-projectors (:type metric))
-               typed-context {:resource resource :scope scope :point point}]]
+(defn- metric-row [resource scope metric point typed-metric-projectors]
+   (let [typed-projector (get typed-metric-projectors (:type metric))
+         typed-context {:resource resource :scope scope :point point}]
      (merge
       empty-metric-exemplars
       {"ResourceAttributes" (attrs (:attributes resource))
@@ -899,7 +894,15 @@
                            "Min" (double (or (:min point) 0.0))
                            "Max" (double (or (:max point) 0.0))
                            "AggregationTemporality" (temporality-code (:temporality metric))}
-                          (if typed-projector (typed-projector typed-context) {})))))))
+                          (if typed-projector (typed-projector typed-context) {}))))))
+
+(defn- metric-rows
+  ([resource collected] (metric-rows resource collected nil))
+  ([resource collected typed-metric-projectors]
+   (for [{:keys [scope metrics]} collected
+         metric metrics
+         point (:data-points metric)]
+     (metric-row resource scope metric point typed-metric-projectors))))
 
 (defn- metric-insert-columns [state type]
   (into (get schema/clickstack-metric-insert-columns type)
@@ -1190,13 +1193,8 @@
                     (for [{:keys [scope metrics]} collected
                           metric metrics
                           point (:data-points metric)
-                          :let [row (first
-                                     (metric-rows
-                                      resource
-                                      [{:scope scope
-                                        :metrics
-                                        [(assoc metric :data-points [point])]}]
-                                      (:typed-metric-projectors @state)))]]
+                          :let [row (metric-row resource scope metric point
+                                                (:typed-metric-projectors @state))]]
                       (assoc row :_type (:type metric))))]
           (export-metric-rows! connection state rows)
           (complete-batch! connection state (boolean (seq rows)))))

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Build each SDK metric row directly instead of allocating a one-point metric
+  collection and lazy row sequence. Preserve row order, one typed projection
+  per point and existing transport/persistence acknowledgements.
+
 - Let the public benchmark explicitly select Durable per-physical-insert
   acknowledgement, recording that boundary without serializing backend objects
   or credentials. Keep the ordinary benchmark default unchanged.
