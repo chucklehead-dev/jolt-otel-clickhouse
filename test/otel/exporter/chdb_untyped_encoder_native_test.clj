@@ -13,10 +13,10 @@
           {:name (str "unicode-λ😀-" n) :start-time-unix-nano n :end-time-unix-nano (+ n 7)
            :span-context {:trace-id (str n) :span-id (str n) :trace-state "vendor=λ"}
            :parent-span-id "parent" :status {:code :error :description "status-λ😀"}
-           :resource {:attributes {"service.name" "unicode-λ😀" "enabled" true}}
+           :resource {:attributes {:service.name "unicode-λ😀" :enabled true}}
            :scope {:name "gate" :version "1"} :kind :server
-           :attributes (if (= n 3) {"nested" [true 42]} {"number" n "flag" true})
-           :events [{:timestamp-unix-nano n :name "event-λ" :attributes {"x" n}}]
+           :attributes (if (= n 3) {"nested" [true 42]} {:number n :flag true})
+           :events [{:timestamp-unix-nano n :name "event-λ" :attributes {:x n}}]
            :links (if (= n 3) [{:span-context {:trace-id "linked" :span-id "id"}
                                :attributes {"relation" "prior"}}] [])}) [1 2 3]))
 

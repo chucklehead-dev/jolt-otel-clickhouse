@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep scalar keyword-keyed span attributes on the existing exact-wire fast
+  path, including resource and event attributes. Namespaced keys and key
+  normalization collisions still use the established attrs/data.json writer;
+  unusual keys and nested/custom values retain generic fallback.
+
 - Build each SDK metric row directly instead of allocating a one-point metric
   collection and lazy row sequence. Preserve row order, one typed projection
   per point and existing transport/persistence acknowledgements.

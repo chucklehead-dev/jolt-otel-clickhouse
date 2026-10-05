@@ -59,6 +59,26 @@
     (is (failed? #(#'exporter/untyped-span-payload encoder [:first :invalid :later])))
     (is (= [:first :invalid] @seen))))
 
+(deftest keyword-attribute-keys-use-exact-existing-wire-on-fast-path
+  (let [encoder (#'exporter/compile-untyped-span-encoder)
+        attributes [(array-map :plain "é😀" :domain/key true)
+                    (array-map :key "keyword-first" "key" "string-last")
+                    (array-map "key" "string-first" :key "keyword-last")]
+        spans (mapv (fn [attrs]
+                      (assoc shape :attributes attrs
+                             :resource {:attributes {:service.name "keyword-service"}}
+                             :events [{:timestamp-unix-nano 1 :name "event"
+                                       :attributes {:event/code 7}}])) attributes)
+        expected (mapv baseline spans)]
+    (is (every? #'exporter/untyped-span-eligible? spans))
+    (with-redefs [exporter/span-row
+                  (fn [& _] (throw (ex-info "keyword keys must not force row materialization" {})))]
+      (is (= expected (mapv encoder spans)))
+      (is (= (apply str (map #(str % "\n") expected))
+             (#'exporter/untyped-span-payload encoder spans))))
+    (is (not (#'exporter/untyped-span-eligible? (assoc shape :attributes {'symbol 1}))))
+    (is (not (#'exporter/untyped-span-eligible? (assoc shape :attributes {:nested [1 2]}))))))
+
 (deftest untyped-attribute-wire-cache-is-batch-local-and-order-safe
   (let [encoder (#'exporter/compile-untyped-span-encoder)
         same {"stable" "λ"}

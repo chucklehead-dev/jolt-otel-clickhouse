@@ -259,7 +259,12 @@
 (defn- untyped-scalar? [x] (or (nil? x) (string? x) (boolean? x)
                          (and (integer? x) (<= -9223372036854775808 x 9223372036854775807))))
 (defn- untyped-attributes? [x]
-  (or (nil? x) (and (map? x) (every? string? (keys x)) (every? untyped-scalar? (vals x)))))
+  ;; Both key types have pure, immutable key-string conversion. Keep unusual
+  ;; keys/values on the existing row fallback; native rendering still obtains
+  ;; attribute bytes from attrs/data.json, including normalization collisions.
+  (or (nil? x) (and (map? x)
+                   (every? #(or (string? %) (keyword? %)) (keys x))
+                   (every? untyped-scalar? (vals x)))))
 (defn- untyped-span-eligible? [span]
   ;; Narrow, pure shape check. Rejected shapes use the original whole-row path,
   ;; preserving its validation order and errors. No acceptance rules change.
