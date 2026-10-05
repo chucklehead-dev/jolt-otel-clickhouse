@@ -691,8 +691,8 @@
   ;; can delegate one scalar to data.json and then check the completed row.
   ;; This batch form has a stricter admission rule because it must know every
   ;; record's UTF-8 size *before* looking at the next record, without turning
-  ;; each row into a final String.  Escaped/structured scalar values therefore
-  ;; select the existing all-generic path for the whole batch.
+  ;; each row into a final String. Escaped string fields delegate their scalar
+  ;; token to data.json; unexpected non-string scalar shapes still decline.
   (when (jolt-runtime?)
     (let [order (vec (keys (log-row untyped-log-shape nil)))]
       (when (and (= (set order) (set schema/clickstack-log-insert-columns))
@@ -733,11 +733,19 @@
                                               (recur (next columns) (next fragments)
                                                      (next fragment-bytes)))
                                           (let [scalar-bytes
-                                                (batch-direct-log-scalar-bytes value)]
+                                                (batch-direct-log-scalar-bytes value)
+                                                escaped-wire (when (and (nil? scalar-bytes)
+                                                                        (string? value))
+                                                               (json/write-str value))
+                                                scalar-bytes (if escaped-wire
+                                                               (utf8-byte-count escaped-wire)
+                                                               scalar-bytes)]
                                             (if (nil? scalar-bytes)
                                               false
                                               (do (.append out (first fragments))
-                                                  (append-batch-direct-log-scalar! out value)
+                                                  (if escaped-wire
+                                                    (.append out escaped-wire)
+                                                    (append-batch-direct-log-scalar! out value))
                                                   (vswap! row-bytes + (first fragment-bytes)
                                                           scalar-bytes)
                                                   (recur (next columns) (next fragments)

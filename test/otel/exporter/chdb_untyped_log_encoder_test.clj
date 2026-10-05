@@ -138,13 +138,28 @@
         expected (apply str (map #(str (baseline %) "\n") records))]
     (is (ifn? batch))
     (is (= (utf8 expected) (utf8 (batch records))))
-    ;; These scalar values need data.json's escape/structured authority. A
-    ;; single one discards the partial request-local builder and restarts the
-    ;; *entire* batch through the historical generic row path.
-    (doseq [ineligible [(assoc base-log :body "unicode-λ")
-                        (assoc base-log :body {"nested" [false nil "λ"]})]]
-      (is (= (var-get #'exporter/generic-untyped-log-payload)
-             (batch [base-log ineligible]))))))
+    ;; value-string supplies string bodies even for structured AnyValues.
+    ;; Delegate escaped scalar tokens to data.json, without rebuilding full
+    ;; row maps or restarting the batch. URLs, controls and Unicode retain
+    ;; the default escaping authority and exact UTF-8 byte accounting.
+    (doseq [record [(assoc base-log :body "unicode-λ😀")
+                    (assoc base-log :body {"nested" [false nil "λ"]})
+                    (assoc-in base-log [:resource :schema-url] "https://example.test/v1")
+                    (assoc base-log :body "quote\"\\\n\t\u0000")]]
+      (is (= (utf8 (apply str (map #(str (baseline %) "\n") [base-log record])))
+             (utf8 (batch [base-log record])))))))
+
+(deftest escaped-batch-fields-never-materialize-full-row-maps
+  (let [batch (#'exporter/compile-untyped-log-batch-encoder)
+        records [(assoc-in base-log [:resource :schema-url] "https://example.test/v1")
+                 (assoc base-log :body "λ😀/\\\"\n")]
+        expected (apply str (map #(str (baseline %) "\n") records))
+        exact (alength (.getBytes expected "UTF-8"))
+        later (lazy-seq (throw (ex-info "later record observed" {})))]
+    (with-redefs [exporter/log-row (fn [& _] (throw (ex-info "full row constructed" {})))]
+      (is (= (utf8 expected) (utf8 (batch records exact)))))
+    (is (thrown-with-msg? clojure.lang.ExceptionInfo #"exceeds 8 MiB"
+                         (batch (concat records later) (dec exact))))))
 
 (deftest closed-batch-accessors-stay-within-ordinary-column-domains
   ;; The batch renderer deliberately skips per-column generic validation.

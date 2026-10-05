@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Keep untyped log batches on the direct path when schema URLs or other string
+  fields need escaping. Delegate those scalar tokens to data.json and count
+  their exact UTF-8 bytes; retain incremental overflow, generic unsupported
+  shapes, and the unchanged confirmed Durable publication boundary.
+
 - Use OTel's guarded scalar-text helper for primitive attributes, avoiding
   normalization-result wrappers while retaining default limits, exact text,
   and normal structured/special/error fallback. Changed canonicalizer roots
