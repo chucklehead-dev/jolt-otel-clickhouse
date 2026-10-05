@@ -44,10 +44,11 @@
   ;; readable fallback rather than acquiring a different JSON interpretation.
   (if (nil? v)
     ""
-    (let [canonical (any/canonicalize v)]
-      (if (:error canonical)
-        (pr-str v)
-        (canonical-value-string (:value canonical))))))
+    (or (any/try-scalar-string v)
+        (let [canonical (any/canonicalize v)]
+          (if (:error canonical)
+            (pr-str v)
+            (canonical-value-string (:value canonical)))))))
 
 (defn- attrs [m]
   (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))

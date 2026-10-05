@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Use OTel's guarded scalar-text helper for primitive attributes, avoiding
+  normalization-result wrappers while retaining default limits, exact text,
+  and normal structured/special/error fallback. Changed canonicalizer roots
+  still run once per value. Repin OTel to the helper; persistence is unchanged.
+
 - Route SDK metric rows outside their wire maps instead of adding/removing
   a temporary type field and scanning all rows for each physical table.
   Construct/project points once in input order; preserve per-table row order,

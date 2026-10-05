@@ -10,6 +10,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-metric-row-test]
+            [otel.exporter.chdb-scalar-attribute-test]
             [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
@@ -365,7 +366,8 @@
   "One native physical path in a fresh process; no anchor reset or alternate pins."
   []
   (reset! failures 0)
-  (let [result (test/run-tests 'otel.exporter.chdb-metric-row-test)]
+  (let [result (test/run-tests 'otel.exporter.chdb-metric-row-test
+                               'otel.exporter.chdb-scalar-attribute-test)]
     (check "direct metric row regression checks pass" 0
            (+ (:fail result) (:error result))))
   (let [observed (atom 0)

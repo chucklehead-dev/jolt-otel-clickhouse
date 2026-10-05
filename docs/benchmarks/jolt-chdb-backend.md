@@ -71,3 +71,42 @@ Exporter implementation SHA-256:
 Local receipt/driver basenames under `evidence/`:
 `exporter-metric-routing-screen-20261005.{clj,edn}` and
 `exporter-metric-routing-durable-20261005.edn` with its `.recovery.edn`.
+
+## Guarded scalar attribute formatting checkpoint (2026-10-05)
+
+OTel `19fc49d` adds `try-scalar-string`: unchanged bounded strings, Booleans
+and admitted Int64 integers can be formatted without allocating the normal
+canonicalization-result map. OTel owns the budget/range rules. Changed default
+limits or canonicalizer roots, over-budget strings, out-of-range integers and
+other shapes return nil, selecting the existing exporter normalization and
+fallback. Values are not cached, and JSON/WAL/persistence semantics do not
+change. This is ordinary maintained Clojure code, not a new Chez encoder.
+
+OTel normalization tests pass 12 tests / 345 assertions. Exporter tests cover
+exact scalar/structured/special/error text, changed limits and one invocation
+of a live replacement canonicalizer. New tests are included in the persistent
+migration child of the exporter aggregate; a fresh aggregate/review remains a
+gate, not a claim from focused tests.
+
+Component ABBA, 24,576 constructed/routed metric rows per arm: current
+304.86/283.14ms and ~373.13MB allocated; helper 121.69/120.38ms and ~253.59MB.
+Exact JSON rows matched before timing. Mean component elapsed time was ~59%
+lower and allocation ~32% lower. These are component results, not a pipeline
+speedup estimate.
+
+Actual 10 x 5,000-item five-table local POSIX Durable collector with chDB
+`45d090a`, data.json `993b906`, composed Jolt `976dd9d`, Chez 10.4.1:
+17,640.77 rows/s, 9,366,906,096 allocated Scheme bytes, 250,000 physical rows.
+The preceding same-shape routing screen measured 15,470.55 rows/s and
+10,461,622,224 bytes: ~14% higher throughput and ~10.5% less allocation in
+these sequential screens. No matched causal/p99/S3/Rust claim. A separate
+fresh-process reader counted 50,000 service rows in each table, with writer
+and reader terminal exit 0. Counts do not constitute full-row recovery proof.
+The collector target remains unmet.
+
+Exporter source SHA-256:
+`ecd53a3cc637655f308d790e123c414251df75589a9661a536ad61186ab96d64`.
+Local component receipt/driver:
+`evidence/exporter-scalar-attribute-screen-20261005.{clj,edn}`.
+Native receipt: `evidence/exporter-scalar-attribute-durable-20261005.edn`
+and `.recovery.edn`.
