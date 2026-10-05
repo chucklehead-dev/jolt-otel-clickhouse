@@ -96,6 +96,11 @@
                   "fresh reader independent legacy table parity")
           (spit (str root "/reader.edn") (pr-str {:rows (count actual) :equal? true}))))
       (throw (ex-info "writer or reader required" {})))
+    ;; This entrypoint owns the fresh CLI process. All native/exporter resources
+    ;; have closed above; retire its idle future pools rather than carrying the
+    ;; JVM-like 60-second hold into child settlement. Running tasks still settle.
+    ;; Never do this in run, which may be called inside the aggregate suite.
+    (shutdown-agents)
     (println :untyped-encoder-native-green phase)))
 
 (defn run [executable]

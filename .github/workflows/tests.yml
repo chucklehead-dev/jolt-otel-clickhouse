@@ -230,7 +230,7 @@ jobs:
         run: |
           set -euo pipefail
           TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s "$JOLT_BIN" -Srepro -A:test -e \
-            "(require 'otel.exporter.chdb-untyped-encoder-native-test) (#'otel.exporter.chdb-untyped-encoder-native-test/run \"$JOLT_BIN\")" \
+            "(require 'otel.exporter.chdb-untyped-encoder-native-test) (#'otel.exporter.chdb-untyped-encoder-native-test/run \"$JOLT_BIN\") (shutdown-agents)" \
             | tee "$RUNNER_TEMP/exporter-untyped-encoder-native.log"
           root=$(sed -n 's/^:untyped-encoder-native-two-process-green //p' "$RUNNER_TEMP/exporter-untyped-encoder-native.log")
           [[ "$root" =~ ^/tmp/untyped-encoder-native-[0-9]+-1\.gate$ ]]

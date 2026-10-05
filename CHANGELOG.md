@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Retire owned idle future pools at the fresh-process native fixture CLI
+  boundaries after native cleanup. Library and aggregate callers remain
+  untouched; running tasks and strict child/process-group settlement checks
+  are not bypassed.
+
 - Keep scalar keyword-keyed span attributes on the existing exact-wire fast
   path, including resource and event attributes. Namespaced keys and key
   normalization collisions still use the established attrs/data.json writer;
