@@ -131,7 +131,14 @@ wrapper=$(realpath "$wrapper")
 [[ -x "$jolt" && -x "$wrapper" ]]
 printf '%s  %s\n' "$binary_sha" "$jolt" "$wrapper_sha" "$wrapper" \
   "$library_sha" "$lib" "$header_sha" "$header" | sha256sum -c -
-if pgrep -x jolt >/dev/null; then echo runtime-slot-occupied; exit 1; fi
+if pgrep -x jolt >/dev/null; then
+  # Status only: identify a preceding gate's survivor without exposing argv,
+  # credentials, or authorizing signals to a process we do not own.
+  ps -C jolt -o pid=,ppid=,pgid=,sid=,stat= |
+    awk 'NR <= 64 {print "runtime-slot-member", $1, $2, $3, $4, $5}' || true
+  echo runtime-slot-occupied
+  exit 1
+fi
 root=$(mktemp -d "${TMPDIR:-/tmp}/exporter-durable-native.XXXXXX")
 mkdir -p "$root/objects" "$root/scratch-writer" "$root/scratch-reader" "$root/cache"
 echo "EVIDENCE_ROOT=$root"
