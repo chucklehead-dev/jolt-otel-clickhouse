@@ -35,3 +35,39 @@ that comparison.
 Mock or client-only numbers must not fill the unavailable cells. Once those
 backends exist, run this same workload and reconciliation contract with each
 runtime's native timing, allocation, and GC counters.
+
+## Metric routing checkpoint (2026-10-05)
+
+SDK metric ingestion now routes each constructed row into a per-kind vector,
+without associating and then removing a temporary `:_type` on its persistent
+wire map. Construction and typed projection retain input order; physical
+submission remains gauge, sum, histogram. Ordinary ingestion still validates
+and encodes all physical batches before any native insert. Durable publication
+and partial-failure semantics are unchanged.
+
+Focused qualification: 4 tests / 63 assertions, including exact legacy JSON
+bytes, interleaved resource/scope/type routing, empty inputs and projector
+order. The earlier candidate's aggregate native/socket checks also reported
+all checks passed with terminal exit 0; the final small reduction-body cleanup
+was checked by the focused suite and actual collector, not a fresh aggregate.
+
+Component ABBA (24,576 constructed/routed rows per arm, composed Jolt
+`976dd9d`, Chez 10.4.1): legacy 340.82/327.33ms and ~399.83MB allocated;
+routed 326.93/291.31ms and ~373.13MB. Allocation decreases approximately 6.7%.
+This is component evidence, not end-to-end tail qualification.
+
+Actual local POSIX Durable collector, 10 x 5,000 items across five physical
+tables, chDB encoder `45d090a`, data.json `993b906`: 15,470.55 rows/s and
+10,461,622,224 allocated Scheme bytes for 250,000 rows. The prior sequential
+same-shape screen was 15,424.13 rows/s and 10,629,602,928 bytes. Allocation is
+~1.58% lower; throughput is essentially unchanged in these sequential screens,
+not a causal speedup claim. Ten samples do not qualify p99. The throughput
+target remains unmet; no S3/Rust or full-row recovery claim.
+A separate fresh-process reader counted 50,000 service rows in each of the
+five tables; writer and reader both reached terminal exit 0.
+
+Exporter implementation SHA-256:
+`7cb1f8e2c049ad5f662a18eb4c6cf1536581bd66498a9748450d9c390b7eb04e`.
+Local receipt/driver basenames under `evidence/`:
+`exporter-metric-routing-screen-20261005.{clj,edn}` and
+`exporter-metric-routing-durable-20261005.edn` with its `.recovery.edn`.

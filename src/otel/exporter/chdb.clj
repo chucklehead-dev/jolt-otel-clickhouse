@@ -913,25 +913,36 @@
   (str "insert into " (get schema/metric-table-names type)
        " (" (str/join ", " columns) ")"))
 
-(defn- export-metric-type! [connection state type rows]
-  (let [selected (filter #(= type (:_type %)) rows)]
-    (when (seq selected)
+(defn- metric-row-groups [resource collected projectors]
+  ;; Construct/project each point once in input order. Routing is outside the
+  ;; wire map: do not assoc/dissoc a temporary field on every persistent row.
+  (reduce
+    (fn [groups {:keys [scope metrics]}]
+      (reduce
+        (fn [groups metric]
+          (reduce
+            (fn [groups point]
+              (let [row (metric-row resource scope metric point projectors)
+                    type (:type metric)]
+                (assoc groups type (conj (get groups type []) row))))
+            groups (:data-points metric)))
+        groups metrics))
+    {} collected))
+
+(defn- export-metric-groups! [connection state groups]
+  (if (:durable? @state)
+    (doseq [type [:gauge :sum :histogram]
+            :let [selected (get groups type)]
+            :when (seq selected)]
       (let [columns (metric-insert-columns state type)]
         (insert-batch! connection state (get schema/metric-table-names type)
-                         columns (metric-insert-query type columns)
-                         (map #(dissoc % :_type) selected))))))
-
-(defn- export-metric-rows! [connection state rows]
-  (if (:durable? @state)
-    (doseq [type [:gauge :sum :histogram]]
-      (export-metric-type! connection state type rows))
+                       columns (metric-insert-query type columns) selected)))
     ;; Eagerly validate and encode every physical batch before the first driver
     ;; call. Native execution failures can still partially apply a logical
     ;; batch: this transport does not promise an atomic transaction/rollback.
     (let [prepared
           (vec (for [type [:gauge :sum :histogram]
-                     :let [selected (vec (map #(dissoc % :_type)
-                                               (filter #(= type (:_type %)) rows)))]
+                     :let [selected (get groups type)]
                      :when (seq selected)
                      :let [columns (metric-insert-columns state type)
                            payload (ordinary-payload columns selected)]]
@@ -939,6 +950,15 @@
       (context/with-instrumentation-suppressed
         (doseq [[table columns payload] prepared]
           (chdb/insert-json-rows! connection table columns payload))))))
+
+(defn- export-metric-rows! [connection state rows]
+  ;; Compatibility for existing private fixture callers. SDK ingestion uses
+  ;; metric-row-groups directly and never adds/removes this temporary field.
+  (export-metric-groups!
+    connection state
+    (reduce (fn [groups row]
+              (update groups (:_type row) (fnil conj []) (dissoc row :_type)))
+            {} rows)))
 
 (defn- admit-signal! [owned? expected-signals state signal]
   ;; Admission and shutdown's signal fence must linearize on this same atom.
@@ -1190,15 +1210,10 @@
       false
       (try
         (binding [*json-backend* (:json-backend @state :configured)]
-        (let [rows (vec
-                    (for [{:keys [scope metrics]} collected
-                          metric metrics
-                          point (:data-points metric)
-                          :let [row (metric-row resource scope metric point
-                                                (:typed-metric-projectors @state))]]
-                      (assoc row :_type (:type metric))))]
-          (export-metric-rows! connection state rows)
-          (complete-batch! connection state (boolean (seq rows)))))
+        (let [groups (metric-row-groups resource collected
+                                        (:typed-metric-projectors @state))]
+          (export-metric-groups! connection state groups)
+          (complete-batch! connection state (boolean (seq groups)))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false)

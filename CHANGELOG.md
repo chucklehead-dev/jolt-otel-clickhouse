@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Route SDK metric rows outside their wire maps instead of adding/removing
+  a temporary type field and scanning all rows for each physical table.
+  Construct/project points once in input order; preserve per-table row order,
+  gauge/sum/histogram submission order and ordinary all-before-driver
+  validation. Durable acknowledgement and partial-failure semantics are unchanged.
+
 - Build common metric fields in one map and associate kind-specific fields,
   avoiding repeated temporary-map merges. Preserve conversion order, one typed
   projection per point, projector precedence and the existing JSON writer.

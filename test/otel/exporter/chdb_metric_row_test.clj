@@ -97,8 +97,8 @@
         target (exporter/->ChdbExporter {} false #{:metrics} state)]
     (with-redefs [exporter/metric-rows
                   (fn [& _] (throw (ex-info "SDK must not construct one-point lazy collections" {})))
-                  exporter/export-metric-rows!
-                  (fn [_ _ rows] (reset! captured rows))]
+                  exporter/export-metric-groups!
+                  (fn [_ _ groups] (reset! captured groups))]
       (is (true? (export/export-metrics!
                   target resource
                   [{:scope scope
@@ -108,17 +108,63 @@
                               {:type :histogram :name "h" :temporality :cumulative
                                :explicit-bounds [5] :data-points [histogram]}]}]))))
     (is (nil? (exporter/last-error target)))
-    (is (= [:gauge :gauge :sum :histogram] (mapv :_type @captured)))
-    (is (= [1 2 1 3] (mapv #(get % "TypedValue") @captured)))
-    (is (= [1.0 2.0 1.0 nil] (mapv #(get % "Value") @captured)))
-    (is (= [nil nil 2 2] (mapv #(get % "AggregationTemporality") @captured)))
-    (is (= [nil nil true nil] (mapv #(get % "IsMonotonic") @captured)))
-    (is (= [1 2] (get (last @captured) "BucketCounts")))
-    (is (= [5] (get (last @captured) "ExplicitBounds")))
+    (is (= #{:gauge :sum :histogram} (set (keys @captured))))
+    (let [rows (vec (mapcat @captured [:gauge :sum :histogram]))]
+      (is (every? #(not (contains? % :_type)) rows))
+      (is (= [1 2 1 3] (mapv #(get % "TypedValue") rows)))
+      (is (= [1.0 2.0 1.0 nil] (mapv #(get % "Value") rows)))
+      (is (= [nil nil 2 2] (mapv #(get % "AggregationTemporality") rows)))
+      (is (= [nil nil true nil] (mapv #(get % "IsMonotonic") rows)))
+      (is (= [1 2] (get (last rows) "BucketCounts")))
+      (is (= [5] (get (last rows) "ExplicitBounds"))))
     (is (= [{:resource resource :scope scope :point (first points)}
             {:resource resource :scope scope :point (second points)}
             {:resource resource :scope scope :point (first points)}
             {:resource resource :scope scope :point histogram}] @calls))))
+
+(defn legacy-row-groups [resource collected projectors]
+  (let [rows (vec (for [{:keys [scope metrics]} collected
+                       metric metrics point (:data-points metric)]
+                   (assoc (#'exporter/metric-row resource scope metric point projectors)
+                          :_type (:type metric))))]
+    (into {} (for [kind [:gauge :sum :histogram]
+                   :let [selected (vec (map #(dissoc % :_type)
+                                            (filter #(= kind (:_type %)) rows)))]
+                   :when (seq selected)]
+               [kind selected]))))
+
+(deftest routed-groups-retain-legacy-wire-and-projector-order
+  (let [resource {:attributes {:service.name "routing"}}
+        point (fn [id] {:value id :sum id :count id :bucket-counts [id]
+                       :attributes {:id id :escaped "é/\n"}})
+        metric (fn [kind ids] {:type kind :name (name kind) :explicit-bounds [5]
+                              :temporality :delta :data-points (mapv point ids)})
+        collected [{:scope {:name "first"}
+                    :metrics [(metric :sum [1 2]) (metric :gauge [3])]}
+                   {:scope {:name "second"}
+                    :metrics [(metric :histogram [4]) (metric :sum [5])
+                              (metric :gauge [6 7])]}]]
+    (doseq [projected? [false true]]
+      (let [events (atom [])
+            projectors (when projected?
+                         (zipmap [:gauge :sum :histogram]
+                                 (repeat (fn [context]
+                                           (swap! events conj context)
+                                           {"TypedValue" (get-in context [:point :value])}))))
+            expected (legacy-row-groups resource collected projectors)
+            expected-events @events
+            _ (reset! events [])
+            actual (#'exporter/metric-row-groups resource collected projectors)]
+        (is (= expected actual))
+        (doseq [kind [:gauge :sum :histogram]]
+          (is (= (mapv json/write-str (get expected kind))
+                 (mapv json/write-str (get actual kind)))))
+        (is (= expected-events @events))
+        (when projected?
+          (is (= (range 1 8) (map #(get-in % [:point :value]) @events))))))
+    (is (= {} (#'exporter/metric-row-groups resource nil nil)))
+    (is (= {} (#'exporter/metric-row-groups resource
+                [{:scope {} :metrics [(metric :gauge [])]}] nil)))))
 
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-metric-row-test)]
