@@ -174,8 +174,16 @@ cleanup() {
     fi
     kill -0 -- "-$writer_pid" 2>/dev/null && incomplete=1
   fi
-  (( incomplete == 0 )) || { echo owned-cleanup-incomplete; exit 1; }
+  (( incomplete == 0 )) || { report_writer_group; echo owned-cleanup-incomplete; exit 1; }
   exit "$original"
+}
+
+report_writer_group() {
+  # Fixed numeric/status fields only: never log argv or environment values.
+  # Diagnostic evidence does not authorize signalling unverified descendants.
+  [[ "$writer_pid" =~ ^[0-9]+$ ]] || return 0
+  ps -eo pid=,ppid=,pgid=,sid=,stat= |
+    awk -v group="$writer_pid" '$3 == group {print "writer-group-member", $1, $2, $3, $4, $5; if (++n == 64) exit}' || true
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -191,7 +199,7 @@ printf '%s\n' "$driver_mode" >"$root/driver-mode.txt"
 git rev-parse HEAD >"$root/exporter-source.txt"
 sha256sum "$fixture" >"$root/fixture-source.sha256"
 launch=(env -i HOME="${HOME:?}" PATH="$(dirname "$jolt"):${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-        LANG=C.UTF-8 JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache"
+        LANG=C.UTF-8 JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache" JOLT_AOT_CACHE=0
         JOLT_DURABLE_DRAFT_ROOT="$root" JOLT_DURABLE_DRAFT_TOKEN="$task_token"
         OSCOPE_DURABLE_NATIVE_FIXTURE="$fixture")
 if [[ -n "${JOLT_GITLIBS_DIR:-}" ]]; then
@@ -258,7 +266,7 @@ if "$crash_reopen"; then
   crash_status=$?
   set -e
   [[ "$crash_status" == 137 ]] || { echo writer-crash-status-unexpected; exit 1; }
-  kill -0 -- "-$writer_pid" 2>/dev/null && { echo writer-group-residual; exit 1; }
+  kill -0 -- "-$writer_pid" 2>/dev/null && { report_writer_group; echo writer-group-residual; exit 1; }
   printf 'verified-writer-sigkill status=%s\n' "$crash_status" > "$root/crash-receipt.txt"
   writer_pid=
 fi
@@ -271,7 +279,7 @@ if ! "$crash_reopen"; then
     sleep 0.1
   done
   wait "$writer_pid"
-  kill -0 -- "-$writer_pid" 2>/dev/null && { echo writer-group-residual; exit 1; }
+  kill -0 -- "-$writer_pid" 2>/dev/null && { report_writer_group; echo writer-group-residual; exit 1; }
   writer_pid=
 fi
 sha256sum "$root/writer.log" "$root/reader.log"

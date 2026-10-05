@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+- Let the public benchmark explicitly select Durable per-physical-insert
+  acknowledgement, recording that boundary without serializing backend objects
+  or credentials. Keep the ordinary benchmark default unchanged.
+
+- Keep the native Durable qualification gate source-run even after clearing
+  inherited environment settings. Record bounded numeric process-group status
+  on a cleanup failure without weakening the no-surviving-group check.
+
 - Add opt-in `:json-backend :native-guarded` for the general JSONEachRow
   fallback, using per-payload bounded serial encoder contexts. Default and
   specialized codecs, the 8 MiB UTF-8 limit and persistence acknowledgements
