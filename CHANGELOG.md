@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an internal, bounded metric payload preparation helper and reproducible
+  10k histogram byte-parity check. Exporter chunk submission remains disabled;
+  existing payload limits, defaults and acknowledgements are unchanged.
+
 - Build common metric fields in one map and associate kind-specific fields,
   avoiding repeated temporary-map merges. Preserve conversion order, one typed
   projection per point, projector precedence and the existing JSON writer.
