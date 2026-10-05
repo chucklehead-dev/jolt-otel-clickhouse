@@ -10,7 +10,7 @@
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
 
 (def ^:private data-json-source-root
-  "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
+  "https___github.com_casselc_data.json.git/56db146d5b3d4edcb8db59ccee05db1945ea39fd/src/main/clojure")
 
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
@@ -120,9 +120,10 @@
     (check "data.json canonical source root is accepted" true
            (boolean (oracle (str fixture-root "/../clojure"))))
     (check "data.json old SHA is rejected" false
-           (boolean (oracle (str/replace source
-                                      "0f51b99101bc5e840f957c073f87b6f877309a25"
-                                      "932444043c0c06f9e295ba4963419b2481e9dd07"))))
+           (boolean (oracle (str "/public-fixture/a/" wrong-data-json-source-root))))
+    (check "data.json previous exporter pin is rejected" false
+           (boolean (oracle
+                     "/public-fixture/a/https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")))
     (check "data.json distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" root))))
     (check "data.json repeated source provider is rejected" false
@@ -157,7 +158,7 @@
         (check "OTel resolves once from casselc/otel at the reviewed full SHA"
                true
                (exact-coordinate? classpath "casselc_otel.git" otel-root))
-        (check "data.json resolves once from casselc/data.json at the reviewed full SHA"
+        (check "data.json resolves once from casselc/data.json at the declared full SHA"
                true
                (exact-concrete-root? classpath "casselc_data.json.git" data-json-source-root))))
     (let [wrong (dependency-report ["-Sdeps" wrong-coordinate])]

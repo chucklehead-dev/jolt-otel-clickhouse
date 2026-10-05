@@ -2,7 +2,7 @@
  :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "ed6efde5eac1bef76d4a588d41aa44dead7f47c3"}
+         :git/sha "02c759ca1d769f3dd4bcacc40db74bf4344e6c26"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
          :git/sha "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"
@@ -17,7 +17,7 @@
         metosin/malli {:mvn/version "0.20.1"}
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
-         :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
+         :git/sha "56db146d5b3d4edcb8db59ccee05db1945ea39fd"}}
  :aliases {:benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test

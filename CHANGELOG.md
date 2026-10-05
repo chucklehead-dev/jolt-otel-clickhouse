@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Align the explicit chDB and data.json pins with the public guarded-native
+  JSONEachRow candidate and owned WAL/recovery work. Retain existing specialized
+  span/log encoders, schema checks and per-call persistence acknowledgments.
+  This dependency alignment does not enable native JSON globally or claim
+  collector throughput, S3, standalone/AOT or full cross-platform qualification.
+
 - Update chDB to retain the exact head-scanner character vocabulary and reuse
   identical decoded head bytes within a reference commit. Fresh reads,
   persistence acknowledgements and telemetry values are unchanged; no exporter

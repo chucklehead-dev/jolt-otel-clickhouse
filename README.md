@@ -55,6 +55,13 @@ library explicitly with:
 jolt -m jdbc.chdb.install
 ```
 
+This candidate aligns chDB and data.json with the public guarded-native row
+encoder. It does not enable that backend globally or replace this exporter's
+specialized span/log encoders. Applications overriding dependency pins must
+keep the two libraries aligned; the new native loader is absent from older
+data.json pins. Collector throughput and standalone/AOT qualification remain
+separate from dependency compatibility checks.
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact
