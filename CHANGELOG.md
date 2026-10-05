@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Build common metric fields in one map and associate kind-specific fields,
+  avoiding repeated temporary-map merges. Preserve conversion order, one typed
+  projection per point, projector precedence and the existing JSON writer.
+
 - Retire owned idle future pools at the fresh-process native fixture CLI
   boundaries after native cleanup. Library and aggregate callers remain
   untouched; running tasks and strict child/process-group settlement checks

@@ -858,48 +858,44 @@
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
 
-(def ^:private empty-metric-exemplars
-  {"Exemplars.FilteredAttributes" []
-   "Exemplars.TimeUnix" []
-   "Exemplars.Value" []
-   "Exemplars.SpanId" []
-   "Exemplars.TraceId" []})
-
 (defn- metric-row [resource scope metric point typed-metric-projectors]
    (let [typed-projector (get typed-metric-projectors (:type metric))
-         typed-context {:resource resource :scope scope :point point}]
-     (merge
-      empty-metric-exemplars
-      {"ResourceAttributes" (attrs (:attributes resource))
-       "ResourceSchemaUrl" (or (:schema-url resource) "")
-       "ScopeName" (or (:name scope) "")
-       "ScopeVersion" (or (:version scope) "")
-       "ScopeAttributes" (attrs (:attributes scope))
-       "ScopeDroppedAttrCount" 0
-       "ScopeSchemaUrl" (or (:schema-url scope) "")
-       "ServiceName" (service-name resource "")
-       "MetricName" (:name metric)
-       "MetricDescription" (or (:description metric) "")
-       "MetricUnit" (or (:unit metric) "")
-       "Attributes" (attrs (:attributes point))
-       "StartTimeUnix" (metric-timestamp (or (:start-time-unix-nano point) 0))
-       "TimeUnix" (metric-timestamp (or (:time-unix-nano point) 0))
-       "Flags" 0}
-      (case (:type metric)
-        :gauge (merge {"Value" (double (:value point))}
-                      (if typed-projector (typed-projector typed-context) {}))
-        :sum (merge {"Value" (double (:value point))
-                     "AggregationTemporality" (temporality-code (:temporality metric))
-                     "IsMonotonic" (boolean (:monotonic? metric))}
-                    (if typed-projector (typed-projector typed-context) {}))
-        :histogram (merge {"Count" (:count point)
-                           "Sum" (double (:sum point))
-                           "BucketCounts" (:bucket-counts point)
-                           "ExplicitBounds" (:explicit-bounds metric)
-                           "Min" (double (or (:min point) 0.0))
-                           "Max" (double (or (:max point) 0.0))
-                           "AggregationTemporality" (temporality-code (:temporality metric))}
-                          (if typed-projector (typed-projector typed-context) {}))))))
+         typed-context {:resource resource :scope scope :point point}
+         common {"Exemplars.FilteredAttributes" []
+                 "Exemplars.TimeUnix" []
+                 "Exemplars.Value" []
+                 "Exemplars.SpanId" []
+                 "Exemplars.TraceId" []
+                 "ResourceAttributes" (attrs (:attributes resource))
+                 "ResourceSchemaUrl" (or (:schema-url resource) "")
+                 "ScopeName" (or (:name scope) "")
+                 "ScopeVersion" (or (:version scope) "")
+                 "ScopeAttributes" (attrs (:attributes scope))
+                 "ScopeDroppedAttrCount" 0
+                 "ScopeSchemaUrl" (or (:schema-url scope) "")
+                 "ServiceName" (service-name resource "")
+                 "MetricName" (:name metric)
+                 "MetricDescription" (or (:description metric) "")
+                 "MetricUnit" (or (:unit metric) "")
+                 "Attributes" (attrs (:attributes point))
+                 "StartTimeUnix" (metric-timestamp (or (:start-time-unix-nano point) 0))
+                 "TimeUnix" (metric-timestamp (or (:time-unix-nano point) 0))
+                 "Flags" 0}
+         row (case (:type metric)
+               :gauge (assoc common "Value" (double (:value point)))
+               :sum (assoc common "Value" (double (:value point))
+                                  "AggregationTemporality" (temporality-code (:temporality metric))
+                                  "IsMonotonic" (boolean (:monotonic? metric)))
+               :histogram (assoc common "Count" (:count point)
+                                       "Sum" (double (:sum point))
+                                       "BucketCounts" (:bucket-counts point)
+                                       "ExplicitBounds" (:explicit-bounds metric)
+                                       "Min" (double (or (:min point) 0.0))
+                                       "Max" (double (or (:max point) 0.0))
+                                       "AggregationTemporality" (temporality-code (:temporality metric))))]
+     ;; A confirmed projector still runs once, after all ordinary field
+     ;; conversions, and retains the original last-wins merge precedence.
+     (if typed-projector (merge row (typed-projector typed-context)) row)))
 
 (defn- metric-rows
   ([resource collected] (metric-rows resource collected nil))
