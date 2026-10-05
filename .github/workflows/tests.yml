@@ -192,7 +192,10 @@ jobs:
       # compiler revision qualified by that same immutable root dependency.
       - name: Install the root-qualified Durable Jolt compiler
         id: durable_jolt
-        uses: chucklehead-dev/jolt-chdb/.github/actions/install-jolt-aspects@19e0ecf9e9f5e2c3f24ac8758f5d6953fd021774
+        uses: chucklehead-dev/jolt-chdb/.github/actions/install-jolt-aspects@d568b5e6c92e38229fc53f3b45f9e386513ff42a
+        with:
+          source-sha: 976dd9d15245b40d447c9ec920e15f119f297c02
+          version: v0.8.17-23-g976dd9d1
       - name: Bind the selected compiler executable to the Durable fixture
         shell: bash
         env:
@@ -200,8 +203,8 @@ jobs:
           DURABLE_JOLT_VERSION: ${{ steps.durable_jolt.outputs.version }}
         run: |
           set -euo pipefail
-          test "$DURABLE_JOLT_SOURCE_SHA" = "120643d6bc322800a700e870de5c8087ad6085fa"
-          test "$DURABLE_JOLT_VERSION" = "jolt v0.8.6-97-g120643d6"
+          test "$DURABLE_JOLT_SOURCE_SHA" = "976dd9d15245b40d447c9ec920e15f119f297c02"
+          test "$DURABLE_JOLT_VERSION" = "jolt v0.8.17-23-g976dd9d1"
           binary=$(realpath "$(command -v jolt)")
           test "$("$binary" --version)" = "$DURABLE_JOLT_VERSION"
           printf 'JOLT_BIN=%s\n' "$binary" >> "$GITHUB_ENV"
@@ -212,6 +215,13 @@ jobs:
           # untagged compiler revision.
           printf 'JOLT_EXPECTED_BINARY_SHA256=%s\n' "$(sha256sum "$binary" | cut -d ' ' -f1)" >> "$GITHUB_ENV"
           printf 'JOLT_DURABLE_COMPILER_SOURCE_SHA=%s\n' "$DURABLE_JOLT_SOURCE_SHA" >> "$GITHUB_ENV"
+
+      - name: Qualify bounded native JSON fallback and concurrent payload isolation
+        timeout-minutes: 3
+        shell: bash
+        run: |
+          set -euo pipefail
+          JOLT_AOT_CACHE=0 "$JOLT_BIN" -Srepro -M:native-json-test
 
       - name: Qualify untyped Durable encoder with a fresh reader
         id: untyped_encoder_native

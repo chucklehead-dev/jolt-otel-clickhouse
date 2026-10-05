@@ -62,6 +62,17 @@ keep the two libraries aligned; the new native loader is absent from older
 data.json pins. Collector throughput and standalone/AOT qualification remain
 separate from dependency compatibility checks.
 
+The general JSONEachRow fallback uses `:json-backend :configured` by default.
+On the qualified compiler-bearing source runtime, select
+`(chdb/exporter {:json-backend :native-guarded ...})` to use the guarded native
+writer for that fallback. This is not a global JSON setting: specialized
+span/log codecs remain unchanged. Each payload has its own serial context,
+retains the 8 MiB UTF-8 limit and keeps the same persistence acknowledgement.
+An unavailable native backend fails startup before opening a database. A
+single row or custom serializer may allocate before its encoded size is known.
+Standalone/AOT support is not qualified. Run `jolt -M:native-json-test` only
+with that qualified runtime to check native parity, limits and isolation.
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact
@@ -605,7 +616,8 @@ jolt -M:benchmark
 ```
 
 The optional arguments are `<db-spec> <batches> <items-per-batch>
-<query-iterations> [output.edn]`. Use a fresh filesystem dbspec to compare
+<query-iterations> [output.edn] [configured|native-guarded]`. The report records
+the selected JSON backend. Use a fresh filesystem dbspec to compare
 persistent storage. Performance numbers are evidence rather than CI
 thresholds. The test suite runs the same reconciled workload at bounded counts
 as a compile and correctness gate.

@@ -200,8 +200,11 @@
           (recur (dec remaining) (conj samples elapsed)))))))
 
 (defn run!
-  [{:keys [db-spec batches items query-iterations]
-    :or {db-spec "chdb::memory:" batches 20 items 50 query-iterations 20}}]
+  [{:keys [db-spec batches items query-iterations json-backend]
+    :or {db-spec "chdb::memory:" batches 20 items 50 query-iterations 20
+         json-backend :configured}}]
+  (when-not (#{:configured :native-guarded} json-backend)
+    (throw (ex-info "Unsupported benchmark JSON backend" {})))
   (when-not (and (pos-int? batches) (pos-int? items)
                  (pos-int? query-iterations))
     (throw (ex-info "Benchmark counts must be positive integers" {})))
@@ -212,6 +215,7 @@
       (let [[exporter schema-ns]
             (timed-nanos #(chdb/exporter
                            {:connection connection
+                            :json-backend json-backend
                             :signals #{:spans :logs :metrics}}))]
         (export-batch! exporter warmup-service 0 (min items 10)
                        {:spans [] :logs [] :metrics []})
@@ -250,6 +254,7 @@
                      :os-name (System/getProperty "os.name")
                      :os-arch (System/getProperty "os.arch")}
            :configuration {:db-spec db-spec
+                           :json-backend json-backend
                            :batches batches
                            :items-per-batch items
                            :query-iterations query-iterations
@@ -277,12 +282,13 @@
       (finally
         (.close connection)))))
 
-(defn -main [& [db-spec batches-text items-text query-iterations-text output]]
+(defn -main [& [db-spec batches-text items-text query-iterations-text output backend]]
   (let [report (run! {:db-spec (or db-spec "chdb::memory:")
                       :batches (if batches-text (parse-long batches-text) 20)
                       :items (if items-text (parse-long items-text) 50)
                       :query-iterations (if query-iterations-text
-                                          (parse-long query-iterations-text) 20)})
+                                          (parse-long query-iterations-text) 20)
+                      :json-backend (if backend (keyword backend) :configured)})
         encoded (pr-str report)]
     (when output (spit output (str encoded "\n")))
     (println encoded)))

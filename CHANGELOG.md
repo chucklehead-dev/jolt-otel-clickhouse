@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Add opt-in `:json-backend :native-guarded` for the general JSONEachRow
+  fallback, using per-payload bounded serial encoder contexts. Default and
+  specialized codecs, the 8 MiB UTF-8 limit and persistence acknowledgements
+  are unchanged. Native selection requires the qualified source-run compiler;
+  availability is checked before database acquisition. No throughput gain or
+  standalone/AOT qualification is claimed.
+
 - Align the explicit chDB and data.json pins with the public guarded-native
   JSONEachRow candidate and owned WAL/recovery work. Retain existing specialized
   span/log encoders, schema checks and per-call persistence acknowledgments.
