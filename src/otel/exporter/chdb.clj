@@ -522,8 +522,8 @@
 (defn- utf8-byte-count [text]
   ;; This is deliberately byte based rather than `(count text)`: Jolt's
   ;; strings are not an UTF-8 byte container.  The direct batch renderer uses
-  ;; this only for data.json-owned attribute wires; its scalar subset is ASCII
-  ;; and has constant-time byte counts below.  Keeping this authority here
+  ;; this for data.json-owned attribute wires and escaped scalar tokens; its
+  ;; direct scalar subset is ASCII with byte counts below. Keeping this authority here
   ;; makes a future native byte counter an isolated substitution, not a wire
   ;; semantic change.
   (alength (.getBytes text "UTF-8")))
