@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add opt-in `:insert-format :json-compact-each-row` for spans, logs and all
+  supported metric tables. Use schema-ordered arrays with explicit columns,
+  rejecting missing/extra physical fields rather than dropping them. Keep
+  serial UTF-8 payload limits, worker ownership and per-insert Durable
+  confirmation; the default JSONEachRow path and specialized writers are unchanged.
+
 - Use OTel's guarded scalar-text helper for primitive attributes, avoiding
   normalization-result wrappers while retaining default limits, exact text,
   and normal structured/special/error fallback. Changed canonicalizer roots

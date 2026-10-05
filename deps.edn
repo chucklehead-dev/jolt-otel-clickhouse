@@ -18,7 +18,13 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "56db146d5b3d4edcb8db59ccee05db1945ea39fd"}}
- :aliases {:native-json-test
+ :aliases {:compact-wire-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-compact-wire-test"]}
+           :compact-wire-native-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-compact-wire-native-test"]}
+           :native-json-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-json-backend-test"]}
            :benchmark {:extra-paths ["bench"]

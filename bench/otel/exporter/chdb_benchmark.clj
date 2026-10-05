@@ -200,9 +200,9 @@
           (recur (dec remaining) (conj samples elapsed)))))))
 
 (defn run!
-  [{:keys [db-spec batches items query-iterations json-backend durable?]
+  [{:keys [db-spec batches items query-iterations json-backend durable? insert-format]
     :or {db-spec "chdb::memory:" batches 20 items 50 query-iterations 20
-         json-backend :configured durable? false}}]
+         json-backend :configured durable? false insert-format :json-each-row}}]
   (when-not (boolean? durable?)
     (throw (ex-info "Benchmark durable selection must be Boolean" {})))
   (when-not (#{:configured :native-guarded} json-backend)
@@ -218,6 +218,7 @@
             (timed-nanos #(chdb/exporter
                            {:connection connection
                             :json-backend json-backend
+                            :insert-format insert-format
                             :durable? durable?
                             :signals #{:spans :logs :metrics}}))]
         (export-batch! exporter warmup-service 0 (min items 10)
@@ -260,6 +261,7 @@
            :configuration {:db-spec (if (map? db-spec)
                                       {:vendor (:vendor db-spec)} db-spec)
                            :json-backend json-backend
+                           :insert-format insert-format
                            :durable? durable?
                            :ack-boundary (if durable?
                                            :per-physical-insert-commit

@@ -73,6 +73,13 @@ single row or custom serializer may allocate before its encoded size is known.
 Standalone/AOT support is not qualified. Run `jolt -M:native-json-test` only
 with that qualified runtime to check native parity, limits and isolation.
 
+The opt-in `:insert-format :json-compact-each-row` sends schema-ordered arrays
+instead of repeating column names in every row. It works independently of JSON
+backend selection, keeps serial byte-budget checks and the same per-insert
+Durable confirmation, and rejects missing/extra physical fields. The default
+remains JSONEachRow; custom row-object writers should keep that default.
+See [compact row input and qualification limits](docs/compact-row-format.md).
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact
