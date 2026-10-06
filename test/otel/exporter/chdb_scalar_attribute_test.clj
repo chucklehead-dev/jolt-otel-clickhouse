@@ -44,6 +44,16 @@
   (into {} (map (fn [[k v]] [(#'exporter/key-string k) (#'exporter/value-string v)]))
         (or source {})))
 
+(deftest keyword-key-text-retains-namespace-and-unusual-spellings
+  (doseq [key [nil false 42 "" "é😀\n" :simple :named/key 'named/key
+               (keyword "" "name") (keyword "a/b" "name/x")
+               (keyword "é😀" "name\n") (keyword "")]]
+    (let [expected (cond (string? key) key (keyword? key) (subs (str key) 1)
+                         :else (str key))]
+      (is (= expected (#'exporter/key-string key)))
+      (is (= (json/write-str {expected "value"})
+             (json/write-str (#'exporter/attrs [[key "value"]])))))))
+
 (deftest direct-attribute-reduction-retains-map-order-collisions-and-wire
   (doseq [source [nil false {} []
                   (array-map :x 1 "x" 2 :named/x 3 "é😀" "\n")

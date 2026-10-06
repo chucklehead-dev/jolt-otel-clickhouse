@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Render keyword attribute keys from their namespace/name rather than building
+  a colon-prefixed string and slicing it. Preserve namespaced and unusual key
+  spellings, collision precedence, wire values and converter call order. This
+  reduces allocation; it does not change JSON codecs or persistence ACKs.
+
 - Normalize attribute maps with a direct transient reduction, avoiding temporary
   normalized key/value vectors. Preserve conversion order, collision precedence,
   exact wire values and custom converter/error effects; no codec or ACK change.

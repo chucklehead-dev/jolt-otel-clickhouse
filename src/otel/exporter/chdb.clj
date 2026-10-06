@@ -20,7 +20,9 @@
             [otel.sdk.logs :as logs]))
 
 (defn- key-string [k]
-  (cond (string? k) k (keyword? k) (subs (str k) 1) :else (str k)))
+  (cond (string? k) k
+        (keyword? k) (if-let [ns (namespace k)] (str ns "/" (name k)) (name k))
+        :else (str k)))
 
 (defn- pdata-raw [v]
   (cond
