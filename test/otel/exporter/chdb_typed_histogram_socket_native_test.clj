@@ -12,6 +12,7 @@
             [jolt.http.body :as http-body]
             [jolt.http.server :as http-server]
             [otel.exporter.chdb :as chdb]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
@@ -104,7 +105,7 @@
 (defn- rows [connection name]
   (jdbc/fetch connection [(str "SELECT * FROM otel_metrics_histogram WHERE MetricName=? ORDER BY TimeUnix") name]))
 
-(defn -main [& _]
+(defn run! [insert-format]
   (reset! checks 0)
   (println "typed histogram direct and socket qualification")
   (with-open [connection (jdbc/connection "chdb::memory:")]
@@ -113,6 +114,7 @@
           descriptors (:descriptor-set installation)
           fields (fields installation)
           receiving (chdb/exporter {:connection connection :create-schema? false :signals #{:metrics}
+                                    :insert-format insert-format
                                     :typed-histogram-descriptors descriptors})
           server (atom nil) outbound (atom nil)
           r (resource/resource {"service.name" "typed-histogram-socket"
@@ -170,3 +172,6 @@
     (throw (ex-info "typed histogram native/socket check inventory changed"
                     {:expected 8 :actual @checks})))
   (println "typed-histogram-native-qualified :observed-checks" @checks))
+
+(defn -main [& arguments]
+  (run! (wire-config/parse-format arguments)))

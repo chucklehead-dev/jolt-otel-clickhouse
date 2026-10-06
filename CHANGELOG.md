@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Extend existing typed OTLP socket and two-process Durable acceptance fixtures
+  to exercise compact input as well as the unchanged default. Check positional
+  field binding, typed readback and historical coverage; document remaining
+  live schema/type confirmation and repeated-throughput qualification gates.
+
 - Add opt-in `:insert-format :json-compact-each-row` for spans, logs and all
   supported metric tables. Use schema-ordered arrays with explicit columns,
   rejecting missing/extra physical fields rather than dropping them. Keep

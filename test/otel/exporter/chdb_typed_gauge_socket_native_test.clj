@@ -11,6 +11,7 @@
             [jolt.http.server :as http-server]
             [otel.any-value :as any]
             [otel.exporter.chdb :as chdb-export]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
@@ -154,7 +155,7 @@
   (select-keys (gauge-query field)
                [:schema-binding :signal :metric-kind :start-unix-nano :end-unix-nano]))
 
-(defn -main [& _]
+(defn run! [insert-format]
   (reset! observed-checks 0)
   (println "typed metric attributes over a real OTLP socket")
   (with-open [connection (jdbc/connection "chdb::memory:")]
@@ -174,6 +175,7 @@
           sum-fields (fields-by-key sums)
           receiving (chdb-export/exporter
                      {:connection connection :create-schema? false :signals #{:metrics}
+                      :insert-format insert-format
                       :typed-gauge-descriptors (:descriptor-set gauges)
                       :typed-sum-descriptors (:descriptor-set sums)})
           listener (atom nil) client (atom nil)]
@@ -295,6 +297,7 @@
           ;; A capability-free exporter is a mutation/bypass control: generic
           ;; fields still persist, while every installed typed status is 0.
           (let [legacy (chdb-export/exporter {:connection connection :create-schema? false
+                                              :insert-format insert-format
                                               :signals #{:metrics}})
                 gauge-control "typed.gauge.without-capability"
                 sum-control "typed.sum.without-capability"]
@@ -339,3 +342,6 @@
     (throw (ex-info "typed metric socket check inventory changed"
                     {:expected 15 :actual @observed-checks})))
   (println "typed-metric-socket-qualified :observed-checks" @observed-checks))
+
+(defn -main [& arguments]
+  (run! (wire-config/parse-format arguments)))

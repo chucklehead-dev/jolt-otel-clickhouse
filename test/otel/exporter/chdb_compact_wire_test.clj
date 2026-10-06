@@ -4,11 +4,20 @@
             [jdbc.core :as jdbc]
             [jdbc.chdb :as native-driver]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-benchmark :as benchmark]))
 
 (defn error-data [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
+
+(deftest native-fixture-format-selection-is-closed
+  (is (= :json-each-row (wire-config/parse-format [])))
+  (is (= :json-each-row (wire-config/parse-format ["json-each-row"])))
+  (is (= :json-compact-each-row (wire-config/parse-format ["json-compact-each-row"])))
+  (doseq [arguments [["unknown"] ["json-compact-each-row" "extra"] [nil]]]
+    (is (= {:type :otel.exporter.chdb-wire-test-config/invalid-format}
+           (error-data #(wire-config/parse-format arguments))))))
 
 (deftest format-validation-precedes-resource-acquisition
   (with-redefs [jdbc/connection (fn [& _] (throw (Exception. "must not open")))]
@@ -36,6 +45,13 @@
              (zipmap columns
                      (json/read-str (#'exporter/insert-payload
                                      :json-compact-each-row columns [row]))))))))
+
+(deftest same-type-fields-retain-their-column-binding
+  ;; Native coercion cannot detect two String columns accidentally swapped.
+  (is (= ["service-left" "scope-right"]
+         (json/read-str (#'exporter/insert-payload
+                         :json-compact-each-row ["left" "right"]
+                         [{"right" "scope-right" "left" "service-left"}])))))
 
 (deftest physical-column-plan-is-closed-and-safely-quoted
   (is (= "insert into otel_logs (`Scope.Name`, `odd``column`)"

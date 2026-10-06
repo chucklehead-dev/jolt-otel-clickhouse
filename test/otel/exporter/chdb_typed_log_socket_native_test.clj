@@ -9,6 +9,7 @@
             [jolt.http.server :as http-server]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.schema :as schema]
@@ -100,7 +101,7 @@
     (println "  ok  " label)
     (throw (ex-info label {:expected expected :actual actual}))))
 
-(defn -main [& _]
+(defn run! [insert-format]
   (println "typed log attributes over a real OTLP socket")
   (with-open [connection (jdbc/connection "chdb::memory:")]
     (schema/ensure-schema! connection)
@@ -118,6 +119,7 @@
           receiving
           (chdb-export/exporter
            {:connection connection :create-schema? false :signals #{:logs}
+            :insert-format insert-format
             :typed-log-descriptors descriptor-set})
           listener (atom nil)
           client (atom nil)
@@ -153,17 +155,32 @@
                      (:logattributes first-row)]))
           (let [captured (atom nil)
                 insert chdb/insert-json-rows!
+                execute jdbc/execute!
                 mutant-record (record "typed.log.capture-source")]
             (with-redefs [chdb/insert-json-rows!
                           (fn [conn table columns payload]
-                            (reset! captured {:table table :payload payload})
-                            (insert conn table columns payload))]
+                            (reset! captured {:table table :payload payload :format :json-each-row})
+                            (insert conn table columns payload))
+                          jdbc/execute!
+                          (fn [conn sql]
+                            (when (and (= insert-format :json-compact-each-row)
+                                       (string? sql)
+                                       (str/includes? sql " FORMAT JSONCompactEachRow\n"))
+                              (reset! captured
+                                      {:table "otel_logs" :format :json-compact-each-row
+                                       :columns (:log-insert-columns @(:state receiving))
+                                       :payload (subs sql (inc (.indexOf sql "\n")))}))
+                            (execute conn sql))]
               (check! "typed insert payload is captured while delegating native execution"
                       true
                       (sdk-logs/export-logs! receiving [mutant-record])))
             (check! "captured source row really persists through the ordinary API" 1
                     (count (rows connection "typed.log.capture-source")))
-            (let [captured-row (json/read-str (:payload @captured))
+            (check! "capture observes the selected transport format" insert-format (:format @captured))
+            (let [decoded (json/read-str (:payload @captured))
+                  captured-row (if (= insert-format :json-compact-each-row)
+                                 (zipmap (:columns @captured) decoded)
+                                 decoded)
                   ;; Only this diagnostic mutant changes the public fixture
                   ;; event name; the real captured insertion stays untouched.
                   captured-sql (test-support/statement-view
@@ -201,6 +218,7 @@
           (let [legacy
                 (chdb-export/exporter
                  {:connection connection :create-schema? false
+                  :insert-format insert-format
                   :signals #{:logs}})]
             (try
               (check! "control log without the capability still exports" true
@@ -254,3 +272,6 @@
             (http-server/stop-server server))
           (sdk-logs/shutdown-log-exporter! receiving)))))
   (println "all typed log socket/native checks passed"))
+
+(defn -main [& arguments]
+  (run! (wire-config/parse-format arguments)))

@@ -38,16 +38,41 @@ invariants do not prove positional field binding. That obligation belongs to
 the projection, unknown-field negative control and native field-readback gates
 below; green model checks alone would not detect same-type field swaps.
 
+## Running typed socket checks
+
+The existing native OTLP/HTTP acceptance fixtures can select either format:
+
+```sh
+jolt -M:typed-log-socket-test json-compact-each-row
+jolt -M:typed-gauge-socket-test json-compact-each-row
+jolt -M:typed-histogram-socket-test json-compact-each-row
+```
+
+Omit the argument to check the unchanged JSONEachRow default. Each command
+belongs in a fresh process with the qualified native library/runtime; run native
+commands serially. These exercise real loopback OTLP ingestion, not just the
+receiver handler. The log fixture captures and delegates the selected native
+transport before checking its fixed-column negative control. The gauge/sum and
+log capability-free controls also use the selected format, so historical rows
+are tested after typed columns have been installed.
+
+The two-process Durable typed fixture likewise accepts an optional third
+`json-compact-each-row` argument after `writer|reader` and its shared store root.
+Its existing writer/readiness/reader handshake still applies. This is a local
+acceptance fixture, not a replacement for the canonical integrity/release gate.
+
 ## Current evidence
 
-Focused tests: 12 tests / 39 assertions cover projection, column ordering and
+Focused tests: 14 tests / 46 assertions cover fixture selection, projection, column ordering and
 quoting, missing/extra/null-row rejection, pre-overflow lazy-row behavior,
 constructor validation before acquisition, unchanged default wire, and one
 confirmed Durable request, typed null/status slots and ordinary all-before-driver
-validation. An extra-field-dropping mutant produces 38 passes / one expected
+validation. The earlier 12-test extra-field-dropping mutant produced 38 passes / one expected
 failure. A fresh-process ordinary native smoke passes one test / 11 assertions,
 including question marks, quotes, Unicode and exact timestamp ticks. Default
 metric/scalar/span regressions pass 20 tests / 181 assertions.
+A same-type String column-swap mutant produces 45 passes / one expected
+failure; native coercion alone cannot reject that swap.
 
 An earlier closed-fixture experiment changed logs/metrics only (spans remained
 JSONEachRow). It measured 23,185.51 stored rows/s and 7,383,241,984 allocated
@@ -63,7 +88,29 @@ dependency stack. This is a single local mean-rate screen, not proof of the
 25k p50 / 20k p99 target. An independent product-store reader confirms counts
 and selected field aggregates across all five tables, including span duration,
 kind/status, attributes and exact timestamp ticks. This is not full-value
-equivalence; typed native/socket coverage and repeated performance remain gates.
+equivalence; repeated performance remains a gate.
+
+On that same selected stack, compact input passes the existing real socket
+acceptance checks for typed logs, gauge/sum (15 checks), and explicit histograms
+(8 checks). They retain exact Int64/Boolean/String values, generic fallback maps,
+schema-bound filters/discovery and availability coverage. These are bounded
+ordinary-native tests, not S3, application startup or concurrent schema-owner
+qualification.
+
+A separate writer and snapshot-reader process also pass the existing local
+Durable typed fixture in compact mode: 25 writer checks and 24 reader checks.
+It checks typed span/log Int64 bounds, Boolean/status/fallback values, typed
+gauge/sum resource/scope/point values, exact timestamp/event nanoseconds, and
+invalid-batch rejection without changed counts or head/etag. The reader sees a
+base plus persisted WAL while the live writer is parked, then the writer's
+signal shutdowns complete. This is not a crash-kill, S3 or concurrent-DDL test.
+
+The prior, log-only candidate in exporter issue #82 required a live DESCRIBE
+schema/type fence and had a separate insert-shape model. This newer candidate
+has explicit source/descriptor-derived columns and closed row-shape checks,
+but has not ported that live fence or qualified the older model against all
+five tables. Do not infer those guarantees from the unchanged ACK model or
+from these native tests. Review/resolve this boundary before app adoption.
 
 Independent fresh readers of the experimental store confirm 250k rows and
 selected log/metric field aggregates: resource/scope data, map cardinalities,

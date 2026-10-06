@@ -8,6 +8,7 @@
             [jdbc.chdb.durable.control :as control]
             [jdbc.chdb.native :as native]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-projection :as projection]
@@ -175,10 +176,11 @@
             (throw (ex-info "Bounded reader handshake expired" {:assertion :handshake-timeout}))
             :else (do (Thread/sleep 25) (recur))))))
 
-(defn run! [phase root]
+(defn run! [phase root & format-arguments]
   (native/ensure-loaded!)
   (check! :actual-package "26.7.3" (native/chdb-version))
-  (let [namespace (local/local-backend (str root "/objects"))
+  (let [insert-format (wire-config/parse-format format-arguments)
+        namespace (local/local-backend (str root "/objects"))
         telemetry (backend/object-backend namespace "telemetry")
         catalog (backend/object-backend namespace "typed-catalog")
         snapshot #(control/read-head-read-only! telemetry)
@@ -204,6 +206,7 @@
           (check! :schema-checkpoint :committed (:status (durable/checkpoint! connection)))
           (let [primary (atom nil)
                 writer (exporter/exporter {:connection connection :durable? true :create-schema? false
+                                          :insert-format insert-format
                                           :signals #{:spans :logs :metrics}
                                           :typed-span-descriptors spans
                                           :typed-log-descriptors records
@@ -277,8 +280,8 @@
         (spit (str root "/reader-done") "done\n")
         (println :reader-verified)))))
 
-(defn -main [phase root]
-  (try (run! phase root)
+(defn -main [phase root & format-arguments]
+  (try (apply run! phase root format-arguments)
        (println :observed-checks @observed-checks)
        (catch Throwable _
          ;; Values are assigned exclusively by internal fixed-label checks.
