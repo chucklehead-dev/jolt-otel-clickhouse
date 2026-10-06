@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Avoid temporary physical maps for untyped Durable compact metrics. Share
+  field conversions with named/typed rows and require the exact closed column
+  order plus the existing live schema fence. Keep serial UTF-8 limits and one
+  confirmed writer request per physical table; other export paths are unchanged.
+
 - Accept explicit source-only `:native-guarded-string-cache` JSON encoding
   through exporter startup and benchmark options. General-path payloads keep
   independent bounded caches, live custom writers and serial UTF-8 limits;

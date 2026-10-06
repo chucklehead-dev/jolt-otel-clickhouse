@@ -925,44 +925,79 @@
 (defn- temporality-code [value]
   (case value :delta 1 :cumulative 2 0))
 
-(defn- metric-row [resource scope metric point typed-metric-projectors]
+(defn- metric-row
+  ([resource scope metric point projectors]
+   (metric-row resource scope metric point projectors false))
+  ([resource scope metric point typed-metric-projectors compact?]
    (let [typed-projector (get typed-metric-projectors (:type metric))
-         typed-context {:resource resource :scope scope :point point}
-         common {"Exemplars.FilteredAttributes" []
+         compact? (and compact? (nil? typed-projector))
+         typed-context (when typed-projector {:resource resource :scope scope :point point})
+         ;; Share conversions and their effect order between layouts. Compact
+         ;; metrics do not need a temporary physical map or string-key lookup.
+         ra (attrs (:attributes resource))
+         rs (or (:schema-url resource) "")
+         sn (or (:name scope) "")
+         sv (or (:version scope) "")
+         sa (attrs (:attributes scope))
+         ss (or (:schema-url scope) "")
+         service (service-name resource "")
+         mn (:name metric)
+         md (or (:description metric) "")
+         mu (or (:unit metric) "")
+         pa (attrs (:attributes point))
+         start (metric-timestamp (or (:start-time-unix-nano point) 0))
+         time (metric-timestamp (or (:time-unix-nano point) 0))
+         common (when-not compact?
+                 {"Exemplars.FilteredAttributes" []
                  "Exemplars.TimeUnix" []
                  "Exemplars.Value" []
                  "Exemplars.SpanId" []
                  "Exemplars.TraceId" []
-                 "ResourceAttributes" (attrs (:attributes resource))
-                 "ResourceSchemaUrl" (or (:schema-url resource) "")
-                 "ScopeName" (or (:name scope) "")
-                 "ScopeVersion" (or (:version scope) "")
-                 "ScopeAttributes" (attrs (:attributes scope))
+                 "ResourceAttributes" ra
+                 "ResourceSchemaUrl" rs
+                 "ScopeName" sn
+                 "ScopeVersion" sv
+                 "ScopeAttributes" sa
                  "ScopeDroppedAttrCount" 0
-                 "ScopeSchemaUrl" (or (:schema-url scope) "")
-                 "ServiceName" (service-name resource "")
-                 "MetricName" (:name metric)
-                 "MetricDescription" (or (:description metric) "")
-                 "MetricUnit" (or (:unit metric) "")
-                 "Attributes" (attrs (:attributes point))
-                 "StartTimeUnix" (metric-timestamp (or (:start-time-unix-nano point) 0))
-                 "TimeUnix" (metric-timestamp (or (:time-unix-nano point) 0))
-                 "Flags" 0}
+                 "ScopeSchemaUrl" ss
+                 "ServiceName" service
+                 "MetricName" mn
+                 "MetricDescription" md
+                 "MetricUnit" mu
+                 "Attributes" pa
+                 "StartTimeUnix" start
+                 "TimeUnix" time
+                 "Flags" 0})
          row (case (:type metric)
-               :gauge (assoc common "Value" (double (:value point)))
-               :sum (assoc common "Value" (double (:value point))
-                                  "AggregationTemporality" (temporality-code (:temporality metric))
-                                  "IsMonotonic" (boolean (:monotonic? metric)))
-               :histogram (assoc common "Count" (:count point)
-                                       "Sum" (double (:sum point))
-                                       "BucketCounts" (:bucket-counts point)
-                                       "ExplicitBounds" (:explicit-bounds metric)
-                                       "Min" (double (or (:min point) 0.0))
-                                       "Max" (double (or (:max point) 0.0))
-                                       "AggregationTemporality" (temporality-code (:temporality metric))))]
+               :gauge
+               (let [value (double (:value point))]
+                 (if compact?
+                   [ra rs sn sv sa 0 ss service mn md mu pa start time value 0 [] [] [] [] []]
+                   (assoc common "Value" value)))
+               :sum
+               (let [value (double (:value point))
+                     temporality (temporality-code (:temporality metric))
+                     monotonic (boolean (:monotonic? metric))]
+                 (if compact?
+                   [ra rs sn sv sa 0 ss service mn md mu pa start time
+                    value 0 [] [] [] [] [] temporality monotonic]
+                   (assoc common "Value" value "AggregationTemporality" temporality
+                                 "IsMonotonic" monotonic)))
+               :histogram
+               (let [count (:count point) sum (double (:sum point))
+                     buckets (:bucket-counts point) bounds (:explicit-bounds metric)
+                     minimum (double (or (:min point) 0.0))
+                     maximum (double (or (:max point) 0.0))
+                     temporality (temporality-code (:temporality metric))]
+                 (if compact?
+                   [ra rs sn sv sa 0 ss service mn md mu pa start time
+                    count sum buckets bounds [] [] [] [] [] 0 minimum maximum temporality]
+                   (assoc common "Count" count "Sum" sum "BucketCounts" buckets
+                                 "ExplicitBounds" bounds "Min" minimum "Max" maximum
+                                 "AggregationTemporality" temporality))))]
      ;; A confirmed projector still runs once, after all ordinary field
      ;; conversions, and retains the original last-wins merge precedence.
-     (if typed-projector (merge row (typed-projector typed-context)) row)))
+     (if typed-projector (merge row (typed-projector typed-context)) row))))
 
 (defn- metric-rows
   ([resource collected] (metric-rows resource collected nil))
@@ -980,7 +1015,9 @@
   (str "insert into " (get schema/metric-table-names type)
        " (" (str/join ", " columns) ")"))
 
-(defn- metric-row-groups [resource collected projectors]
+(defn- metric-row-groups
+  ([resource collected projectors] (metric-row-groups resource collected projectors false))
+  ([resource collected projectors compact?]
   ;; Construct/project each point once in input order. Routing is outside the
   ;; wire map: do not assoc/dissoc a temporary field on every persistent row.
   (reduce
@@ -989,21 +1026,69 @@
         (fn [groups metric]
           (reduce
             (fn [groups point]
-              (let [row (metric-row resource scope metric point projectors)
+              (let [row (metric-row resource scope metric point projectors compact?)
                     type (:type metric)]
                 (assoc groups type (conj (get groups type []) row))))
             groups (:data-points metric)))
         groups metrics))
-    {} collected))
+    {} collected)))
 
-(defn- export-metric-groups! [connection state groups]
+(def ^:private direct-metric-columns
+  ;; This is the positional program implemented by metric-row, independent
+  ;; of the configurable schema plan. A reordered future plan must decline.
+  (let [common ["ResourceAttributes" "ResourceSchemaUrl" "ScopeName" "ScopeVersion"
+                "ScopeAttributes" "ScopeDroppedAttrCount" "ScopeSchemaUrl" "ServiceName"
+                "MetricName" "MetricDescription" "MetricUnit" "Attributes"
+                "StartTimeUnix" "TimeUnix"]
+        exemplars ["Exemplars.FilteredAttributes" "Exemplars.TimeUnix" "Exemplars.Value"
+                   "Exemplars.SpanId" "Exemplars.TraceId"]]
+    {:gauge (vec (concat common ["Value" "Flags"] exemplars))
+     :sum (vec (concat common ["Value" "Flags"] exemplars
+                       ["AggregationTemporality" "IsMonotonic"]))
+     :histogram (vec (concat common ["Count" "Sum" "BucketCounts" "ExplicitBounds"]
+                             exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
+
+(defn- direct-metric-layout? [snapshot]
+  (and (:durable? snapshot)
+       (= :json-compact-each-row (:insert-format snapshot))
+       (empty? (:typed-metric-projectors snapshot))
+       (every? empty? (vals (:typed-metric-columns snapshot)))
+       (= direct-metric-columns schema/clickstack-metric-insert-columns)))
+
+(defn- insert-direct-metric-batch! [connection state type columns rows]
+  (let [snapshot @state table (get schema/metric-table-names type)]
+    ;; Internal vectors are never accepted by compact-rows or a public input
+    ;; API. Recheck selection after conversion callbacks before any mutation.
+    (when-not (and (direct-metric-layout? snapshot)
+                   (= columns (get direct-metric-columns type)))
+      (throw (ex-info "Direct compact metric plan changed"
+                      {:type ::invalid-direct-metric-plan})))
+    (compact-format/require-order! (:compact-plans snapshot) connection table columns)
+    (letfn [(checked [remaining]
+              (lazy-seq
+                (when-let [remaining (seq remaining)]
+                  (let [row (first remaining)]
+                    (when-not (and (vector? row) (= (count columns) (count row)))
+                      (throw (ex-info "Invalid direct compact metric row"
+                                      {:type ::invalid-compact-row})))
+                    (cons row (lazy-seq (checked (next remaining))))))))]
+      (execute-durable-sql!
+        connection
+        (str (compact-insert-query table columns) " FORMAT JSONCompactEachRow\n"
+             (json-each-row-payload (checked rows)))))))
+
+(defn- export-metric-groups!
+  ([connection state groups] (export-metric-groups! connection state groups false))
+  ([connection state groups direct?]
   (if (:durable? @state)
     (doseq [type [:gauge :sum :histogram]
             :let [selected (get groups type)]
             :when (seq selected)]
       (let [columns (metric-insert-columns state type)]
-        (insert-batch! connection state (get schema/metric-table-names type)
-                       columns (metric-insert-query type columns) selected)))
+        (if direct?
+          (insert-direct-metric-batch! connection state type columns selected)
+          (insert-batch! connection state (get schema/metric-table-names type)
+                         columns (metric-insert-query type columns) selected))))
     ;; Eagerly validate and encode every physical batch before the first driver
     ;; call. Native execution failures can still partially apply a logical
     ;; batch: this transport does not promise an atomic transaction/rollback.
@@ -1020,7 +1105,7 @@
           (compact-format/require-order! (:compact-plans @state) connection table columns)))
       (context/with-instrumentation-suppressed
         (doseq [[table columns payload] prepared]
-          (insert-ordinary-payload! connection table columns format payload))))))
+          (insert-ordinary-payload! connection table columns format payload)))))))
 
 (defn- export-metric-rows! [connection state rows]
   ;; Compatibility for existing private fixture callers. SDK ingestion uses
@@ -1282,9 +1367,14 @@
       false
       (try
         (binding [*json-backend* (:json-backend @state :configured)]
-        (let [groups (metric-row-groups resource collected
-                                        (:typed-metric-projectors @state))]
-          (export-metric-groups! connection state groups)
+        (let [snapshot @state
+              direct? (direct-metric-layout? snapshot)
+              groups (if direct?
+                       (metric-row-groups resource collected nil true)
+                       (metric-row-groups resource collected (:typed-metric-projectors snapshot)))]
+          (if direct?
+            (export-metric-groups! connection state groups true)
+            (export-metric-groups! connection state groups))
           (complete-batch! connection state (boolean (seq groups)))))
         (catch Throwable e
           (swap! state assoc :last-error e)

@@ -42,9 +42,15 @@ qualified source-runtime requirement. No standalone native/AOT claim is added.
   JSONWriter extensions see schema-ordered arrays instead of row objects;
   nested attribute maps still use their usual writer. Applications relying on
   custom row-map writer/omission behavior should retain JSONEachRow.
+- Untyped Durable metrics build their ordered arrays directly, avoiding a
+  temporary physical map. Both layouts share the same field conversions. This
+  internal optimization requires the exact supported column order and the same
+  confirmed schema plan; typed metrics, ordinary exports and named input keep
+  their existing paths. It does not accept arbitrary caller-provided vectors.
 
-This option is currently a library candidate, not yet an Oscope settings option
-or merged default. Required review and broader integration checks remain.
+This option remains an opt-in candidate, not a merged default. The Oscope
+configuration candidate exposes compact input with matching dependencies;
+required review and broader integration checks remain.
 
 The [acknowledgement model](../formal/quint/durable-export-ack.md) deliberately
 abstracts serialization and SQL shape. Its unchanged queue/confirmation
