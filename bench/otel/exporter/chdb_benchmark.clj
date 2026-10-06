@@ -136,6 +136,7 @@
     {:count (count ordered)
      :total-ms (milliseconds (reduce + 0 ordered))
      :p50-ms (milliseconds (percentile ordered 0.50))
+     :p90-ms (milliseconds (percentile ordered 0.90))
      :p95-ms (milliseconds (percentile ordered 0.95))
      :p99-ms (milliseconds (percentile ordered 0.99))
      :max-ms (milliseconds (peek ordered))}))

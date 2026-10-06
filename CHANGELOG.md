@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Include p90 alongside p50/p95/p99 in exporter benchmark latency reports.
+  Timing boundaries, nearest-rank calculation, and persistence ACKs are unchanged.
+
 - Normalize attribute maps with a direct transient reduction, avoiding temporary
   normalized key/value vectors. Preserve conversion order, collision precedence,
   exact wire values and custom converter/error effects; no codec or ACK change.
