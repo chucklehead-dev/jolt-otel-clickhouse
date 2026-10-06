@@ -205,7 +205,7 @@
          json-backend :configured durable? false insert-format :json-each-row}}]
   (when-not (boolean? durable?)
     (throw (ex-info "Benchmark durable selection must be Boolean" {})))
-  (when-not (#{:configured :native-guarded} json-backend)
+  (when-not (#{:configured :native-guarded :native-guarded-string-cache} json-backend)
     (throw (ex-info "Unsupported benchmark JSON backend" {})))
   (when-not (and (pos-int? batches) (pos-int? items)
                  (pos-int? query-iterations))

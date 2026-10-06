@@ -1340,6 +1340,10 @@
   source-run native writer. It preserves the 8 MiB bound and persistence
   acknowledgement; specialized codecs are unchanged. An unavailable native
   backend fails before database acquisition, without silent fallback.
+  :native-guarded-string-cache additionally retains bounded stock string
+  fragments for each general-path payload, not across batches. It requires
+  the matching data.json/chDB factories; default and specialized codecs remain
+  unchanged. This is source-only, not standalone/AOT qualification.
   :insert-format defaults to :json-each-row. :json-compact-each-row uses
   schema-ordered arrays and explicit columns with the same serial UTF-8 bound
   and persistence acknowledgement. It rejects missing/extra physical fields;
@@ -1355,12 +1359,12 @@
    (when-not (#{:json-each-row :json-compact-each-row} insert-format)
      (throw (ex-info "Unsupported exporter insert format"
                      {:type ::invalid-insert-format})))
-   (when-not (#{:configured :native-guarded} json-backend)
+   (when-not (#{:configured :native-guarded :native-guarded-string-cache} json-backend)
      (throw (ex-info "Unsupported exporter JSON backend"
                      {:type ::invalid-json-backend})))
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
-   (when (= :native-guarded json-backend)
+   (when (not= :configured json-backend)
      (row-encoder/close!
       (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})))
    (when (and persistence-barrier (not (ifn? persistence-barrier)))

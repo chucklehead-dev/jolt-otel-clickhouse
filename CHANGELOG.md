@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Accept explicit source-only `:native-guarded-string-cache` JSON encoding
+  through exporter startup and benchmark options. General-path payloads keep
+  independent bounded caches, live custom writers and serial UTF-8 limits;
+  unavailable capability fails before acquisition. Defaults and ACKs unchanged.
+
 - Fence explicit compact input with startup-only live column/type confirmation
   for enabled signals. Bind opaque plans to their connection and insert order;
   reject unconfirmed schema or plan reuse without retaining provider details.

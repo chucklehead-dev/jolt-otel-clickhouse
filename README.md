@@ -73,6 +73,19 @@ single row or custom serializer may allocate before its encoded size is known.
 Standalone/AOT support is not qualified. Run `jolt -M:native-json-test` only
 with that qualified runtime to check native parity, limits and isolation.
 
+With matching chDB/data.json capabilities, select
+`:json-backend :native-guarded-string-cache` for a bounded cache of repeated
+stock-string fragments in each general-path payload. At most 128 entries and
+65,536 input-plus-output characters are retained, then discarded with that
+payload writer. Live custom writers still run normally. This is an explicit
+source-only option, not a default change or standalone/AOT support; missing
+capability fails before database acquisition. Specialized span/log codecs
+remain unchanged. Use compact input to exercise this general path for spans.
+The development alias `:native-json-string-cache` selects matching exact Git
+pins without changing the root dependencies; `:native-json-test` selects those
+same pins for its explicit source qualification gate. These candidate pins
+are not a whole-stack CI, final-review or standalone qualification claim.
+
 The opt-in `:insert-format :json-compact-each-row` sends schema-ordered arrays
 instead of repeating column names in every row. It works independently of JSON
 backend selection, keeps serial byte-budget checks and the same per-insert
@@ -623,7 +636,7 @@ jolt -M:benchmark
 ```
 
 The optional arguments are `<db-spec> <batches> <items-per-batch>
-<query-iterations> [output.edn] [configured|native-guarded]`. The report records
+<query-iterations> [output.edn] [configured|native-guarded|native-guarded-string-cache]`. The report records
 the selected JSON backend. Use a fresh filesystem dbspec to compare
 persistent storage. Performance numbers are evidence rather than CI
 thresholds. The test suite runs the same reconciled workload at bounded counts

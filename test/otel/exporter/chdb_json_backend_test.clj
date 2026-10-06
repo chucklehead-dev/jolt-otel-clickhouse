@@ -19,9 +19,10 @@
       (is (thrown? clojure.lang.ExceptionInfo
                    (exporter/exporter {:json-backend :unknown})))
       (with-redefs [encoder/open-encoder (fn [_] (throw unavailable))]
-        (is (identical? unavailable
-                        (try (exporter/exporter {:json-backend :native-guarded})
-                             (catch Throwable e e)))))
+        (doseq [backend [:native-guarded :native-guarded-string-cache]]
+          (is (identical? unavailable
+                          (try (exporter/exporter {:json-backend backend})
+                               (catch Throwable e e))))))
       (is (zero? @opens)))))
 
 (deftest payload-context-is-per-call-and-always-released
@@ -49,24 +50,25 @@
 ;; Explicit native qualification: run only with the compiler-bearing source
 ;; runtime. No database needed; byte parity and serializer effects are real.
 (deftest native-payload-parity-effects-and-limit
-  (let [rows [{"unicode" "é😀" "v" [1 nil false]} {"v" true}]
-        reference (payload :configured rows)
-        calls (atom [])
-        value (fn [n] (reify json/JSONWriter
-                        (-write [_ out _]
-                          (swap! calls conj n) (.append out "true"))))]
-    (is (= reference (payload :native-guarded rows)))
-    (is (nil? json/*experimental-native-writer*))
-    (with-redefs [exporter/max-insert-bytes 5]
-      (let [error (try (payload :native-guarded [(value 1) (value 2) (value 3)])
-                       (catch Throwable e e))]
-        (is (= {:limit 5} (ex-data error)))
-        (is (= [1 2] @calls))
-        (is (= "true\n" (payload :native-guarded [true])))))
-    (is (nil? json/*experimental-native-writer*))))
+  (doseq [backend [:native-guarded :native-guarded-string-cache]]
+    (let [rows [{"unicode" "é😀" "v" [1 nil false]} {"v" true}]
+          reference (payload :configured rows)
+          calls (atom [])
+          value (fn [n] (reify json/JSONWriter
+                          (-write [_ out _]
+                            (swap! calls conj n) (.append out "true"))))]
+      (is (= reference (payload backend rows)))
+      (is (nil? json/*experimental-native-writer*))
+      (with-redefs [exporter/max-insert-bytes 5]
+        (let [error (try (payload backend [(value 1) (value 2) (value 3)])
+                         (catch Throwable e e))]
+          (is (= {:limit 5} (ex-data error)))
+          (is (= [1 2] @calls))
+          (is (= "true\n" (payload backend [true])))))
+      (is (nil? json/*experimental-native-writer*)))))
 
 (deftest sdk-selects-backend-without-changing-default
-  (doseq [backend [nil :configured :native-guarded]]
+  (doseq [backend [nil :configured :native-guarded :native-guarded-string-cache]]
     (let [options (cond-> {:closed-signals #{} :durable? false}
                     backend (assoc :json-backend backend))
           target (exporter/->ChdbExporter {} false #{:spans}
@@ -85,23 +87,24 @@
         (is (nil? (exporter/last-error target)))))))
 
 (deftest concurrent-native-payloads-have-independent-contexts
-  (let [started [(promise) (promise)] release (promise)
-        workers
-        (mapv (fn [index]
-                (future
-                  (payload :native-guarded
-                           [(reify json/JSONWriter
-                              (-write [_ out _]
-                                (deliver (nth started index) true)
-                                (when-not (deref release 5000 false)
-                                  (throw (ex-info "Test rendezvous expired" {})))
-                                (.append out (str index))))])))
-              [0 1])]
-    (try
-      (doseq [ready started] (is (= true (deref ready 5000 :timeout))))
-      (finally (deliver release true)))
-    (is (= ["0\n" "1\n"] (mapv #(deref % 5000 :timeout) workers)))
-    (is (nil? json/*experimental-native-writer*))))
+  (doseq [backend [:native-guarded :native-guarded-string-cache]]
+    (let [started [(promise) (promise)] release (promise)
+          workers
+          (mapv (fn [index]
+                  (future
+                    (payload backend
+                             [(reify json/JSONWriter
+                                (-write [_ out _]
+                                  (deliver (nth started index) true)
+                                  (when-not (deref release 5000 false)
+                                    (throw (ex-info "Test rendezvous expired" {})))
+                                  (.append out (str index))))])))
+                [0 1])]
+      (try
+        (doseq [ready started] (is (= true (deref ready 5000 :timeout))))
+        (finally (deliver release true)))
+      (is (= ["0\n" "1\n"] (mapv #(deref % 5000 :timeout) workers)))
+      (is (nil? json/*experimental-native-writer*)))))
 
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-json-backend-test)]

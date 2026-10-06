@@ -24,8 +24,23 @@
            :compact-wire-native-test
            {:extra-paths ["test" "bench"]
             :main-opts ["-m" "otel.exporter.chdb-compact-wire-native-test"]}
+           :native-json-string-cache
+           {:extra-deps
+            {io.github.chucklehead-dev/jolt-chdb
+             {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
+              :git/sha "c66261b25e74906a1e85c00a5bc4f2ae73fab7b1"}
+             org.clojure/data.json
+             {:git/url "https://github.com/casselc/data.json.git"
+              :git/sha "6655d55008845013544fa3681c74cbe076cd5f32"}}}
            :native-json-test
            {:extra-paths ["test"]
+            :extra-deps
+            {io.github.chucklehead-dev/jolt-chdb
+             {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
+              :git/sha "c66261b25e74906a1e85c00a5bc4f2ae73fab7b1"}
+             org.clojure/data.json
+             {:git/url "https://github.com/casselc/data.json.git"
+              :git/sha "6655d55008845013544fa3681c74cbe076cd5f32"}}
             :main-opts ["-m" "otel.exporter.chdb-json-backend-test"]}
            :benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
