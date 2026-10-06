@@ -53,6 +53,10 @@ qualified source-runtime requirement. No standalone native/AOT claim is added.
   Direct span/metric plans are checked again after serialization callbacks,
   before native mutation. This does not remove the single-schema-owner/no-DDL
   assumption described above or enable concurrent schema administration.
+- Untyped Durable logs use the same direct construction for the fixed collector
+  column list. Body and attribute conversions are shared with named/typed logs;
+  typed logs keep their existing path. The log plan is also checked after
+  callbacks, before the unchanged confirmed writer request.
 
 This option remains an opt-in candidate, not a merged default. The Oscope
 configuration candidate exposes compact input with matching dependencies;

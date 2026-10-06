@@ -167,29 +167,32 @@
       (merge common event-values link-values
              (if typed-projector (typed-projector span) {}))))))
 
-(defn- log-row [record typed-projector]
-  (let [scope (:scope record)
-        resource (:resource record)]
-    (merge
-     {"Timestamp" (timestamp (log-timestamp-nanos record))
-      "TraceId" (or (:trace-id record) "")
-      "SpanId" (or (:span-id record) "")
-      "TraceFlags" (uint8 (:trace-flags record))
-      "SeverityText" (or (:severity-text record) "")
-      "SeverityNumber" (uint8 (:severity-number record))
-      ;; The pinned collector's GetServiceName uses an empty missing-value
-      ;; fallback, unlike the embedded span/metric compatibility default.
-      "ServiceName" (service-name resource "")
-      "Body" (value-string (:body record))
-      "ResourceSchemaUrl" (or (:schema-url resource) "")
-      "ResourceAttributes" (attrs (:attributes resource))
-      "ScopeSchemaUrl" (or (:schema-url scope) "")
-      "ScopeName" (or (:name scope) "")
-      "ScopeVersion" (or (:version scope) "")
-      "ScopeAttributes" (attrs (:attributes scope))
-      "LogAttributes" (attrs (:attributes record))
-      "EventName" (or (:event-name record) "")}
-     (if typed-projector (typed-projector record) {}))))
+(defn- log-row
+  ([record typed-projector] (log-row record typed-projector false))
+  ([record typed-projector compact?]
+   (let [compact? (and compact? (nil? typed-projector))
+         scope (:scope record) resource (:resource record)
+         time (timestamp (log-timestamp-nanos record))
+         trace-id (or (:trace-id record) "") span-id (or (:span-id record) "")
+         flags (uint8 (:trace-flags record)) severity (or (:severity-text record) "")
+         severity-number (uint8 (:severity-number record))
+         ;; Missing log service retains the collector's empty fallback.
+         service (service-name resource "") body (value-string (:body record))
+         resource-url (or (:schema-url resource) "")
+         resource-attrs (attrs (:attributes resource))
+         scope-url (or (:schema-url scope) "") scope-name (or (:name scope) "")
+         scope-version (or (:version scope) "") scope-attrs (attrs (:attributes scope))
+         log-attrs (attrs (:attributes record)) event-name (or (:event-name record) "")]
+     (if compact?
+       [time trace-id span-id flags severity severity-number service body resource-url
+        resource-attrs scope-url scope-name scope-version scope-attrs log-attrs event-name]
+       (merge {"Timestamp" time "TraceId" trace-id "SpanId" span-id "TraceFlags" flags
+               "SeverityText" severity "SeverityNumber" severity-number
+               "ServiceName" service "Body" body "ResourceSchemaUrl" resource-url
+               "ResourceAttributes" resource-attrs "ScopeSchemaUrl" scope-url
+               "ScopeName" scope-name "ScopeVersion" scope-version
+               "ScopeAttributes" scope-attrs "LogAttributes" log-attrs "EventName" event-name}
+              (if typed-projector (typed-projector record) {}))))))
 
 (def ^:private log-insert-query
   (str "insert into otel_logs ("
@@ -870,7 +873,7 @@
               (recur (- remaining bytes) (next records) out))))
         (.toString out)))))
 
-(declare execute-durable-sql!)
+(declare execute-durable-sql! direct-log-layout? insert-direct-log-batch!)
 
 (defn- insert-batch! [connection state table columns query rows]
   (let [snapshot @state
@@ -911,11 +914,16 @@
                               schema/clickstack-log-insert-columns))
                   @untyped-log-encoder)
         batch-encoder (when encoder @untyped-log-batch-encoder)]
-    (if-not encoder
+    (cond
+      (direct-log-layout? snapshot)
+      (insert-direct-log-batch! connection state records)
+
+      (not encoder)
       (insert-batch! connection state "otel_logs"
                      (:log-insert-columns snapshot)
                      (selected-log-insert-query typed-projector)
                      (map #(log-row % typed-projector) records))
+      :else
       (let [payload (if batch-encoder
                       (binding [*untyped-log-attribute-wire-cache*
                                 (untyped-log-attribute-cache)]
@@ -1128,6 +1136,28 @@
         (when-not (direct-span-layout? snapshot)
           (throw (ex-info "Direct compact span plan changed"
                           {:type ::invalid-direct-span-plan})))
+        snapshot))))
+
+(def ^:private direct-log-columns
+  ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText" "SeverityNumber"
+   "ServiceName" "Body" "ResourceSchemaUrl" "ResourceAttributes" "ScopeSchemaUrl"
+   "ScopeName" "ScopeVersion" "ScopeAttributes" "LogAttributes" "EventName"])
+
+(defn- direct-log-layout? [snapshot]
+  (and (:durable? snapshot)
+       (= :json-compact-each-row (:insert-format snapshot))
+       (nil? (:typed-log-projector snapshot))
+       (= direct-log-columns (:log-insert-columns snapshot))
+       (= direct-log-columns schema/clickstack-log-insert-columns)))
+
+(defn- insert-direct-log-batch! [connection state records]
+  (execute-closed-compact-rows!
+    connection "otel_logs" direct-log-columns (map #(log-row % nil true) records)
+    (fn []
+      (let [snapshot @state]
+        (when-not (direct-log-layout? snapshot)
+          (throw (ex-info "Direct compact log plan changed"
+                          {:type ::invalid-direct-log-plan})))
         snapshot))))
 
 (defn- export-metric-groups!

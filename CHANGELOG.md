@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Build untyped Durable compact logs directly in the fixed collector column
+  order. Keep shared body/attribute conversion, typed fallback, serial byte
+  limits and schema checks before and after callbacks; ACKs are unchanged.
+
 - Build untyped Durable compact spans directly in the closed stock column
   order, sharing conversions with named/typed rows. Preserve events/links and
   custom JSON effects; recheck direct span/metric plans after serialization
