@@ -20,6 +20,44 @@
     (compact-format/confirm! connection table columns
                             (zipmap columns (repeat "String"))))))
 
+(deftest empty-span-columns-avoid-transient-folds
+  (let [calls (atom 0) original mapv]
+    (with-redefs [clojure.core/mapv
+                  (fn [& args] (swap! calls inc) (apply original args))]
+      (#'exporter/event-columns [] true)
+      (#'exporter/link-columns [] true))
+    (is (zero? @calls))))
+
+(deftest empty-span-columns-retain-layout-and-json-calls
+  (doseq [compact? [false true]]
+    (let [span (#'benchmark/span "empty-vectors" 1)
+          calls (atom []) original json/write-str
+          row (with-redefs [json/write-str
+                            (fn [value & options]
+                              (swap! calls conj value)
+                              (apply original value options))]
+                (#'exporter/span-row span nil compact?))]
+      (is (= [[] []] @calls))
+      (is (= (if compact? [[] [] []]
+               {"Events.Timestamp" [] "Events.Name" [] "Events.Attributes" []})
+             (#'exporter/event-columns [] compact?)))
+      (is (= (if compact? [[] [] [] []]
+               {"Links.TraceId" [] "Links.SpanId" []
+                "Links.TraceState" [] "Links.Attributes" []})
+             (#'exporter/link-columns [] compact?)))
+      (is (= ["[]" "[]"]
+             (if compact? (subvec row 22 24)
+               ((juxt #(get % "EventsJSON") #(get % "LinksJSON")) row))))))
+  (doseq [compact? [false true]]
+    (let [effects (atom [])
+          events (lazy-seq (swap! effects conj :events) (list {:timestamp-unix-nano 7 :name "event"}))
+          links (lazy-seq (swap! effects conj :links) (list {:span-context {:trace-id "trace" :span-id "span"}}))]
+      (is (= (#'exporter/event-columns [{:timestamp-unix-nano 7 :name "event"}] compact?)
+             (#'exporter/event-columns events compact?)))
+      (is (= (#'exporter/link-columns [{:span-context {:trace-id "trace" :span-id "span"}}] compact?)
+             (#'exporter/link-columns links compact?)))
+      (is (= [:events :links] @effects)))))
+
 (deftest direct-metric-layout-retains-conversion-and-wire-binding
   (let [resource {:attributes {:service.name "service-left/é😀" :nested [1 true]}}
         scope {:name "scope-right" :attributes {:flag true}}]

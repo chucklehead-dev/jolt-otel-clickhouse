@@ -100,22 +100,32 @@
 (defn- event-columns
   ([events] (event-columns events false))
   ([events compact?]
-   (let [times (mapv #(timestamp (:timestamp-unix-nano %)) events)
-         names (mapv #(or (:name %) "") events)
-         attributes (mapv #(attrs (:attributes %)) events)]
-     (if compact? [times names attributes]
-       {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes}))))
+   ;; Empty immutable vectors have no row callbacks or seq realization to run.
+   ;; Keep generic/lazy inputs on the original traversal and leave EventsJSON
+   ;; encoding in span-row untouched, including live JSONWriter extensions.
+   (if (and (vector? events) (empty? events))
+     (if compact? [[] [] []]
+       {"Events.Timestamp" [] "Events.Name" [] "Events.Attributes" []})
+     (let [times (mapv #(timestamp (:timestamp-unix-nano %)) events)
+           names (mapv #(or (:name %) "") events)
+           attributes (mapv #(attrs (:attributes %)) events)]
+       (if compact? [times names attributes]
+         {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes})))))
 
 (defn- link-columns
   ([links] (link-columns links false))
   ([links compact?]
-   (let [trace-ids (mapv #(or (get-in % [:span-context :trace-id]) "") links)
-         span-ids (mapv #(or (get-in % [:span-context :span-id]) "") links)
-         states (mapv #(trace-state-string (get-in % [:span-context :trace-state])) links)
-         attributes (mapv #(attrs (:attributes %)) links)]
-     (if compact? [trace-ids span-ids states attributes]
-       {"Links.TraceId" trace-ids "Links.SpanId" span-ids
-        "Links.TraceState" states "Links.Attributes" attributes}))))
+   (if (and (vector? links) (empty? links))
+     (if compact? [[] [] [] []]
+       {"Links.TraceId" [] "Links.SpanId" []
+        "Links.TraceState" [] "Links.Attributes" []})
+     (let [trace-ids (mapv #(or (get-in % [:span-context :trace-id]) "") links)
+           span-ids (mapv #(or (get-in % [:span-context :span-id]) "") links)
+           states (mapv #(trace-state-string (get-in % [:span-context :trace-state])) links)
+           attributes (mapv #(attrs (:attributes %)) links)]
+       (if compact? [trace-ids span-ids states attributes]
+         {"Links.TraceId" trace-ids "Links.SpanId" span-ids
+          "Links.TraceState" states "Links.Attributes" attributes})))))
 
 (defn- uint8 [value]
   ;; pdata values are converted with Go's uint8 cast by the pinned exporter.

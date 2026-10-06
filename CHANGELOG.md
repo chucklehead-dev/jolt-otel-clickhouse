@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Avoid transient collection folds for empty span event/link vectors. Keep
+  nonempty and lazy input traversal, JSON writer callbacks, layouts and ACKs.
+
 - Include p90 alongside p50/p95/p99 in exporter benchmark latency reports.
   Timing boundaries, nearest-rank calculation, and persistence ACKs are unchanged.
 
