@@ -47,6 +47,12 @@ qualified source-runtime requirement. No standalone native/AOT claim is added.
   internal optimization requires the exact supported column order and the same
   confirmed schema plan; typed metrics, ordinary exports and named input keep
   their existing paths. It does not accept arbitrary caller-provided vectors.
+- Untyped Durable spans likewise avoid temporary physical maps when the exact
+  stock column order applies. Named/typed span conversions share the same
+  implementation, including event/link arrays and their inner JSON strings.
+  Direct span/metric plans are checked again after serialization callbacks,
+  before native mutation. This does not remove the single-schema-owner/no-DDL
+  assumption described above or enable concurrent schema administration.
 
 This option remains an opt-in candidate, not a merged default. The Oscope
 configuration candidate exposes compact input with matching dependencies;

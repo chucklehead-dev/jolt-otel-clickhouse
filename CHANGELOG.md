@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build untyped Durable compact spans directly in the closed stock column
+  order, sharing conversions with named/typed rows. Preserve events/links and
+  custom JSON effects; recheck direct span/metric plans after serialization
+  before the existing confirmed writer call. Other layouts remain unchanged.
+
 - Avoid temporary physical maps for untyped Durable compact metrics. Share
   field conversions with named/typed rows and require the exact closed column
   order plus the existing live schema fence. Keep serial UTF-8 limits and one

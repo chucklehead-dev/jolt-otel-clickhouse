@@ -94,18 +94,25 @@
   ;; collector exporter (for example Server, Client, Ok, Error, Unset).
   (str/capitalize (name (or value fallback))))
 
-(defn- event-columns [events]
-  {"Events.Timestamp" (mapv #(timestamp (:timestamp-unix-nano %)) events)
-   "Events.Name" (mapv #(or (:name %) "") events)
-   "Events.Attributes" (mapv #(attrs (:attributes %)) events)})
+(defn- event-columns
+  ([events] (event-columns events false))
+  ([events compact?]
+   (let [times (mapv #(timestamp (:timestamp-unix-nano %)) events)
+         names (mapv #(or (:name %) "") events)
+         attributes (mapv #(attrs (:attributes %)) events)]
+     (if compact? [times names attributes]
+       {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes}))))
 
-(defn- link-columns [links]
-  {"Links.TraceId" (mapv #(or (get-in % [:span-context :trace-id]) "") links)
-   "Links.SpanId" (mapv #(or (get-in % [:span-context :span-id]) "") links)
-   "Links.TraceState" (mapv #(trace-state-string
-                              (get-in % [:span-context :trace-state]))
-                            links)
-   "Links.Attributes" (mapv #(attrs (:attributes %)) links)})
+(defn- link-columns
+  ([links] (link-columns links false))
+  ([links compact?]
+   (let [trace-ids (mapv #(or (get-in % [:span-context :trace-id]) "") links)
+         span-ids (mapv #(or (get-in % [:span-context :span-id]) "") links)
+         states (mapv #(trace-state-string (get-in % [:span-context :trace-state])) links)
+         attributes (mapv #(attrs (:attributes %)) links)]
+     (if compact? [trace-ids span-ids states attributes]
+       {"Links.TraceId" trace-ids "Links.SpanId" span-ids
+        "Links.TraceState" states "Links.Attributes" attributes}))))
 
 (defn- uint8 [value]
   ;; pdata values are converted with Go's uint8 cast by the pinned exporter.
@@ -118,35 +125,47 @@
       (or (:observed-time-unix-nano record) 0)
       event-time)))
 
-(defn- span-row [span typed-projector]
+(defn- span-row
+  ([span typed-projector] (span-row span typed-projector false))
+  ([span typed-projector compact?]
   (let [context (:span-context span)
         scope (:scope span)
         resource (:resource span)
         events (or (:events span) [])
-        links (or (:links span) [])]
-    (merge
-     {"Timestamp" (timestamp (:start-time-unix-nano span))
-      "TraceId" (or (:trace-id context) "")
-      "SpanId" (or (:span-id context) "")
-      "ParentSpanId" (or (:parent-span-id span) "")
-      "TraceState" (trace-state-string (:trace-state context))
-      "SpanName" (:name span)
-      "SpanKind" (otel-enum-string (:kind span) :internal)
-      "ServiceName" (service-name resource "unknown_service:jolt")
-      "ResourceAttributes" (attrs (:attributes resource))
-      "ScopeName" (or (:name scope) "")
-      "ScopeVersion" (or (:version scope) "")
-      "SpanAttributes" (attrs (:attributes span))
-      "Duration" (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
-      "StatusCode" (otel-enum-string (get-in span [:status :code]) :unset)
-      "StatusMessage" (or (get-in span [:status :description]) "")
-      "EventsJSON" (json/write-str events)
-      "LinksJSON" (json/write-str links)}
-     (event-columns events)
-     (link-columns links)
-     (if typed-projector
-       (typed-projector span)
-       {}))))
+        links (or (:links span) [])
+        compact? (and compact? (nil? typed-projector))
+        ;; Keep conversion/callback order shared with the named/typed layout.
+        time (timestamp (:start-time-unix-nano span))
+        trace-id (or (:trace-id context) "") span-id (or (:span-id context) "")
+        parent-id (or (:parent-span-id span) "")
+        trace-state (trace-state-string (:trace-state context))
+        span-name (:name span) kind (otel-enum-string (:kind span) :internal)
+        service (service-name resource "unknown_service:jolt")
+        resource-attrs (attrs (:attributes resource))
+        scope-name (or (:name scope) "") scope-version (or (:version scope) "")
+        span-attrs (attrs (:attributes span))
+        duration (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
+        status (otel-enum-string (get-in span [:status :code]) :unset)
+        message (or (get-in span [:status :description]) "")
+        events-json (json/write-str events) links-json (json/write-str links)
+        common (when-not compact?
+                 {"Timestamp" time "TraceId" trace-id "SpanId" span-id
+                  "ParentSpanId" parent-id "TraceState" trace-state
+                  "SpanName" span-name "SpanKind" kind "ServiceName" service
+                  "ResourceAttributes" resource-attrs "ScopeName" scope-name
+                  "ScopeVersion" scope-version "SpanAttributes" span-attrs
+                  "Duration" duration "StatusCode" status "StatusMessage" message
+                  "EventsJSON" events-json "LinksJSON" links-json})
+        event-values (if compact? (event-columns events true) (event-columns events))
+        link-values (if compact? (link-columns links true) (link-columns links))]
+    (if compact?
+      [time trace-id span-id parent-id trace-state span-name kind service resource-attrs
+       scope-name scope-version span-attrs duration status message
+       (nth event-values 0) (nth event-values 1) (nth event-values 2)
+       (nth link-values 0) (nth link-values 1) (nth link-values 2) (nth link-values 3)
+       events-json links-json]
+      (merge common event-values link-values
+             (if typed-projector (typed-projector span) {}))))))
 
 (defn- log-row [record typed-projector]
   (let [scope (:scope record)
@@ -1055,27 +1074,61 @@
        (every? empty? (vals (:typed-metric-columns snapshot)))
        (= direct-metric-columns schema/clickstack-metric-insert-columns)))
 
-(defn- insert-direct-metric-batch! [connection state type columns rows]
-  (let [snapshot @state table (get schema/metric-table-names type)]
-    ;; Internal vectors are never accepted by compact-rows or a public input
-    ;; API. Recheck selection after conversion callbacks before any mutation.
-    (when-not (and (direct-metric-layout? snapshot)
-                   (= columns (get direct-metric-columns type)))
-      (throw (ex-info "Direct compact metric plan changed"
-                      {:type ::invalid-direct-metric-plan})))
+(defn- execute-closed-compact-rows! [connection table columns rows checked-snapshot!]
+  (let [snapshot (checked-snapshot!)]
     (compact-format/require-order! (:compact-plans snapshot) connection table columns)
     (letfn [(checked [remaining]
               (lazy-seq
                 (when-let [remaining (seq remaining)]
                   (let [row (first remaining)]
                     (when-not (and (vector? row) (= (count columns) (count row)))
-                      (throw (ex-info "Invalid direct compact metric row"
+                      (throw (ex-info "Invalid direct compact telemetry row"
                                       {:type ::invalid-compact-row})))
                     (cons row (lazy-seq (checked (next remaining))))))))]
-      (execute-durable-sql!
-        connection
-        (str (compact-insert-query table columns) " FORMAT JSONCompactEachRow\n"
-             (json-each-row-payload (checked rows)))))))
+      (let [query (compact-insert-query table columns)
+            payload (json-each-row-payload (checked rows))
+            snapshot (checked-snapshot!)]
+        ;; Custom conversion/JSON callbacks may have changed private state.
+        ;; Do not pair completed positional data with a different live plan.
+        (compact-format/require-order! (:compact-plans snapshot) connection table columns)
+        (execute-durable-sql! connection (str query " FORMAT JSONCompactEachRow\n" payload))))))
+
+(defn- insert-direct-metric-batch! [connection state type columns rows]
+  (execute-closed-compact-rows!
+    connection (get schema/metric-table-names type) columns rows
+    (fn []
+      (let [snapshot @state]
+        (when-not (and (direct-metric-layout? snapshot)
+                       (= columns (get direct-metric-columns type)))
+          (throw (ex-info "Direct compact metric plan changed"
+                          {:type ::invalid-direct-metric-plan})))
+        snapshot))))
+
+(def ^:private direct-span-columns
+  ["Timestamp" "TraceId" "SpanId" "ParentSpanId" "TraceState" "SpanName" "SpanKind"
+   "ServiceName" "ResourceAttributes" "ScopeName" "ScopeVersion" "SpanAttributes"
+   "Duration" "StatusCode" "StatusMessage" "Events.Timestamp" "Events.Name"
+   "Events.Attributes" "Links.TraceId" "Links.SpanId" "Links.TraceState"
+   "Links.Attributes" "EventsJSON" "LinksJSON"])
+
+(defn- direct-span-layout? [snapshot]
+  (and (:durable? snapshot)
+       (= :json-compact-each-row (:insert-format snapshot))
+       (nil? (:typed-span-projector snapshot))
+       (= direct-span-columns (:span-insert-columns snapshot))
+       (= direct-span-columns (into schema/clickstack-trace-insert-columns ["EventsJSON" "LinksJSON"]))))
+
+(defn- insert-direct-span-batch! [connection state spans]
+  ;; Internal constructed vectors only; arbitrary vectors remain rejected by
+  ;; the general compact-map projection. Keep input realization/budget ordering.
+  (execute-closed-compact-rows!
+    connection "otel_traces" direct-span-columns (map #(span-row % nil true) spans)
+    (fn []
+      (let [snapshot @state]
+        (when-not (direct-span-layout? snapshot)
+          (throw (ex-info "Direct compact span plan changed"
+                          {:type ::invalid-direct-span-plan})))
+        snapshot))))
 
 (defn- export-metric-groups!
   ([connection state groups] (export-metric-groups! connection state groups false))
@@ -1336,10 +1389,11 @@
                          (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
                         nil))
                     (do
-                      (insert-batch! connection state "otel_traces"
-                                     (:span-insert-columns @state) "insert into otel_traces"
-                                     (map #(span-row % (:typed-span-projector @state))
-                                          spans))
+                      (if (direct-span-layout? snapshot)
+                        (insert-direct-span-batch! connection state spans)
+                        (insert-batch! connection state "otel_traces"
+                                       (:span-insert-columns @state) "insert into otel_traces"
+                                       (map #(span-row % (:typed-span-projector @state)) spans)))
                       nil))))]
           (if receipts
             (complete-batch! connection state true receipts (count spans))
