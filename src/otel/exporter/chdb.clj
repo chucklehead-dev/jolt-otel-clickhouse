@@ -13,6 +13,7 @@
             [otel.any-value :as any]
             [otel.context :as context]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
+            [otel.exporter.chdb.compact-format :as compact-format]
             [otel.exporter.chdb.schema :as schema]
             [otel.otlp.any-value :as wire-any]
             [otel.sdk.export :as export]
@@ -855,6 +856,8 @@
 (defn- insert-batch! [connection state table columns query rows]
   (let [snapshot @state
         format (:insert-format snapshot :json-each-row)
+        _ (when (= :json-compact-each-row format)
+            (compact-format/require-order! (:compact-plans snapshot) connection table columns))
         query (if (= :json-compact-each-row format)
                 (compact-insert-query table columns) query)]
     (if (:durable? snapshot)
@@ -1012,6 +1015,9 @@
                      :let [columns (metric-insert-columns state type)
                            payload (ordinary-payload columns selected format)]]
                  [(get schema/metric-table-names type) columns payload]))]
+      (when (= :json-compact-each-row format)
+        (doseq [[table columns _] prepared]
+          (compact-format/require-order! (:compact-plans @state) connection table columns)))
       (context/with-instrumentation-suppressed
         (doseq [[table columns payload] prepared]
           (insert-ordinary-payload! connection table columns format payload))))))
@@ -1390,29 +1396,24 @@
          typed-histogram-projector (when typed-histogram-descriptors
                                      (attribute-projection/histogram-projector
                                       typed-histogram-descriptors conn))
+         span-fields (when typed-span-descriptors
+                       (attribute-projection/confirmed-span-fields typed-span-descriptors conn))
+         log-fields (when typed-log-descriptors
+                      (attribute-projection/confirmed-log-fields typed-log-descriptors conn))
+         gauge-fields (when typed-gauge-descriptors
+                        (attribute-projection/confirmed-gauge-fields typed-gauge-descriptors conn))
+         sum-fields (when typed-sum-descriptors
+                      (attribute-projection/confirmed-sum-fields typed-sum-descriptors conn))
+         histogram-fields (when typed-histogram-descriptors
+                            (attribute-projection/confirmed-histogram-fields typed-histogram-descriptors conn))
          span-columns (into (into schema/clickstack-trace-insert-columns
                                   ["EventsJSON" "LinksJSON"])
-                            (when typed-span-descriptors
-                              (typed-columns
-                               (attribute-projection/confirmed-span-fields
-                                typed-span-descriptors conn))))
+                            (typed-columns span-fields))
          log-columns (into schema/clickstack-log-insert-columns
-                           (when typed-log-descriptors
-                             (typed-columns
-                              (attribute-projection/confirmed-log-fields
-                               typed-log-descriptors conn))))
-         gauge-columns (vec (when typed-gauge-descriptors
-                              (typed-columns
-                               (attribute-projection/confirmed-gauge-fields
-                                typed-gauge-descriptors conn))))
-         sum-columns (vec (when typed-sum-descriptors
-                            (typed-columns
-                             (attribute-projection/confirmed-sum-fields
-                              typed-sum-descriptors conn))))
-         histogram-columns (vec (when typed-histogram-descriptors
-                                  (typed-columns
-                                   (attribute-projection/confirmed-histogram-fields
-                                    typed-histogram-descriptors conn))))
+                           (typed-columns log-fields))
+         gauge-columns (typed-columns gauge-fields)
+         sum-columns (typed-columns sum-fields)
+         histogram-columns (typed-columns histogram-fields)
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (if durable?
@@ -1431,6 +1432,34 @@
          (throw (ex-info "Unqualified chDB telemetry timestamp wire"
                          {:type ::unqualified-timestamp-wire})))
        (when create-schema? (schema/ensure-schema! conn))
+       ;; Confirm before the schema checkpoint/first telemetry acknowledgement.
+       ;; Explicit compact selection fails closed, not a silent named fallback.
+       ;; Source/descriptor types and the exact explicit SQL order are bound at
+       ;; startup under the existing single-schema-owner contract.
+       (let [compact-plans
+             (when (= :json-compact-each-row insert-format)
+               (let [enabled (set signals)
+                     targets
+                     (cond-> []
+                       (contains? enabled :spans)
+                       (conj ["otel_traces" span-columns
+                              (merge schema/clickstack-trace-insert-types
+                                     (compact-format/typed-types span-fields))])
+                       (contains? enabled :logs)
+                       (conj ["otel_logs" log-columns
+                              (merge schema/clickstack-log-insert-types
+                                     (compact-format/typed-types log-fields))])
+                       (contains? enabled :metrics)
+                       (into (mapv (fn [[kind extra fields]]
+                                      [(get schema/metric-table-names kind)
+                                       (into (get schema/clickstack-metric-insert-columns kind) extra)
+                                       (merge (get schema/clickstack-metric-insert-types kind)
+                                              (compact-format/typed-types fields))])
+                                    [[:gauge gauge-columns gauge-fields]
+                                     [:sum sum-columns sum-fields]
+                                     [:histogram histogram-columns histogram-fields]])))]
+                 (into {} (map (fn [[table columns types]]
+                                 [table (compact-format/confirm! conn table columns types)])) targets)))]
        ;; A full checkpoint makes the schema independently recoverable before
        ;; the exporter can acknowledge its first telemetry batch.
        (when (and durable? create-schema?)
@@ -1466,8 +1495,9 @@
                               :durable? durable?
                               :json-backend json-backend
                               :insert-format insert-format
+                              :compact-plans compact-plans
                               :durable-phase-receipts durable-phase-receipts
-                              :last-error nil}))
+                              :last-error nil})))
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
          (when owned? (try (.close conn) (catch Throwable _ nil)))

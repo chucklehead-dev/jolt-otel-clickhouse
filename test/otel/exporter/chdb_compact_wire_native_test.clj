@@ -3,6 +3,7 @@
   (:require [clojure.test :as test :refer [deftest is]]
             [db.jdbc] [jdbc.chdb] [jdbc.core :as jdbc]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb-benchmark :as benchmark]
             [otel.sdk.export :as export] [otel.sdk.logs :as logs]))
 
@@ -20,6 +21,9 @@
       (is (true? (export/export-metrics! target (#'benchmark/resource service)
                                        (#'benchmark/metrics 0 1))))
       (is (nil? (exporter/last-error target)))
+      (is (= #{"otel_traces" "otel_logs" "otel_metrics_gauge"
+               "otel_metrics_sum" "otel_metrics_histogram"}
+             (set (keys (:compact-plans @(:state target))))))
       (is (= {:body body :flags 1 :severity 17}
              (jdbc/fetch-one connection
                 ["select Body body, TraceFlags flags, SeverityNumber severity from otel_logs where ServiceName=?" service])))
@@ -30,7 +34,41 @@
         (is (= "GET" (:method row))))
       (doseq [table ["otel_metrics_gauge" "otel_metrics_sum" "otel_metrics_histogram"]]
         (is (= 1 (:n (jdbc/fetch-one connection
-                       [(str "select count() n from " table " where ServiceName=?") service]))))))))
+                       [(str "select count() n from " table " where ServiceName=?") service])))))
+      (let [fetch jdbc/fetch]
+        (with-redefs [jdbc/fetch
+                      (fn [conn sql & args]
+                        (when (and (string? sql) (.startsWith sql "DESCRIBE TABLE"))
+                          (throw (Exception. "steady-state must not re-describe")))
+                        (apply fetch conn sql args))]
+          (is (true? (logs/export-logs! target [(assoc record :body "second")])))))
+      (swap! (:state target) update :log-insert-columns #(vec (reverse %)))
+      (is (false? (logs/export-logs! target [(assoc record :body "must-not-persist")])))
+      (is (= :otel.exporter.chdb.compact-format/schema-not-confirmed
+             (:type (ex-data (exporter/last-error target)))))
+      (is (= 2 (:n (jdbc/fetch-one connection
+                       ["select count() n from otel_logs where ServiceName=?" service])))))))
+
+(deftest wrong-live-type-rejects-compact-startup-without-exporting
+  (with-open [connection (jdbc/connection "chdb::memory:")]
+    (schema/ensure-schema! connection)
+    ;; Logical :memory: shares the process-lifetime native engine; do not assert
+    ;; a reset or erase earlier fixture rows. A String wrapper changes only the
+    ;; task-owned column declaration, and rejected startup must preserve counts.
+    (let [before (:n (jdbc/fetch-one connection "select count() n from otel_logs"))
+          _ (jdbc/execute! connection "ALTER TABLE otel_logs MODIFY COLUMN EventName LowCardinality(String)")
+          error (try (exporter/exporter {:connection connection :create-schema? false
+                                        :signals #{:logs} :insert-format :json-compact-each-row})
+                     (catch Throwable error error))]
+      (is (= {:type :otel.exporter.chdb.compact-format/schema-not-confirmed} (ex-data error)))
+      (is (nil? (.getCause error)))
+      (is (= before (:n (jdbc/fetch-one connection "select count() n from otel_logs")))))
+    (let [fetch jdbc/fetch]
+      (with-redefs [jdbc/fetch (fn [& _] (throw (Exception. "default must not describe")))]
+        (let [default (exporter/exporter {:connection connection :create-schema? false :signals #{:logs}})]
+          (is (= :json-each-row (:insert-format @(:state default))))
+          (is (nil? (:compact-plans @(:state default))))
+          (logs/shutdown-log-exporter! default))))))
 
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-compact-wire-native-test)]

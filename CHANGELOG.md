@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Fence explicit compact input with startup-only live column/type confirmation
+  for enabled signals. Bind opaque plans to their connection and insert order;
+  reject unconfirmed schema or plan reuse without retaining provider details.
+  No steady-state metadata queries or changes to default named input/ACKs.
+
 - Extend existing typed OTLP socket and two-process Durable acceptance fixtures
   to exercise compact input as well as the unchanged default. Check positional
   field binding, typed readback and historical coverage; document remaining

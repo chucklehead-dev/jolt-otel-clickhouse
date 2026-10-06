@@ -283,8 +283,26 @@
 (defn -main [phase root & format-arguments]
   (try (apply run! phase root format-arguments)
        (println :observed-checks @observed-checks)
-       (catch Throwable _
+       (catch Throwable error
          ;; Values are assigned exclusively by internal fixed-label checks.
          (println :durable-native-failed :last-check @last-check
-                  :observed-checks @observed-checks)
+                  :observed-checks @observed-checks
+                  :exception-class (.getName (class error))
+                  :category (let [category (:type (ex-data error))]
+                              (if (keyword? category) category :unclassified))
+                  :startup-stage (let [stage (:jdbc.chdb.durable/startup-stage (ex-data error))]
+                                   (if (#{:capability :read-head :acquire-lease :create-scratch
+                                          :open-native :recover :renew-lease :start-writer} stage)
+                                     stage :unclassified))
+                  :cause-category (let [category (:type (ex-data (.getCause error)))]
+                                    (if (#{:jdbc.chdb.durable/corrupt
+                                           :jdbc.chdb.durable/limit-exceeded
+                                           :jdbc.chdb.durable/unsafe-replay
+                                           :jdbc.chdb.durable/engine-incompatible
+                                           :jdbc.chdb.durable/corrupt-wal
+                                           :jdbc.chdb.durable/corrupt-base
+                                           :jdbc.chdb.durable/corrupt-object
+                                           :jdbc.chdb.durable/unsupported-wal
+                                           :jdbc.chdb.durable/lease-fenced} category)
+                                      category :unclassified)))
          (System/exit 1))))

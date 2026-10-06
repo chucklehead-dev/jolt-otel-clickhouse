@@ -13,6 +13,20 @@ qualified source-runtime requirement. No standalone native/AOT claim is added.
 
 ## Safety and observable behavior
 
+- Compact startup confirms live column names/types for every enabled signal.
+  `:metrics` requires gauge, sum and histogram tables, including any confirmed
+  promoted columns. Missing/wrong/ambiguous schema fails with a fixed error;
+  there is no silent switch to named input. Select JSONEachRow explicitly if
+  the compact schema cannot be confirmed.
+- A private, opaque plan binds each confirmation to its connection and explicit
+  column order. Physical DESCRIBE order and additional unselected columns do not
+  change that order. Reusing the plan on another connection or changing the
+  ordered insert vector is rejected before insertion. Plan printing does not
+  expose the connection. No steady-state DESCRIBE query is added.
+- Confirmation is a startup snapshot under the single-schema-owner contract,
+  not a DDL lock or cross-process freshness proof. Do not change the schema
+  while that exporter is active; settle/retire it and construct a new exporter
+  after schema changes. Concurrent schema administration remains unqualified.
 - A physical row must contain exactly its declared columns. Missing/extra fields
   fail before driver entry with a fixed error and no retained field/value data.
 - Projection is schema-ordered and lazy between rows. Serial encoding checks
@@ -63,12 +77,13 @@ acceptance fixture, not a replacement for the canonical integrity/release gate.
 
 ## Current evidence
 
-Focused tests: 14 tests / 46 assertions cover fixture selection, projection, column ordering and
+Focused tests: 20 tests / 69 assertions cover live type confirmation,
+connection/order binding, fixed-error redaction, fixture selection, projection, column ordering and
 quoting, missing/extra/null-row rejection, pre-overflow lazy-row behavior,
 constructor validation before acquisition, unchanged default wire, and one
 confirmed Durable request, typed null/status slots and ordinary all-before-driver
 validation. The earlier 12-test extra-field-dropping mutant produced 38 passes / one expected
-failure. A fresh-process ordinary native smoke passes one test / 11 assertions,
+failure. The schema-fenced native checks pass two tests / 21 assertions,
 including question marks, quotes, Unicode and exact timestamp ticks. Default
 metric/scalar/span regressions pass 20 tests / 181 assertions.
 A same-type String column-swap mutant produces 45 passes / one expected
@@ -90,6 +105,12 @@ and selected field aggregates across all five tables, including span duration,
 kind/status, attributes and exact timestamp ticks. This is not full-value
 equivalence; repeated performance remains a gate.
 
+With startup schema confirmation and steady-state connection/order checks, a
+fresh 5k screen measured 23,702.83 rows/s; an independent reader confirmed all
+250k rows. This is about 5.5% below the earlier compact screen, not a paired
+causal comparison or a tail qualification. Guard overhead and ordinary run
+variation must be separated before treating the earlier 25k mean as preserved.
+
 On that same selected stack, compact input passes the existing real socket
 acceptance checks for typed logs, gauge/sum (15 checks), and explicit histograms
 (8 checks). They retain exact Int64/Boolean/String values, generic fallback maps,
@@ -106,11 +127,12 @@ base plus persisted WAL while the live writer is parked, then the writer's
 signal shutdowns complete. This is not a crash-kill, S3 or concurrent-DDL test.
 
 The prior, log-only candidate in exporter issue #82 required a live DESCRIBE
-schema/type fence and had a separate insert-shape model. This newer candidate
-has explicit source/descriptor-derived columns and closed row-shape checks,
-but has not ported that live fence or qualified the older model against all
-five tables. Do not infer those guarantees from the unchanged ACK model or
-from these native tests. Review/resolve this boundary before app adoption.
+schema/type fence and had a separate insert-shape model. This follow-up restores
+live confirmation for all five tables and adds connection/order binding. Unlike
+that candidate's named fallback, an unconfirmed explicit compact request fails
+startup. The earlier model has not yet been qualified for this all-signal
+fail-closed contract; the unchanged ACK model does not prove these properties.
+Review/resolve the model and integration gates before app adoption.
 
 Independent fresh readers of the experimental store confirm 250k rows and
 selected log/metric field aggregates: resource/scope data, map cardinalities,
