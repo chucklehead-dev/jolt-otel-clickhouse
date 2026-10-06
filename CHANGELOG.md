@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Normalize attribute maps with a direct transient reduction, avoiding temporary
+  normalized key/value vectors. Preserve conversion order, collision precedence,
+  exact wire values and custom converter/error effects; no codec or ACK change.
+
 - Build untyped Durable compact logs directly in the fixed collector column
   order. Keep shared body/attribute conversion, typed fallback, serial byte
   limits and schema checks before and after callbacks; ACKs are unchanged.

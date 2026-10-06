@@ -40,6 +40,43 @@
         (is (= "custom" (#'exporter/value-string value))))
       (is (= ["plain" false 42] @calls)))))
 
+(defn legacy-attrs [source]
+  (into {} (map (fn [[k v]] [(#'exporter/key-string k) (#'exporter/value-string v)]))
+        (or source {})))
+
+(deftest direct-attribute-reduction-retains-map-order-collisions-and-wire
+  (doseq [source [nil false {} []
+                  (array-map :x 1 "x" 2 :named/x 3 "é😀" "\n")
+                  (into {} (map (fn [i] [(str "key-" i) i]) (range 32)))
+                  (sorted-map "z" true "a" false)
+                  [["key" nil] [:key "last"] [nil any/empty-value]
+                   [42 (any/bytes [0 255])] ["structured" {:nested [1 nil true]}]]]]
+    (let [expected (legacy-attrs source) actual (#'exporter/attrs source)]
+      (is (= expected actual))
+      (is (= (vec (keys expected)) (vec (keys actual))))
+      (is (= (json/write-str expected) (json/write-str actual))))))
+
+(deftest attribute-converters-retain-effect-order-and-single-realization
+  (let [old-key @#'exporter/key-string old-value @#'exporter/value-string
+        observe (fn [build fail?]
+                  (let [effects (atom [])
+                        source (lazy-seq
+                                 (swap! effects conj :realized)
+                                 (list [:x "first"] ["x" "second"] [:last "third"]))]
+                    (with-redefs [exporter/key-string
+                                  (fn [k] (swap! effects conj [:key k]) (old-key k))
+                                  exporter/value-string
+                                  (fn [v]
+                                    (swap! effects conj [:value v])
+                                    (when (and fail? (= "second" v))
+                                      (throw (ex-info "converter rejected" {:type ::rejected})))
+                                    (old-value v))]
+                      [(try {:value (build source)}
+                            (catch clojure.lang.ExceptionInfo e {:error (ex-data e)}))
+                       @effects])))]
+    (doseq [fail? [false true]]
+      (is (= (observe legacy-attrs fail?) (observe #'exporter/attrs fail?))))))
+
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

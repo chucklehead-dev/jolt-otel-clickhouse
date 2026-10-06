@@ -52,7 +52,10 @@
             (canonical-value-string (:value canonical)))))))
 
 (defn- attrs [m]
-  (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))
+  (persistent!
+    (reduce (fn [out [k v]]
+              (assoc! out (key-string k) (value-string v)))
+            (transient {}) (or m {}))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
