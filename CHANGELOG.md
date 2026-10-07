@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an explicit authenticated runtime profile for the measured 0.8.17-lineage
+  compiler after full behavioral/shared CI passed. Pin run, workflow, artifact,
+  archive and binary identities; keep older profiles/default and branch guards
+  unchanged. This does not qualify a caller's app graph or S3 performance.
+
 - Normalize small array-map attributes with `reduce-kv`, avoiding temporary
   entry sequences. Preserve callback order and normalized-key collision winners;
   hash maps and other inputs keep their existing traversal. No codec/ACK change.

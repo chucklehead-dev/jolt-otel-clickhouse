@@ -8,8 +8,20 @@ repo=casselc/jolt
 compiler=
 compiler_tree=
 artifact_name=
+expected_branch=integration/aspects
 profile=${QUALIFIED_RUNTIME_PROFILE-bf8}
 case "$profile" in
+  bcb)
+    compiler=bcb376a04f8e3d4508e9f77f4fa33b50bae7924b
+    compiler_tree=eb24fdfdba7da4e468304376e37db3117b3c50b9
+    artifact_name=durable-runtime-bcb376a0-linux-x64
+    expected_branch=ci/measured-runtime-ab9b-20261007
+    pair_run=37650983199
+    pair_workflow=2d0f4b59e068b269780b0a669e8bc06524ec98b1
+    pair_artifact=11497896255
+    pair_archive=6d7043b502ab7839fe4a91ae977b7be8be088ebe620ead6115d2d0afdb9819db
+    pair_binary=9f6e6b4a347ae006ba5810b3bb876b4bb2eca41b611afeadfb18d4feb9c03cf0
+    ;;
   bf8)
     compiler=bf8a5dde7bebb5658d218e9757ab1df0aa9c3b95
     compiler_tree=206fe5b4e539dc26ea5a8665aee3bb4ca7943834
@@ -80,12 +92,13 @@ printf 'QUALIFIED_RUNTIME_EVIDENCE_ROOT=%s\n' "$root"
 # absent permission/expired artifacts fail, not an alternate compiler selection.
 gh api --hostname github.com "repos/$repo/actions/runs/$QUALIFIED_RUNTIME_RUN_ID" > "$root/run.json"
 jq -e --arg sha "$QUALIFIED_RUNTIME_WORKFLOW_SHA" \
-  --arg path "$workflow_path" --argjson attempt "$QUALIFIED_RUNTIME_RUN_ATTEMPT" '
+  --arg path "$workflow_path" --arg branch "$expected_branch" \
+  --argjson attempt "$QUALIFIED_RUNTIME_RUN_ATTEMPT" '
   .repository.full_name == "casselc/jolt" and
   .head_repository.full_name == "casselc/jolt" and
   .head_sha == $sha and .path == $path and
   .run_attempt == $attempt and .event == "push" and
-  .head_branch == "integration/aspects" and
+  .head_branch == $branch and
   .status == "completed" and .conclusion == "success"' "$root/run.json" > /dev/null
 gh api --hostname github.com "repos/$repo/actions/artifacts/$QUALIFIED_RUNTIME_ARTIFACT_ID" > "$root/artifact.json"
 jq -e --arg name "$artifact_name" --arg sha "$QUALIFIED_RUNTIME_WORKFLOW_SHA" \
@@ -127,9 +140,18 @@ require_manifest_line runner_arch=X64
 require_manifest_line require_buildlib=1
 require_manifest_line gate=pass
 require_manifest_line ranged_append_ascii=98
+if [[ "$profile" == bcb ]]; then
+  require_manifest_line runtime_kind=plain
+  require_manifest_line upstream_source=58980ac9faa6c3c571d1cb251eb7b09799af1b67
+  require_manifest_line upstream_tree=1cf36cb0fed53401364d05f2b9e74a9cc25edaa6
+  require_manifest_line 'binary_version=jolt v0.8.17-39-gbcb376a0'
+fi
 
 # Artifact ZIP transport does not retain executable mode. Validate bytes first.
 chmod 755 "$root/jolt"
+if [[ "$profile" == bcb ]]; then
+  test "$("$root/jolt" --version)" = 'jolt v0.8.17-39-gbcb376a0'
+fi
 # This is an artifact capability check, not qualification of the caller's
 # application graph. The newly owned artifact directory contains no deps.edn.
 (

@@ -29,7 +29,8 @@ if "PAIR_API_LEDGER" in os.environ:
         print(json.dumps({"repository": {"full_name": "casselc/jolt"},
             "head_repository": {"full_name": "casselc/jolt"}, "head_sha": sha,
             "path": ".github/workflows/durable-runtime-artifact.yml",
-            "run_attempt": 1, "event": "push", "head_branch": "integration/aspects",
+            "run_attempt": 1, "event": "push",
+            "head_branch": "wrong-branch" if control == "wrong-branch" else os.environ.get("PAIR_HEAD_BRANCH", "integration/aspects"),
             "status": "in_progress" if control == "unfinished-provider" else "completed",
             "conclusion": None if control == "unfinished-provider" else "success"}))
     elif endpoint == f"repos/casselc/jolt/actions/artifacts/{artifact}":
@@ -179,6 +180,10 @@ assert len(CONTROLS) == 12 and failures == 0
 # before executable mode/probe. The original controls above cover full archive
 # and manifest acceptance with a fake child; neither set runs a real compiler.
 PROFILES = {
+    "bcb": ("37650983199", "2d0f4b59e068b269780b0a669e8bc06524ec98b1",
+        "11497896255", "durable-runtime-bcb376a0-linux-x64",
+        "6d7043b502ab7839fe4a91ae977b7be8be088ebe620ead6115d2d0afdb9819db",
+        "9f6e6b4a347ae006ba5810b3bb876b4bb2eca41b611afeadfb18d4feb9c03cf0"),
     "baseline-09a2": ("35237991514", "1fea9ae8becb8b5ada545d32b032cc4de91c52cc",
         "10504073187", "durable-runtime-09a2baac-linux-x64",
         "2dba59b6c96787e27b9edaaabafc4e3624b0e7bb380d0ec83a6a3bf352980f78",
@@ -193,6 +198,8 @@ PROFILES = {
         "f54b2f14ba06abbd4666a617762221b7c8da3e7b01e6578bdc39541cc729f102"),
 }
 COMPILER_PINS = {
+    "bcb": ("bcb376a04f8e3d4508e9f77f4fa33b50bae7924b",
+            "eb24fdfdba7da4e468304376e37db3117b3c50b9"),
     "baseline-09a2": ("09a2baac9714f98b994473f64fd239f431a9fffb",
                       "4c2fb3c2b00fe085ce3920a1de558c65d3b8f979"),
     "string-writer-c5d": ("c5d444e4d074767f507fe86b203b6dde6c309fc5",
@@ -214,7 +221,7 @@ for profile, pins in PROFILES.items():
                      f"pair_workflow={pins[1]}", f"pair_artifact={pins[2]}",
                      f"pair_archive={pins[4]}", f"pair_binary={pins[5]}"):
         assert block.splitlines().count("    " + expected) == 1
-pair_controls = ["selection", "unfinished-provider", "cross-name", "wrong-run",
+pair_controls = ["selection", "unfinished-provider", "wrong-branch", "cross-name", "wrong-run",
                  "wrong-attempt", "wrong-controller", "cross-artifact",
                  "cross-archive", "cross-binary", "unknown-profile", "empty-profile"]
 pair_failures = 0
@@ -234,6 +241,7 @@ for profile, pins in PROFILES.items():
             "QUALIFIED_RUNTIME_ARTIFACT_SHA256": pins[4],
             "QUALIFIED_RUNTIME_BINARY_SHA256": pins[5],
             "PAIR_ARTIFACT_NAME": pins[3], "PAIR_API_LEDGER": str(ledger),
+            "PAIR_HEAD_BRANCH": "ci/measured-runtime-ab9b-20261007" if profile == "bcb" else "integration/aspects",
             "OFFLINE_CONTROL": control, "OFFLINE_ARCHIVE": str(archive),
             "FIXTURE_EXEC_SENTINEL": str(sentinel),
         }
@@ -256,7 +264,7 @@ for profile, pins in PROFILES.items():
         log = result.stdout + result.stderr
         (ROOT / f"{prefix}.log").write_bytes(log)
         requests = ledger.read_text().splitlines() if ledger.exists() else []
-        expected = 3 if control == "selection" else 1 if control == "unfinished-provider" else 2 if control == "cross-name" else 0
+        expected = 3 if control == "selection" else 1 if control in ("unfinished-provider", "wrong-branch") else 2 if control == "cross-name" else 0
         evidence = [line.split("=", 1)[1] for line in result.stdout.decode().splitlines()
                     if line.startswith("QUALIFIED_RUNTIME_EVIDENCE_ROOT=")]
         executable = any(os.access(pathlib.Path(root) / "jolt", os.X_OK) for root in evidence)
