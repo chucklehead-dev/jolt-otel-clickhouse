@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Normalize keyword attribute names without allocating a colon-prefixed
+  intermediate string. Preserve namespaces, collision precedence, converter
+  order and all non-keyword behavior. No encoding or persistence contract change.
+
 - Update chDB to retain the exact head-scanner character vocabulary and reuse
   identical decoded head bytes within a reference commit. Fresh reads,
   persistence acknowledgements and telemetry values are unchanged; no exporter

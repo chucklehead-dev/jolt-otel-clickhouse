@@ -9,6 +9,7 @@
             [otel.context :as context]
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
+            [otel.exporter.chdb-keyword-attribute-names-test]
             [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
@@ -851,6 +852,9 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (let [result (test/run-tests 'otel.exporter.chdb-keyword-attribute-names-test)]
+    (check "keyword attribute name regressions are nonempty" true (pos? (:test result)))
+    (check "keyword attribute name regressions pass" 0 (+ (:fail result) (:error result))))
   (run-ordinary-transport-diagnostics-checks)
   (ordinary-rows-test/run check)
   (ordinary-typed-rows-test/run check)
