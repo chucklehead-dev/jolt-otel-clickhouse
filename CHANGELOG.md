@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Normalize keyword attribute names directly, preserving namespaces without
+  allocating a colon-prefixed intermediate string. Retain converter order,
+  normalized-key collision precedence, and non-keyword behavior.
+
 - Normalize small array-map attributes with `reduce-kv`, avoiding temporary
   entry sequences. Preserve callback order and normalized-key collision winners;
   hash maps and other inputs keep their existing traversal. No codec/ACK change.

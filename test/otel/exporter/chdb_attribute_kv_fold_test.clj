@@ -8,6 +8,20 @@
               (assoc! out (#'exporter/key-string k) (#'exporter/value-string v)))
             (transient {}) (or m {}))))
 
+(deftest keyword-names-match-the-frozen-print-and-strip-conversion
+  ;; Do not use the candidate converter in the expected value: namespace loss
+  ;; would otherwise change both the oracle and implementation together.
+  (doseq [key [:service.name :domain/key :domain/é😀
+               (keyword "") (keyword "" "name") (keyword "ns" "")
+               (keyword "a/b" "c/d") (keyword nil "a/b")]]
+    (is (= (subs (str key) 1) (#'exporter/key-string key))))
+  (doseq [key [nil "plain" 'domain/key 42 false]]
+    (is (= (str key) (#'exporter/key-string key))))
+  (is (= {"domain/key" "last" "service.name" "example"}
+         (#'exporter/attrs (array-map :domain/key "first"
+                                     "domain/key" "last"
+                                     :service.name "example")))))
+
 (defn observe [operation input]
   (let [effects (atom [])
         key-string @#'exporter/key-string value-string @#'exporter/value-string]

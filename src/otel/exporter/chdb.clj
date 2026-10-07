@@ -20,7 +20,14 @@
             [otel.sdk.logs :as logs]))
 
 (defn- key-string [k]
-  (cond (string? k) k (keyword? k) (subs (str k) 1) :else (str k)))
+  (cond
+    (string? k) k
+    ;; Preserve the namespace, but avoid printing a colon only to copy the
+    ;; string again when removing it. Most telemetry keywords have no namespace.
+    (keyword? k) (if-let [prefix (namespace k)]
+                   (str prefix "/" (name k))
+                   (name k))
+    :else (str k)))
 
 (defn- pdata-raw [v]
   (cond
