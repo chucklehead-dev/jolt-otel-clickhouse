@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Skip empty transient-map construction for absent or false attribute inputs.
+  Preserve normalized values and callback/traversal order for all present
+  inputs; do not add arbitrary `empty?` probes or change encoding/ACKs.
+
 - Normalize small array-map attributes with `reduce-kv`, avoiding temporary
   entry sequences. Preserve callback order and normalized-key collision winners;
   hash maps and other inputs keep their existing traversal. No codec/ACK change.

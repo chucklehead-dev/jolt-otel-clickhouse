@@ -57,16 +57,20 @@
              (transient {}) m))
 
 (defn- attrs [m]
-  (persistent!
-    ;; Array-map kvreduce has the same insertion order as its entry sequence,
-    ;; without materializing entries or destructuring each pair. Do not widen
-    ;; this to hash maps: collision-bucket traversal can differ between seq
-    ;; and kvreduce on hosts, affecting callbacks and normalized-key winners.
-    (if (instance? clojure.lang.PersistentArrayMap m)
-      (array-map-attrs m)
-      (reduce (fn [out [k v]]
-                (assoc! out (key-string k) (value-string v)))
-              (transient {}) (or m {})))))
+  ;; Match the old (or m {}) truthiness without constructing an empty transient.
+  ;; Do not probe arbitrary inputs with empty?: their seq can have live effects.
+  (if (or (nil? m) (false? m))
+    {}
+    (persistent!
+      ;; Array-map kvreduce has the same insertion order as its entry sequence,
+      ;; without materializing entries or destructuring each pair. Do not widen
+      ;; this to hash maps: collision-bucket traversal can differ between seq
+      ;; and kvreduce on hosts, affecting callbacks and normalized-key winners.
+      (if (instance? clojure.lang.PersistentArrayMap m)
+        (array-map-attrs m)
+        (reduce (fn [out [k v]]
+                  (assoc! out (key-string k) (value-string v)))
+                (transient {}) m)))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
