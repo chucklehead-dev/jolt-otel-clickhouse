@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Normalize small array-map attributes with `reduce-kv`, avoiding temporary
+  entry sequences. Preserve callback order and normalized-key collision winners;
+  hash maps and other inputs keep their existing traversal. No codec/ACK change.
+
 - Avoid transient collection folds for empty span event/link vectors. Keep
   nonempty and lazy input traversal, JSON writer callbacks, layouts and ACKs.
 

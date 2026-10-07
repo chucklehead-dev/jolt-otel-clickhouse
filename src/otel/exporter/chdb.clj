@@ -51,11 +51,22 @@
             (pr-str v)
             (canonical-value-string (:value canonical)))))))
 
+(defn- array-map-attrs [m]
+  (reduce-kv (fn [out k v]
+               (assoc! out (key-string k) (value-string v)))
+             (transient {}) m))
+
 (defn- attrs [m]
   (persistent!
-    (reduce (fn [out [k v]]
-              (assoc! out (key-string k) (value-string v)))
-            (transient {}) (or m {}))))
+    ;; Array-map kvreduce has the same insertion order as its entry sequence,
+    ;; without materializing entries or destructuring each pair. Do not widen
+    ;; this to hash maps: collision-bucket traversal can differ between seq
+    ;; and kvreduce on hosts, affecting callbacks and normalized-key winners.
+    (if (instance? clojure.lang.PersistentArrayMap m)
+      (array-map-attrs m)
+      (reduce (fn [out [k v]]
+                (assoc! out (key-string k) (value-string v)))
+              (transient {}) (or m {})))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
