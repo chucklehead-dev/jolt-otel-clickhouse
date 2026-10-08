@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit experimental `:owned-statement-output?` for native-byte compact
+  Durable export. Flow direct compact batches through owned snapshots without
+  whole-SQL text; unsupported output decodes existing bytes, never re-encodes
+  input. Validate the matching stack before database acquisition; default and
+  generic fallback paths retain text and existing acknowledgement guarantees.
+
 - Walk the compiled typed-vector plan by index in the experimental native-byte
   compact-span path. Avoid per-row traversal closures and variadic vector
   appends while preserving live converters, field order and duplicate statuses.

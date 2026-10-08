@@ -14,6 +14,7 @@
             [otel.exporter.chdb-native-attributes-test]
             [otel.exporter.chdb-native-declared-attributes-test]
             [otel.exporter.chdb-generic-prefix-test]
+            [otel.exporter.chdb-owned-output-test]
             [otel.exporter.chdb-typed-compact-vector-test]
             [otel.exporter.chdb-compact-wire-test]
             [otel.exporter.chdb-compact-span-layout-test]
@@ -378,6 +379,7 @@
                                'otel.exporter.chdb-native-attributes-test
                                'otel.exporter.chdb-native-declared-attributes-test
                                'otel.exporter.chdb-generic-prefix-test
+                               'otel.exporter.chdb-owned-output-test
                                'otel.exporter.chdb-typed-compact-vector-test
                                'otel.exporter.chdb-metric-row-test
                                'otel.exporter.chdb-compact-wire-test
