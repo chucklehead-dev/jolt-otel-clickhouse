@@ -93,6 +93,15 @@ Durable confirmation, and rejects missing/extra physical fields. The default
 remains JSONEachRow; custom row-object writers should keep that default.
 See [compact row input and qualification limits](docs/compact-row-format.md).
 
+The experimental `:json-backend :native-guarded-byte-batch` needs matching
+chDB/data.json capabilities and the qualified compiler-bearing source runtime.
+It collects serial row bytes and materializes compact SQL once. Small attribute
+maps also use exact-sized storage, retaining the usual classifiers, live value
+conversion and normalized-key collision order. Larger maps and generic inputs
+keep the existing conversion path. This is not a new attribute schema or a
+global encoder setting; defaults, the 8 MiB payload bound and Durable
+acknowledgements are unchanged. Standalone/AOT support is not qualified.
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact

@@ -19,6 +19,8 @@
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
 
+(def ^:private ^:dynamic *json-backend* :configured)
+
 (defn- key-string [k]
   (cond
     (string? k) k
@@ -63,22 +65,41 @@
                (assoc! out (key-string k) (value-string v)))
              (transient {}) m))
 
+(def ^:private stock-array-map-attrs array-map-attrs)
+
+(def ^:private small-attribute-transform
+  (delay
+    ;; Loaded only by the explicitly selected source-only native byte option.
+    ;; Hold Var cells, not function roots: converters can change during a map.
+    (try
+      (require 'otel.exporter.chdb.native-attributes)
+      ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
+       #'key-string #'value-string)
+      (catch Throwable _
+        (throw (ex-info "Native attribute projection is unavailable"
+                        {:type ::native-attributes-unavailable}))))))
+
 (defn- attrs [m]
   (if (or (nil? m) (false? m)
           (and (or (instance? clojure.lang.PersistentArrayMap m)
                    (instance? clojure.lang.PersistentHashMap m))
                (zero? (count m))))
     {}
-    (persistent!
     ;; Array-map kvreduce has the same insertion order as its entry sequence,
     ;; without materializing entries or destructuring each pair. Do not widen
     ;; this to hash maps: collision-bucket traversal can differ between seq
     ;; and kvreduce on hosts, affecting callbacks and normalized-key winners.
     (if (instance? clojure.lang.PersistentArrayMap m)
-      (array-map-attrs m)
-      (reduce (fn [out [k v]]
-                (assoc! out (key-string k) (value-string v)))
-              (transient {}) (or m {}))))))
+      ;; Preserve BOTH original classifier calls before native admission. A
+      ;; replacement of the private array converter keeps its original path.
+      (or (when (and (= :native-guarded-byte-batch *json-backend*)
+                     (identical? array-map-attrs stock-array-map-attrs))
+            (@small-attribute-transform m))
+          (persistent! (array-map-attrs m)))
+      (persistent!
+       (reduce (fn [out [k v]]
+                 (assoc! out (key-string k) (value-string v)))
+               (transient {}) (or m {}))))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
@@ -446,8 +467,6 @@
     (catch Throwable _
       (throw (ex-info "Typed span encoder compilation failed"
                       {:type ::typed-span-encoder-compilation-failed})))))
-
-(def ^:private ^:dynamic *json-backend* :configured)
 
 (defn- configured-json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
@@ -1621,6 +1640,8 @@
    (when (not= :configured json-backend)
      (row-encoder/close!
       (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})))
+   (when (= :native-guarded-byte-batch json-backend)
+     @small-attribute-transform)
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
      (throw (ex-info ":persistence-barrier must be callable"
                      {:type ::invalid-persistence-barrier})))

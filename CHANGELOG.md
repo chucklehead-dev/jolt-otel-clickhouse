@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Build small attribute maps in exact-sized storage under the explicit native
+  byte backend. Keep existing classifier calls, live converters, collision
+  order and generic fallback; default encoding and persistence are unchanged.
+
 - Reject a consumer graph missing the required OTel scalar API before database
   acquisition, rather than failing a first telemetry export after startup.
 
