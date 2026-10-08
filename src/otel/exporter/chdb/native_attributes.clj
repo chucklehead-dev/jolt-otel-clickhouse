@@ -3,9 +3,13 @@
   (:require [clojure.java.io :as io] [jolt.scheme :as scheme]))
 
 (defmacro ^:private native-source []
-  (if-let [url (io/resource "otel/exporter/chdb/native_attributes.ss")]
-    (slurp url)
-    (throw (ex-info "Missing native attribute projection resource" {}))))
+  (let [url (io/resource "otel/exporter/chdb/native_attributes.ss")
+        clone-url (io/resource "otel/exporter/chdb/native_attribute_value_clone.ss")]
+    (when-not (and url clone-url)
+      (throw (ex-info "Missing native attribute projection resource" {})))
+    (str "(let ((clone " (slurp clone-url) ") (generic " (slurp url) ")) "
+         "(lambda (m key-var value-var) "
+         "(or (clone m key-var value-var) (generic m key-var value-var))))")))
 
 (def ^:private source (native-source))
 
@@ -28,7 +32,9 @@
 (defn load-transform!
   "Return a stateless transform, or false per declined input. Converter Vars
   are resolved for each entry, including bindings and changes during callbacks.
-  Caller retains the existing classification boundary before invoking it."
+  Caller retains the existing classification boundary before invoking it.
+  Bounded collision-free wide string-key HAMTs can copy their immutable shape;
+  changed keys switch to ordinary building without repeating converters."
   [key-var value-var]
   (let [project (scheme/eval-string source)]
     (fn [m] (project m key-var value-var))))

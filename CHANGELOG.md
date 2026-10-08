@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Avoid rebuilding the hash index when the opt-in native attribute transform
+  keeps the string keys of a bounded, collision-free wide map unchanged. Copy
+  private output nodes, retain live converter order, and switch to the existing
+  builder immediately on a changed key without reconverting earlier values.
+  Collision buckets and unsupported layouts keep the established path.
+
 - Add explicit experimental `:owned-statement-output?` for native-byte compact
   Durable export. Flow direct compact batches through owned snapshots without
   whole-SQL text; unsupported output decodes existing bytes, never re-encodes
