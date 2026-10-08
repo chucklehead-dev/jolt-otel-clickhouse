@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Pin the native prefix regression test dependencies explicitly so isolated
+  migration children can compile the fixtures. Production dependency pins are
+  unchanged; dependency-provenance controls still inspect the default graph.
+
 - Walk small immutable attribute maps directly when collecting declared typed
   values for the experimental native-byte Durable compact-span path. Preserve
   duplicate-key statuses, conversion order and full captured dictionaries;
