@@ -107,6 +107,13 @@ spans and typed log/metric batches. Specialized JSONEachRow span encoders and
 ordinary inserts keep their existing paths. Custom row writers never see the
 SQL prefix, and it is excluded from the 8 MiB payload limit.
 
+With approved typed span descriptors and compact inserts, the native byte
+backend builds positional rows directly instead of constructing physical maps
+and converting them back into vectors. The confirmed column order and target
+remain checked; typed defaults, validity statuses and normalized-key collision
+handling are unchanged. Public map projectors and other transport paths retain
+their existing behavior.
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact

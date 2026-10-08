@@ -1227,6 +1227,38 @@
                           {:type ::invalid-direct-span-plan})))
         snapshot))))
 
+(defn- direct-typed-span-layout? [snapshot]
+  (let [{:keys [map-projector vector-projector columns]} (:typed-span-vector-plan snapshot)]
+    (and (= :native-guarded-byte-batch *json-backend*)
+         (:durable? snapshot)
+         (= :json-compact-each-row (:insert-format snapshot))
+         (ifn? vector-projector)
+         (vector? columns)
+         (<= (count direct-span-columns) (count columns))
+         (= direct-span-columns (subvec columns 0 (count direct-span-columns)))
+         (= direct-span-columns (into schema/clickstack-trace-insert-columns ["EventsJSON" "LinksJSON"]))
+         (identical? map-projector (:typed-span-projector snapshot))
+         (= columns (:span-insert-columns snapshot)))))
+
+(defn- insert-direct-typed-span-batch! [connection state spans]
+  (let [initial @state
+        plan (:typed-span-vector-plan initial)
+        columns (:columns plan)
+        projector (:vector-projector plan)]
+    (execute-closed-compact-rows!
+     connection "otel_traces" columns
+     (map (fn [span]
+            ;; Base conversion precedes typed projection, as in span-row.
+            (let [base (span-row span nil true)]
+              (into base (projector span)))) spans)
+     (fn []
+       (let [snapshot @state]
+         (when-not (and (direct-typed-span-layout? snapshot)
+                        (identical? plan (:typed-span-vector-plan snapshot)))
+           (throw (ex-info "Direct typed compact span plan changed"
+                           {:type ::invalid-direct-typed-span-plan})))
+         snapshot)))))
+
 (def ^:private direct-log-columns
   ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText" "SeverityNumber"
    "ServiceName" "Body" "ResourceSchemaUrl" "ResourceAttributes" "ScopeSchemaUrl"
@@ -1508,8 +1540,12 @@
                          (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
                         nil))
                     (do
-                      (if (direct-span-layout? snapshot)
+                      (cond
+                        (direct-span-layout? snapshot)
                         (insert-direct-span-batch! connection state spans)
+                        (direct-typed-span-layout? snapshot)
+                        (insert-direct-typed-span-batch! connection state spans)
+                        :else
                         (insert-batch! connection state "otel_traces"
                                        (:span-insert-columns @state) "insert into otel_traces"
                                        (map #(span-row % (:typed-span-projector @state)) spans)))
@@ -1768,6 +1804,14 @@
                               :connection-closed? false
                               :persistence-barrier barrier
                               :typed-span-projector typed-span-projector
+                              :typed-span-vector-plan
+                              (when (and durable? typed-span-descriptors
+                                         (= :native-guarded-byte-batch json-backend)
+                                         (= :json-compact-each-row insert-format))
+                                {:map-projector typed-span-projector
+                                 :vector-projector (attribute-projection/trace-vector-projector
+                                                    typed-span-descriptors conn)
+                                 :columns span-columns})
                               :typed-span-encoder typed-span-encoder
                               :typed-log-projector typed-log-projector
                               :typed-metric-projectors

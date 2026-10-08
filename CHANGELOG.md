@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build typed compact Durable span rows directly under the opt-in native byte
+  backend. Compile the location/field plan once and avoid intermediate physical
+  maps; retain confirmed column fencing, typed status/collision semantics and
+  public map projector behavior.
+
 - Materialize generic and typed Durable SQL once under the explicit native
   byte backend, extending the existing prefix collector beyond closed untyped
   layouts. Keep row-local writer views, payload limits, default/ordinary paths
