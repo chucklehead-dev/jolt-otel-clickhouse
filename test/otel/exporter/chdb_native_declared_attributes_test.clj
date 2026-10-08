@@ -20,6 +20,38 @@
                 (assoc out normalized (conj (get out normalized []) value)) out)))
           {} attrs))
 
+(deftest indexed-plan-is-selected-once-and-retains-live-status-projection
+  (let [{:keys [capability target vector-projector]} (vectors/plans false)
+        builds (atom 0) original-builder @#'p/indexed-vector-projector
+        indexed (with-redefs [p/indexed-vector-projector
+                              (fn [& args] (swap! builds inc) (apply original-builder args))]
+                  (p/trace-vector-projector capability target true))
+        span (@#'fixture/span {"checkout.count" 7 "checkout.complete" false "checkout.name" ""})
+        original @#'p/projected-value
+        run (fn [projector failure?]
+              (let [effects (atom [])
+                    replacement (fn [type values]
+                                  (swap! effects conj [:new type]) (original type values))]
+                (with-redefs [p/projected-value
+                              (fn [type values]
+                                (swap! effects conj [:old type])
+                                (alter-var-root #'p/projected-value (constantly replacement))
+                                (when failure? (throw (ex-info "status failure" {:fixture true})))
+                                (original type values))]
+                  [(try (projector span) (catch clojure.lang.ExceptionInfo _ :failed)) @effects])))]
+    (is (= 1 @builds))
+    (is (= (vector-projector span) (indexed span)))
+    (doseq [failure? [false true]]
+      (is (= (run vector-projector failure?) (run indexed failure?))))
+    (is (= (vector-projector span) (indexed span)))
+    ;; Reversing physical field order is a real rejected control, not a green
+    ;; plan-construction check disconnected from the produced vector.
+    (let [wrong (with-redefs [p/indexed-vector-projector
+                             (fn [locations wanted plan]
+                               (original-builder locations wanted (vec (reverse plan))))]
+                  (p/trace-vector-projector capability target true))]
+      (is (not= (vector-projector span) (wrong span))))))
+
 (deftest wide-declared-collection-preserves-order-duplicates-and-promotion
   (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
         original @#'p/key-string

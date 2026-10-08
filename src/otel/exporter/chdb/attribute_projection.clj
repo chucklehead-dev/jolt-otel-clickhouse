@@ -148,6 +148,32 @@
     ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-declared-collector!)
      #'key-string #'clojure.core/contains?)))
 
+(defn- indexed-vector-projector [locations wanted plan]
+  ;; Compile immutable plan sizes once. Avoid per-row mapv/reduce closures and
+  ;; sequence traversal of the already positional vectors. Converters and
+  ;; status projection remain live calls in their established order.
+  (let [location-count (count locations) field-count (count plan)]
+    (fn [span]
+      (let [values
+            (loop [i 0 out []]
+              (if (= i location-count) out
+                (let [attributes (or (attributes-at span (nth locations i)) {})
+                      wanted-keys (nth wanted i)
+                      collected
+                      (or (@small-declared-collector attributes wanted-keys)
+                          (reduce (fn [out [key value]]
+                                    (let [normalized (key-string key)]
+                                      (if (contains? wanted-keys normalized)
+                                        (assoc out normalized (conj (get out normalized []) value)) out)))
+                                  {} attributes))]
+                  (recur (inc i) (conj out collected)))))]
+        (loop [i 0 out []]
+          (if (= i field-count) out
+            (let [[index key type] (nth plan i)
+                  [value status] (projected-value type (get (nth values index) key []))]
+              ;; Fixed-arity operations avoid the variadic conj argument path.
+              (recur (inc i) (conj (conj out value) status)))))))))
+
 (defn trace-vector-projector
   "Compile a confirmed trace capability into value/status pairs in field order.
 
@@ -165,6 +191,8 @@
         indices (zipmap locations (range))
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
+    (if native-small-maps?
+      (indexed-vector-projector locations wanted plan)
     (fn [span]
       (let [values (mapv (fn [location wanted-keys]
                          (let [attributes (or (attributes-at span location) {})]
@@ -183,7 +211,7 @@
         (reduce (fn [out [index key type]]
                   (let [[value status] (projected-value type (get (nth values index) key []))]
                     (conj out value status)))
-                [] plan))))))
+                [] plan)))))))
 
 (defn log-projector
   "Compile one confirmed log-attribute capability into a log-row projector."

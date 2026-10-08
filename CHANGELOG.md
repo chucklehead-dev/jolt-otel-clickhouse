@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Walk the compiled typed-vector plan by index in the experimental native-byte
+  compact-span path. Avoid per-row traversal closures and variadic vector
+  appends while preserving live converters, field order and duplicate statuses.
+  Public named-map and default portable-vector projection remain unchanged.
+
 - Avoid entry-sequence allocation while collecting declared typed values from
   wider built-in maps in the experimental native-byte compact-span path.
   Preserve every normalized duplicate, converter order and complete captured
