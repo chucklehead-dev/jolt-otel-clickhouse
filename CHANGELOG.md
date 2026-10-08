@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Reuse constant collector strings for standard keyword span/status enums.
+  Keep generic conversion for unknown keywords, strings and symbols; layouts,
+  attribute values, JSON callbacks and persistence acknowledgements are unchanged.
+
 - Normalize keyword attribute names directly, preserving namespaces without
   allocating a colon-prefixed intermediate string. Retain converter order,
   normalized-key collision precedence, and non-keyword behavior.

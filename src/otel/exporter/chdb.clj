@@ -113,7 +113,22 @@
 (defn- otel-enum-string [value fallback]
   ;; Matches pdata SpanKind.String()/StatusCode.String() used by the pinned
   ;; collector exporter (for example Server, Client, Ok, Error, Unset).
-  (str/capitalize (name (or value fallback))))
+  (let [selected (or value fallback)]
+    ;; SDK enums are keywords. Repeated standard values need no case-conversion
+    ;; strings; only exact standard keywords take this closed fast path.
+    (if (keyword? selected)
+      (cond
+        (= selected :internal) "Internal"
+        (= selected :server) "Server"
+        (= selected :ok) "Ok"
+        (= selected :error) "Error"
+        (= selected :unset) "Unset"
+        (= selected :client) "Client"
+        (= selected :producer) "Producer"
+        (= selected :consumer) "Consumer"
+        (= selected :unspecified) "Unspecified"
+        :else (str/capitalize (name selected)))
+      (str/capitalize (name selected)))))
 
 (defn- event-columns
   ([events] (event-columns events false))
