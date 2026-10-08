@@ -472,21 +472,26 @@
         (recur (- remaining bytes) (next rows) out))
       (.toString out))))
 
-(defn- json-each-row-payload [rows]
+(defn- json-each-row-payload
+  ([rows] (json-each-row-payload rows nil))
+  ([rows prefix]
   (if (= :configured *json-backend*)
-    (configured-json-each-row-payload rows)
+    (let [payload (configured-json-each-row-payload rows)]
+      (if (nil? prefix) payload (str prefix payload)))
     ;; A context belongs to this payload, not the exporter: independent SDK
     ;; signals may serialize concurrently. Preserve incremental row effects.
     (let [encoder (row-encoder/open-encoder
                    {:parallelism 1 :json-backend *json-backend*})]
       (try
-        (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
+        (if (nil? prefix)
+          (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
+          (row-encoder/encode-limited-prefixed-text! encoder prefix rows max-insert-bytes))
         (catch clojure.lang.ExceptionInfo e
           (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
             (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
                             {:limit max-insert-bytes}))
             (throw e)))
-        (finally (row-encoder/close! encoder))))))
+        (finally (row-encoder/close! encoder)))))))
 
 (defn- compact-columns! [columns]
   (when-not (and (vector? columns) (seq columns)
@@ -1145,12 +1150,12 @@
                                       {:type ::invalid-compact-row})))
                     (cons row (lazy-seq (checked (next remaining))))))))]
       (let [query (compact-insert-query table columns)
-            payload (json-each-row-payload (checked rows))
+            sql (json-each-row-payload (checked rows) (str query " FORMAT JSONCompactEachRow\n"))
             snapshot (checked-snapshot!)]
         ;; Custom conversion/JSON callbacks may have changed private state.
         ;; Do not pair completed positional data with a different live plan.
         (compact-format/require-order! (:compact-plans snapshot) connection table columns)
-        (execute-durable-sql! connection (str query " FORMAT JSONCompactEachRow\n" payload))))))
+        (execute-durable-sql! connection sql)))))
 
 (defn- insert-direct-metric-batch! [connection state type columns rows]
   (execute-closed-compact-rows!

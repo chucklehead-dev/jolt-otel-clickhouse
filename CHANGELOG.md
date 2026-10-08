@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Materialize direct compact Durable telemetry SQL with its fixed prefix in
+  one native byte batch, avoiding a full intermediate payload String. Preserve
+  the 8MiB payload budget, live-plan recheck and exact SQL/persistence behavior.
+
 - Avoid transient-map construction for absent/false and genuine empty
   attribute maps. Preserve generic inputs, nonempty conversion order, collision
   precedence and errors; JSON/persistence behavior is unchanged.
