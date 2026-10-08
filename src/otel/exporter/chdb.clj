@@ -1544,6 +1544,17 @@
   (shutdown-log-exporter! [_]
     (close-signal! connection owned? expected-signals state :logs)))
 
+(defn validate-runtime!
+  "Validate the required OTel scalar API without acquiring storage or workers.
+  Consumers opening a borrowed connection can call this before acquisition.
+  Availability is not a claim of telemetry delivery or full graph qualification."
+  []
+  (let [scalar (ns-resolve 'otel.any-value 'try-scalar-string)]
+    (when-not (and scalar (ifn? (var-get scalar)))
+      (throw (ex-info "Exporter requires compatible OTel AnyValue scalar support"
+                      {:type ::incompatible-otel}))))
+  true)
+
 (defn exporter
   "Create a span+log+metric exporter. Supply :connection to share ownership
   with an application, or :db-spec for an exporter-owned one. A chDB map dbspec
@@ -1604,10 +1615,7 @@
    ;; A consumer's direct OTel pin can override this library's declaration.
    ;; Requiring the namespace alone does not prove its newer scalar API exists.
    ;; Reject that graph before storage/DDL/SDK, not on the first captured span.
-   (let [scalar (ns-resolve 'otel.any-value 'try-scalar-string)]
-     (when-not (and scalar (ifn? (var-get scalar)))
-       (throw (ex-info "Exporter requires compatible OTel AnyValue scalar support"
-                       {:type ::incompatible-otel}))))
+   (validate-runtime!)
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (not= :configured json-backend)
