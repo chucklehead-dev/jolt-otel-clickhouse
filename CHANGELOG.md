@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Avoid entry-sequence allocation while collecting declared typed values from
+  wider built-in maps in the experimental native-byte compact-span path.
+  Preserve every normalized duplicate, converter order and complete captured
+  dictionaries; maps above 128 entries retain the existing fallback.
+
 - Reuse the runtime's allocation-light, exact-sequence-order walker for wider
   built-in attribute maps in the experimental native-byte backend. Preserve
   collision winners, converter order, map promotion and complete dictionaries;

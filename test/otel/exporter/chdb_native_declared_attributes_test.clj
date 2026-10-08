@@ -1,5 +1,7 @@
 (ns otel.exporter.chdb-native-declared-attributes-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.java.io :as io]
+            [jolt.scheme :as scheme]
             [otel.exporter.chdb.attribute-projection :as p]
             [otel.exporter.chdb.native-attributes :as native]
             [otel.exporter.chdb-typed-compact-vector-test :as vectors]
@@ -10,6 +12,61 @@
   (let [calls (atom []) original @#'p/key-string]
     (with-redefs [p/key-string (fn [key] (swap! calls conj key) (original key))]
       [(f span) @calls])))
+
+(defn portable-collect [attrs wanted]
+  (reduce (fn [out [key value]]
+            (let [normalized (@#'p/key-string key)]
+              (if (contains? wanted normalized)
+                (assoc out normalized (conj (get out normalized []) value)) out)))
+          {} attrs))
+
+(deftest wide-declared-collection-preserves-order-duplicates-and-promotion
+  (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
+        original @#'p/key-string
+        input (into (hash-map "Aa" nil "BB" false)
+                    (map (fn [n] [(str "extra-" n) n]) (range 126)))
+        wanted (conj (set (map #(str "extra-" %) (range 12))) "collision")
+        run (fn [f]
+              (let [effects (atom [])]
+                (with-redefs [p/key-string
+                              (fn [k] (swap! effects conj k)
+                                (if (contains? #{"Aa" "BB"} k) "collision" (original k)))]
+                  [(f input wanted) @effects])))
+        stock (run portable-collect)
+        fast (run collect)
+        wrong (scheme/eval-string
+               (str "(let ((pmap-fold-seq-order pmap-fold-fwd)) "
+                    (slurp (io/resource "otel/exporter/chdb/native_declared_attributes.ss")) ")"))]
+    (is (= (hash "Aa") (hash "BB")))
+    (is (= stock fast))
+    (is (= (vec (first stock)) (vec (first fast))))
+    (is (= (class (first stock)) (class (first fast))))
+    (is (= 2 (count (get (first fast) "collision"))))
+    ;; Reject the tempting but differently ordered HAMT walk locally.
+    (is (not= stock (run #(wrong %1 %2 #'p/key-string #'clojure.core/contains?))))
+    (is (false? (collect (assoc input "over-bound" 1) wanted)))
+    (is (false? (collect (sorted-map "Aa" 1 "BB" 2) wanted)))))
+
+(deftest wide-declared-live-converters-reentry-and-failure
+  (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
+        original @#'p/key-string input (into {} (map (fn [n] [(str n) n]) (range 16)))
+        first-key (ffirst (seq input)) wanted #{"0" "1"}
+        run (fn [f failure?]
+              (let [effects (atom []) nested (atom nil)
+                    replacement (fn [k] (swap! effects conj [:new k]) (original k))]
+                (with-redefs [p/key-string
+                              (fn [k]
+                                (swap! effects conj [:old k])
+                                (alter-var-root #'p/key-string (constantly replacement))
+                                (reset! nested (f {"0" 99} wanted))
+                                (when failure? (throw (ex-info "controlled failure" {:fixture true})))
+                                (original k))]
+                  [(try (f input wanted) (catch clojure.lang.ExceptionInfo _ :failed))
+                   @effects @nested])))]
+    (is (= first-key (ffirst (seq input))))
+    (doseq [failure? [false true]]
+      (is (= (run portable-collect failure?) (run collect failure?))))
+    (is (= (portable-collect input wanted) (collect input wanted)))))
 
 (deftest native-collection-is-equivalent-and-declines-other-map-layouts
   (doseq [mixed? [false true]]
@@ -36,7 +93,8 @@
         wanted #{"checkout.count"}
         attrs (array-map :unused "keep" :checkout.count nil "checkout.count" false)]
     (is (= {"checkout.count" [nil false]} (collect attrs wanted)))
-    (is (false? (collect (into {} (map (fn [n] [(str n) n]) (range 20))) wanted)))
+    (is (= {} (collect (into {} (map (fn [n] [(str n) n]) (range 20))) wanted)))
+    (is (false? (collect (into {} (map (fn [n] [(str n) n]) (range 129))) wanted)))
     (let [calls (atom []) original @#'p/key-string
           replacement (fn [key] (swap! calls conj [:new key]) (original key))
           first-key (fn [key]

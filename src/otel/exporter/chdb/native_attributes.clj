@@ -17,7 +17,7 @@
 (def ^:private declared (declared-source))
 
 (defn load-declared-collector!
-  "Internal small-map collection, or false on declined layouts. Converter Vars
+  "Internal bounded built-in map collection, or false on declined layouts. Converter Vars
   stay live per key; raw matching values and duplicates are preserved. No
   shared scratch is used; input map storage is never modified or reused as
   output storage."

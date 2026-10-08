@@ -154,7 +154,7 @@
   Internal compact transport uses this positional projection; the public map
   projector remains unchanged. Normalized key collisions and status/default
   rules are shared with that projector. Locations are selected once per row.
-  The internal third argument opts into Jolt's invocation-owned small-map
+  The internal third argument opts into Jolt's invocation-owned bounded-map
   collector; the default two-argument projector remains portable."
   ([descriptor-set target] (trace-vector-projector descriptor-set target false))
   ([descriptor-set target native-small-maps?]
