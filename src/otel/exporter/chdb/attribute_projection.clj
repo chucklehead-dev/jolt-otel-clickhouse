@@ -151,11 +151,23 @@
   [descriptor-set target]
   (let [fields (confirmed-span-fields descriptor-set target)
         locations (vec (distinct (map :location fields)))
+        wanted (mapv (fn [location]
+                       (set (map :key (filter #(= location (:location %)) fields)))) locations)
         indices (zipmap locations (range))
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
     (fn [span]
-      (let [values (mapv #(values-by-key (attributes-at span %)) locations)]
+      (let [values (mapv (fn [location wanted-keys]
+                          (reduce (fn [out [key value]]
+                                    ;; Visit/normalize every key in original
+                                    ;; sequence order, including undeclared keys.
+                                    ;; Retain only fields consumed by this plan.
+                                    (let [normalized (key-string key)]
+                                      (if (contains? wanted-keys normalized)
+                                        (assoc out normalized (conj (get out normalized []) value))
+                                        out)))
+                                  {} (or (attributes-at span location) {})))
+                        locations wanted)]
         (reduce (fn [out [index key type]]
                   (let [[value status] (projected-value type (get (nth values index) key []))]
                     (conj out value status)))

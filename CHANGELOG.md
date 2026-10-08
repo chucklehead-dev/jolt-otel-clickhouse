@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Limit the temporary typed compact projection lookup to declared keys, while
+  still normalizing every input key in order and preserving duplicate/status
+  rules. Original captured attributes and public map projection are unchanged.
+
 - Build typed compact Durable span rows directly under the opt-in native byte
   backend. Compile the location/field plan once and avoid intermediate physical
   maps; retain confirmed column fencing, typed status/collision semantics and

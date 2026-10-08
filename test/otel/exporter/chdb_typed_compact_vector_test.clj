@@ -40,6 +40,27 @@
     (is (= :otel.exporter.chdb.attribute-projection/target-mismatch
            (:type (wire/error-data #(p/trace-vector-projector capability (Object.))))))))
 
+(deftest declared-key-normalization-visits-all-input-in-order
+  (let [{:keys [map-projector vector-projector columns]} (plans false)
+        span (@#'fixture/span (array-map :unused 1 :checkout.count 7
+                                        "checkout.count" 8 :another-unused nil))
+        old @#'p/key-string
+        observe (fn [projector]
+                  (let [effects (atom [])]
+                    (with-redefs [p/key-string (fn [key] (swap! effects conj key) (old key))]
+                      [(projector span) @effects])))
+        [named named-effects] (observe map-projector)
+        [positional positional-effects] (observe vector-projector)]
+    (is (= (mapv named (subvec columns (count spans/columns))) positional))
+    (is (= [:unused :checkout.count "checkout.count" :another-unused] positional-effects))
+    (is (= named-effects positional-effects))))
+
+(deftest positional-normalizer-does-not-build-the-full-key-map
+  (let [{:keys [vector-projector]} (plans false)
+        span (@#'fixture/span {"checkout.count" 9 "unused" "still retained by span-row"})]
+    (with-redefs [p/values-by-key (fn [& _] (throw (ex-info "Full key-map fallback" {})))]
+      (is (= 6 (count (vector-projector span)))))))
+
 (defn state-for [plan]
   (let [columns (:columns plan)]
     (atom {:durable? true :insert-format :json-compact-each-row
