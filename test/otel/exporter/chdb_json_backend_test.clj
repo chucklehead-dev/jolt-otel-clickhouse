@@ -19,10 +19,22 @@
       (is (thrown? clojure.lang.ExceptionInfo
                    (exporter/exporter {:json-backend :unknown})))
       (with-redefs [encoder/open-encoder (fn [_] (throw unavailable))]
-        (doseq [backend [:native-guarded :native-guarded-string-cache]]
+        (doseq [backend [:native-guarded :native-guarded-string-cache :native-guarded-byte-batch]]
           (is (identical? unavailable
                           (try (exporter/exporter {:json-backend backend})
                                (catch Throwable e e))))))
+      (is (zero? @opens)))))
+
+(deftest incompatible-otel-rejects-before-database-acquisition
+  (let [resolve @#'clojure.core/ns-resolve opens (atom 0)]
+    (with-redefs [clojure.core/ns-resolve
+                  (fn [namespace name]
+                    (when-not (and (= namespace 'otel.any-value) (= name 'try-scalar-string))
+                      (resolve namespace name)))
+                  jdbc/connection (fn [& _] (swap! opens inc))]
+      (let [error (try (exporter/exporter {}) nil (catch Throwable error error))]
+        (is (= :otel.exporter.chdb/incompatible-otel (:type (ex-data error))))
+        (is (= "Exporter requires compatible OTel AnyValue scalar support" (ex-message error))))
       (is (zero? @opens)))))
 
 (deftest payload-context-is-per-call-and-always-released
@@ -50,7 +62,7 @@
 ;; Explicit native qualification: run only with the compiler-bearing source
 ;; runtime. No database needed; byte parity and serializer effects are real.
 (deftest native-payload-parity-effects-and-limit
-  (doseq [backend [:native-guarded :native-guarded-string-cache]]
+  (doseq [backend [:native-guarded :native-guarded-string-cache :native-guarded-byte-batch]]
     (let [rows [{"unicode" "é😀" "v" [1 nil false]} {"v" true}]
           reference (payload :configured rows)
           calls (atom [])
@@ -68,7 +80,7 @@
       (is (nil? json/*experimental-native-writer*)))))
 
 (deftest sdk-selects-backend-without-changing-default
-  (doseq [backend [nil :configured :native-guarded :native-guarded-string-cache]]
+  (doseq [backend [nil :configured :native-guarded :native-guarded-string-cache :native-guarded-byte-batch]]
     (let [options (cond-> {:closed-signals #{} :durable? false}
                     backend (assoc :json-backend backend))
           target (exporter/->ChdbExporter {} false #{:spans}
@@ -87,7 +99,7 @@
         (is (nil? (exporter/last-error target)))))))
 
 (deftest concurrent-native-payloads-have-independent-contexts
-  (doseq [backend [:native-guarded :native-guarded-string-cache]]
+  (doseq [backend [:native-guarded :native-guarded-string-cache :native-guarded-byte-batch]]
     (let [started [(promise) (promise)] release (promise)
           workers
           (mapv (fn [index]

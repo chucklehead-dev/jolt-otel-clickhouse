@@ -1579,6 +1579,10 @@
   fragments for each general-path payload, not across batches. It requires
   the matching data.json/chDB factories; default and specialized codecs remain
   unchanged. This is source-only, not standalone/AOT qualification.
+  :native-guarded-byte-batch is an experimental serial byte collector. With
+  matching codec/encoder capabilities it materializes compact SQL once;
+  custom row writers keep their row-local views. Unavailable selection fails
+  before database acquisition. It does not change WAL or acknowledgement.
   :insert-format defaults to :json-each-row. :json-compact-each-row uses
   schema-ordered arrays and explicit columns with the same serial UTF-8 bound
   and persistence acknowledgement. It rejects missing/extra physical fields;
@@ -1594,9 +1598,16 @@
    (when-not (#{:json-each-row :json-compact-each-row} insert-format)
      (throw (ex-info "Unsupported exporter insert format"
                      {:type ::invalid-insert-format})))
-   (when-not (#{:configured :native-guarded :native-guarded-string-cache} json-backend)
+   (when-not (#{:configured :native-guarded :native-guarded-string-cache :native-guarded-byte-batch} json-backend)
      (throw (ex-info "Unsupported exporter JSON backend"
                      {:type ::invalid-json-backend})))
+   ;; A consumer's direct OTel pin can override this library's declaration.
+   ;; Requiring the namespace alone does not prove its newer scalar API exists.
+   ;; Reject that graph before storage/DDL/SDK, not on the first captured span.
+   (let [scalar (ns-resolve 'otel.any-value 'try-scalar-string)]
+     (when-not (and scalar (ifn? (var-get scalar)))
+       (throw (ex-info "Exporter requires compatible OTel AnyValue scalar support"
+                       {:type ::incompatible-otel}))))
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (not= :configured json-backend)

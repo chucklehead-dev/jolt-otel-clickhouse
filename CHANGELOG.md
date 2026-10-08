@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Reject a consumer graph missing the required OTel scalar API before database
+  acquisition, rather than failing a first telemetry export after startup.
+
+- Expose the experimental serial byte collector through explicit
+  `:json-backend :native-guarded-byte-batch`; validate availability before
+  storage acquisition. Default encoding and persistence rules stay unchanged.
+
 - Materialize direct compact Durable telemetry SQL with its fixed prefix in
   one native byte batch, avoiding a full intermediate payload String. Preserve
   the 8MiB payload budget, live-plan recheck and exact SQL/persistence behavior.
