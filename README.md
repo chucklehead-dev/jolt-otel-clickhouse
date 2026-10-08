@@ -102,6 +102,11 @@ keep the existing conversion path. This is not a new attribute schema or a
 global encoder setting; defaults, the 8 MiB payload bound and Durable
 acknowledgements are unchanged. Standalone/AOT support is not qualified.
 
+Generic Durable inserts also use this prefix collector, including typed compact
+spans and typed log/metric batches. Specialized JSONEachRow span encoders and
+ordinary inserts keep their existing paths. Custom row writers never see the
+SQL prefix, and it is excluded from the 8 MiB payload limit.
+
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
 the qualified package version **26.7.3**. Exporter startup checks the actual
 loaded version before schema writes, including Durable connections. Its exact

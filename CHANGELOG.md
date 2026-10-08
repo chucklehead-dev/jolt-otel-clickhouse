@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Materialize generic and typed Durable SQL once under the explicit native
+  byte backend, extending the existing prefix collector beyond closed untyped
+  layouts. Keep row-local writer views, payload limits, default/ordinary paths
+  and persistence acknowledgements unchanged.
+
 - Build small attribute maps in exact-sized storage under the explicit native
   byte backend. Keep existing classifier calls, live converters, collision
   order and generic fallback; default encoding and persistence are unchanged.

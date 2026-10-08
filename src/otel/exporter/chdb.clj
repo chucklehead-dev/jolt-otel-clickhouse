@@ -549,9 +549,13 @@
                      (lazy-seq (step (next rows))))))))]
       (step rows))))
 
-(defn- insert-payload [format columns rows]
-  (json-each-row-payload
-   (if (= :json-compact-each-row format) (compact-rows columns rows) rows)))
+(defn- insert-payload
+  ([format columns rows]
+   (json-each-row-payload
+    (if (= :json-compact-each-row format) (compact-rows columns rows) rows)))
+  ([format columns rows prefix]
+   (json-each-row-payload
+    (if (= :json-compact-each-row format) (compact-rows columns rows) rows) prefix)))
 
 (defn- compact-insert-query [table columns]
   (compact-columns! columns)
@@ -968,8 +972,13 @@
       ;; into JDBC execute! plus flush! would let another caller intervene.
       (execute-durable-sql!
        connection
-       (str query " FORMAT " (insert-format-name format) "\n"
-            (insert-payload format columns rows)))
+       (if (= :native-guarded-byte-batch *json-backend*)
+         ;; Typed/generic rows use the same qualified prefix collector as the
+         ;; closed layouts. Prefix is not part of the row UTF-8 budget or view.
+         (insert-payload format columns rows
+                         (str query " FORMAT " (insert-format-name format) "\n"))
+         (str query " FORMAT " (insert-format-name format) "\n"
+              (insert-payload format columns rows))))
       (let [payload (ordinary-payload columns rows format)]
         (context/with-instrumentation-suppressed
           (insert-ordinary-payload! connection table columns format payload))))))

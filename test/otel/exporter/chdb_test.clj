@@ -12,6 +12,7 @@
             [otel.exporter.chdb-metric-row-test]
             [otel.exporter.chdb-attribute-kv-fold-test]
             [otel.exporter.chdb-native-attributes-test]
+            [otel.exporter.chdb-generic-prefix-test]
             [otel.exporter.chdb-compact-wire-test]
             [otel.exporter.chdb-compact-span-layout-test]
             [otel.exporter.chdb-compact-log-layout-test]
@@ -373,6 +374,7 @@
   (reset! failures 0)
   (let [result (test/run-tests 'otel.exporter.chdb-attribute-kv-fold-test
                                'otel.exporter.chdb-native-attributes-test
+                               'otel.exporter.chdb-generic-prefix-test
                                'otel.exporter.chdb-metric-row-test
                                'otel.exporter.chdb-compact-wire-test
                                'otel.exporter.chdb-compact-span-layout-test
