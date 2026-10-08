@@ -8,6 +8,17 @@
               (assoc! out (#'exporter/key-string k) (#'exporter/value-string v)))
             (transient {}) (or m {}))))
 
+(deftest genuine-empty-attributes-avoid-transient-construction
+  (let [empty-hash (reduce dissoc (zipmap (range 20) (range 20)) (range 20))]
+    (doseq [input [nil false {} (array-map) empty-hash]]
+      (let [calls (atom 0) transient! transient
+            result (with-redefs [clojure.core/transient
+                                 (fn [m] (swap! calls inc) (transient! m))]
+                     (#'exporter/attrs input))]
+        (is (= {} result))
+        (is (= (class (legacy-attrs input)) (class result)))
+        (is (zero? @calls))))))
+
 (deftest keyword-names-match-the-frozen-print-and-strip-conversion
   ;; Do not use the candidate converter in the expected value: namespace loss
   ;; would otherwise change both the oracle and implementation together.

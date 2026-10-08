@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Avoid transient-map construction for absent/false and genuine empty
+  attribute maps. Preserve generic inputs, nonempty conversion order, collision
+  precedence and errors; JSON/persistence behavior is unchanged.
+
 - Reuse constant collector strings for standard keyword span/status enums.
   Keep generic conversion for unknown keywords, strings and symbols; layouts,
   attribute values, JSON callbacks and persistence acknowledgements are unchanged.

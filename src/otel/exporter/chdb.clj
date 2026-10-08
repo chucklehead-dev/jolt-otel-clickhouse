@@ -64,7 +64,12 @@
              (transient {}) m))
 
 (defn- attrs [m]
-  (persistent!
+  (if (or (nil? m) (false? m)
+          (and (or (instance? clojure.lang.PersistentArrayMap m)
+                   (instance? clojure.lang.PersistentHashMap m))
+               (zero? (count m))))
+    {}
+    (persistent!
     ;; Array-map kvreduce has the same insertion order as its entry sequence,
     ;; without materializing entries or destructuring each pair. Do not widen
     ;; this to hash maps: collision-bucket traversal can differ between seq
@@ -73,7 +78,7 @@
       (array-map-attrs m)
       (reduce (fn [out [k v]]
                 (assoc! out (key-string k) (value-string v)))
-              (transient {}) (or m {})))))
+              (transient {}) (or m {}))))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
