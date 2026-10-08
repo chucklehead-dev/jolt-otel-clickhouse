@@ -96,10 +96,12 @@
                      (identical? array-map-attrs stock-array-map-attrs))
             (@small-attribute-transform m))
           (persistent! (array-map-attrs m)))
-      (persistent!
-       (reduce (fn [out [k v]]
+      (or (when (= :native-guarded-byte-batch *json-backend*)
+            (@small-attribute-transform m))
+          (persistent!
+           (reduce (fn [out [k v]]
                  (assoc! out (key-string k) (value-string v)))
-               (transient {}) (or m {}))))))
+                   (transient {}) (or m {})))))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]

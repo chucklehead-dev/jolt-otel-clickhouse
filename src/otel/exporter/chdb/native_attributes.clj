@@ -1,5 +1,5 @@
 (ns otel.exporter.chdb.native-attributes
-  "Internal source-only exact-slot attribute projection for the native byte option."
+  "Internal source-only bounded attribute projection for the native byte option."
   (:require [clojure.java.io :as io] [jolt.scheme :as scheme]))
 
 (defmacro ^:private native-source []

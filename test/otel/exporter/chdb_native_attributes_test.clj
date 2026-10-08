@@ -1,5 +1,7 @@
 (ns otel.exporter.chdb-native-attributes-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.java.io :as io]
+            [jolt.scheme :as scheme]
             [clojure.data.json :as json]
             [jdbc.core :as jdbc]
             [jdbc.chdb.json-each-row :as encoder]
@@ -25,6 +27,32 @@
         (is (= (class stock) (class fast))) (is (= (meta stock) (meta fast)))
         (is (= (json/write-str stock) (json/write-str fast)))))))
 
+(deftest wide-hash-collision-normalization-keeps-exact-seq-order
+  (when (native?)
+    (let [input (into (hash-map "Aa" 1 "BB" 2)
+                      (map (fn [n] [(str "extra-" n) n]) (range 14)))
+          old-key @#'exporter/key-string old-value @#'exporter/value-string
+          observe (fn [backend]
+                    (let [effects (atom [])]
+                      (with-redefs [exporter/key-string
+                                    (fn [k] (swap! effects conj [:key k])
+                                      (if (contains? #{"Aa" "BB"} k) "collision" (old-key k)))
+                                    exporter/value-string
+                                    (fn [v] (swap! effects conj [:value v]) (old-value v))]
+                        [(convert backend input) @effects])))
+          stock (observe :configured)
+          fast (observe :native-guarded-byte-batch)
+          ;; Isolated lexical mutant, never replace a global runtime walker.
+          wrong (scheme/eval-string
+                  (str "(let ((pmap-fold-seq-order pmap-fold-fwd)) "
+                       (slurp (io/resource "otel/exporter/chdb/native_attributes.ss")) ")"))]
+      (is (= (hash "Aa") (hash "BB")))
+      (is (= stock fast))
+      (is (= (json/write-str (first stock)) (json/write-str (first fast))))
+      (with-redefs [exporter/small-attribute-transform
+                    (delay (fn [m] (wrong m #'exporter/key-string #'exporter/value-string)))]
+        (is (not= stock (observe :native-guarded-byte-batch)))))))
+
 (deftest native-path-is-positive-and-other-backends-stay-generic
   (when (native?)
     (let [input (array-map :a 1 :b 2) calls (atom 0) old transient]
@@ -35,6 +63,8 @@
           (convert backend input))
         (is (= 3 @calls))
         (convert :native-guarded-byte-batch (apply array-map (interleave (range 9) (range 9))))
+        (is (= 3 @calls))
+        (convert :native-guarded-byte-batch (into {} (map (fn [n] [n n]) (range 129))))
         (is (= 4 @calls))))))
 
 (deftest unavailable-native-projection-rejects-before-storage

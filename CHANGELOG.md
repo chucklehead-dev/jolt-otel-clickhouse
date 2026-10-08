@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reuse the runtime's allocation-light, exact-sequence-order walker for wider
+  built-in attribute maps in the experimental native-byte backend. Preserve
+  collision winners, converter order, map promotion and complete dictionaries;
+  maps above 128 entries and other layouts keep their existing conversion path.
+
 - Pin the native prefix regression test dependencies explicitly so isolated
   migration children can compile the fixtures. Production dependency pins are
   unchanged; dependency-provenance controls still inspect the default graph.
