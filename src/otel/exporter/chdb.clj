@@ -485,7 +485,12 @@
       (try
         (if (nil? prefix)
           (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
-          (row-encoder/encode-limited-prefixed-text! encoder prefix rows max-insert-bytes))
+          ;; Keep current product pins usable until the reviewed codec/encoder
+          ;; stack lands. Resolve once per payload, never in the row hot loop.
+          (if-let [encode-prefixed (ns-resolve 'jdbc.chdb.json-each-row
+                                             'encode-limited-prefixed-text!)]
+            (encode-prefixed encoder prefix rows max-insert-bytes)
+            (str prefix (row-encoder/encode-limited-text! encoder rows max-insert-bytes))))
         (catch clojure.lang.ExceptionInfo e
           (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
             (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
