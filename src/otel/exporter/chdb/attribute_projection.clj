@@ -142,13 +142,22 @@
     (fn [span]
       (project-fields fields #(attributes-at span %)))))
 
+(def ^:private small-declared-collector
+  (delay
+    (require 'otel.exporter.chdb.native-attributes)
+    ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-declared-collector!)
+     #'key-string #'clojure.core/contains?)))
+
 (defn trace-vector-projector
   "Compile a confirmed trace capability into value/status pairs in field order.
 
   Internal compact transport uses this positional projection; the public map
   projector remains unchanged. Normalized key collisions and status/default
-  rules are shared with that projector. Locations are selected once per row."
-  [descriptor-set target]
+  rules are shared with that projector. Locations are selected once per row.
+  The internal third argument opts into Jolt's invocation-owned small-map
+  collector; the default two-argument projector remains portable."
+  ([descriptor-set target] (trace-vector-projector descriptor-set target false))
+  ([descriptor-set target native-small-maps?]
   (let [fields (confirmed-span-fields descriptor-set target)
         locations (vec (distinct (map :location fields)))
         wanted (mapv (fn [location]
@@ -158,7 +167,10 @@
                      [(get indices location) key type]) fields)]
     (fn [span]
       (let [values (mapv (fn [location wanted-keys]
-                          (reduce (fn [out [key value]]
+                         (let [attributes (or (attributes-at span location) {})]
+                          (or (when native-small-maps?
+                                (@small-declared-collector attributes wanted-keys))
+                              (reduce (fn [out [key value]]
                                     ;; Visit/normalize every key in original
                                     ;; sequence order, including undeclared keys.
                                     ;; Retain only fields consumed by this plan.
@@ -166,12 +178,12 @@
                                       (if (contains? wanted-keys normalized)
                                         (assoc out normalized (conj (get out normalized []) value))
                                         out)))
-                                  {} (or (attributes-at span location) {})))
+                                  {} attributes))))
                         locations wanted)]
         (reduce (fn [out [index key type]]
                   (let [[value status] (projected-value type (get (nth values index) key []))]
                     (conj out value status)))
-                [] plan)))))
+                [] plan))))))
 
 (defn log-projector
   "Compile one confirmed log-attribute capability into a log-row projector."

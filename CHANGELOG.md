@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Walk small immutable attribute maps directly when collecting declared typed
+  values for the experimental native-byte Durable compact-span path. Preserve
+  duplicate-key statuses, conversion order and full captured dictionaries;
+  other map layouts and the public map projector retain their existing paths.
+
 - Limit the temporary typed compact projection lookup to declared keys, while
   still normalizing every input key in order and preserving duplicate/status
   rules. Original captured attributes and public map projection are unchanged.

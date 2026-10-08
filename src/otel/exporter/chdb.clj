@@ -1810,7 +1810,7 @@
                                          (= :json-compact-each-row insert-format))
                                 {:map-projector typed-span-projector
                                  :vector-projector (attribute-projection/trace-vector-projector
-                                                    typed-span-descriptors conn)
+                                                    typed-span-descriptors conn true)
                                  :columns span-columns})
                               :typed-span-encoder typed-span-encoder
                               :typed-log-projector typed-log-projector
