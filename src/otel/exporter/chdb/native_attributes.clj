@@ -24,7 +24,8 @@
   "Internal bounded built-in map collection, or false on declined layouts. Converter Vars
   stay live per key; raw matching values and duplicates are preserved. No
   shared scratch is used; input map storage is never modified or reused as
-  output storage."
+  output storage. Wide maps with small string-key outputs use private slots;
+  extra admitted keys or unusual normalized keys keep ordered builder fallback."
   [key-var contains-var]
   (let [collect (scheme/eval-string declared)]
     (fn [m wanted] (collect m wanted key-var contains-var))))

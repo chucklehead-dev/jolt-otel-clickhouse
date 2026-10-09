@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Size the experimental native declared-attribute collector's small-output
+  storage from the wanted set, instead of setting up a transient map for every
+  wide input. Retain live normalization/membership, duplicate values and ordered
+  fallback when custom membership admits additional keys or unusual key types.
+  Default projection and Durable publication semantics are unchanged.
+
 - Add explicit experimental Durable `:datetime64-wire :raw-ticks` for chDB
   26.9.0. Keep numeric nanoseconds and include the fixed raw-tick setting in
   every generated INSERT/WAL statement, without changing session settings.

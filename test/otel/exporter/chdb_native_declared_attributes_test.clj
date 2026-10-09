@@ -20,6 +20,71 @@
                 (assoc out normalized (conj (get out normalized []) value)) out)))
           {} attrs))
 
+(deftest wide-small-output-avoids-transient-setup-with-positive-promotion-control
+  (let [[collect setups]
+        (scheme/eval-string
+         (str "(let ((count 0) (old jolt-transient-new)) "
+              "(let ((jolt-transient-new (lambda (m) (set! count (+ count 1)) (old m)))) "
+              "(jolt-vector "
+              (slurp (io/resource "otel/exporter/chdb/native_declared_attributes.ss"))
+              " (lambda () count))))"))
+        input (into {} (map (fn [n] [(str n) n]) (range 32)))
+        before (vec input)]
+    (doseq [n [0 1 2 8]]
+      (let [wanted (set (map str (range n)))]
+        (is (= (portable-collect input wanted)
+               (collect input wanted #'p/key-string #'clojure.core/contains?)))
+        (is (zero? (setups)))))
+    (let [wanted (set (map str (range 9)))]
+      (is (= (portable-collect input wanted)
+             (collect input wanted #'p/key-string #'clojure.core/contains?)))
+      (is (= 1 (setups))))
+    (is (= before (vec input)))))
+
+(deftest unknown-normalized-keys-and-changing-membership-retain-ordered-fallback
+  (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
+        input (into {} (map (fn [n] [(str n) n]) (range 16)))
+        order (mapv first input) original @#'p/key-string membership contains?
+        unusual (nth order 4)
+        ;; Native collection intentionally holds the live contains? Var.
+        ;; Jolt can inline an ordinary core contains? call, so use an explicit
+        ;; Var invocation for this changed-root oracle, not the compiled helper.
+        reference (fn [attrs wanted]
+                    (reduce (fn [out [key value]]
+                              (let [normalized (@#'p/key-string key)]
+                                (if (@#'clojure.core/contains? wanted normalized)
+                                  (assoc out normalized (conj (get out normalized []) value)) out)))
+                            {} attrs))
+        run (fn [f changing?]
+              (let [effects (atom [])]
+                (with-redefs [p/key-string
+                              (fn [key]
+                                (swap! effects conj [:key key])
+                                (if (= key unusual) :non-string (original key)))
+                              clojure.core/contains?
+                              (fn [wanted key]
+                                (swap! effects conj [:member key])
+                                (when changing?
+                                  (alter-var-root #'clojure.core/contains?
+                                    (constantly (fn [_ next-key]
+                                                  (swap! effects conj [:new-member next-key]) true))))
+                                (membership wanted key))]
+                  [(f input (conj (set order) :non-string)) @effects])))]
+    (doseq [changing? [false true]]
+      (is (= (run reference changing?) (run collect changing?))))))
+
+(deftest changed-membership-can-exceed-the-compiled-wanted-capacity
+  (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
+        input (into {} (map (fn [n] [(str n) n]) (range 16)))
+        expected (into {} (map (fn [[key value]] [key [value]]) input))]
+    (doseq [n [0 1 2]]
+      (let [wanted (set (map str (range n))) calls (atom [])
+            actual (with-redefs [clojure.core/contains?
+                                (fn [_ key] (swap! calls conj key) true)]
+                     (collect input wanted))]
+        (is (= expected actual))
+        (is (= (mapv first input) @calls))))))
+
 (deftest indexed-plan-is-selected-once-and-retains-live-status-projection
   (let [{:keys [capability target vector-projector]} (vectors/plans false)
         builds (atom 0) original-builder @#'p/indexed-vector-projector
