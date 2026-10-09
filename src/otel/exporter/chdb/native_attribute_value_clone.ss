@@ -1,7 +1,6 @@
-;; Bounded hash-map value transform. Only collision-free HAMTs with string
-;; keys and >8 entries can keep their geometry. Converters stay live, in seq
-;; order. A changed key switches immediately to the original empty-map builder;
-;; preceding pure string-key insertions replay without rerunning converters.
+;; Bounded invocation-private hash-map value transform. Completed output leaves
+;; provide seq-order replay after a changed key, without a second entry ledger.
+;; Reuse immutable input leaf pairs only when BOTH converted references match.
 (let ()
   (define (admitted-node? node)
     (let ((arr (hnode-arr node)))
@@ -14,39 +13,46 @@
   (lambda (m key-var value-var)
     (and (pmap? m) (> (pmap-cnt m) 8) (<= (pmap-cnt m) 128)
          (hnode? (pmap-root m)) (admitted-node? (pmap-root m))
-      ;; One invocation-owned slot per admitted entry replaces the linked
-      ;; replay ledger. Replay still happens in original conversion order.
-      (let ((converted (make-vector (pmap-cnt m))) (used 0) (fallback #f))
+      (let ((partial-root #f) (fallback #f))
+        (define (replay! node)
+          ;; Every populated leaf preceding this change has a primitive string
+          ;; key identical to its input key. Holes are private #f sentinels.
+          (let ((arr (hnode-arr node)))
+            (let loop ((i 0))
+              (unless (= i (vector-length arr))
+                (let ((child (vector-ref arr i)))
+                  (cond ((hnode? child) (replay! child))
+                        ((pair? child) (tmap-put! fallback (car child) (cdr child)))))
+                (loop (+ i 1))))))
         (define (convert! child)
           (let* ((key (jolt-invoke1 (var-cell-deref key-var) (car child)))
                  (value (jolt-invoke1 (var-cell-deref value-var) (cdr child)))
-                 (pair (cons key value)))
+                 (pair (if (and (eq? key (car child)) (eq? value (cdr child)))
+                           child (cons key value))))
             (cond
               (fallback (tmap-put! fallback key value))
-              ((eq? key (car child))
-               (vector-set! converted used pair)
-               (set! used (+ used 1)))
+              ((eq? key (car child)) #f)
               (else
                 (set! fallback (jolt-transient-new empty-pmap))
-                (let replay ((i 0))
-                  (unless (= i used)
-                    (let ((old (vector-ref converted i)))
-                      (tmap-put! fallback (car old) (cdr old)))
-                    (replay (+ i 1))))
-                (set! converted #f)
-                ;; Preserve hashing/equality effects of this changed key before
-                ;; observing the next converter. No rows/keys are reconverted.
+                (replay! partial-root)
+                ;; The changed key's hashing/equality effects occur now,
+                ;; before the next conversion. No callback is replayed.
                 (tmap-put! fallback key value)))
             pair))
-        (define (walk node)
+        (define (walk node parent index)
           (let* ((arr (hnode-arr node)) (n (vector-length arr))
-                 (out (make-vector n)))
+                 (out (make-vector n #f))
+                 (copy (make-hnode (hnode-bm node) out)))
+            ;; Link this private node BEFORE traversing it, so any mid-subtree
+            ;; fallback can replay all completed leaves in exact seq order.
+            (if parent (vector-set! parent index copy) (set! partial-root copy))
             (let loop ((i 0))
               (unless (= i n)
                 (let ((child (vector-ref arr i)))
-                  (vector-set! out i (if (hnode? child) (walk child) (convert! child))))
+                  (if (hnode? child) (walk child out i)
+                      (vector-set! out i (convert! child))))
                 (loop (+ i 1))))
-            (make-hnode (hnode-bm node) out)))
-        (let ((root (walk (pmap-root m))))
+            copy))
+        (let ((root (walk (pmap-root m) #f 0)))
           (if fallback (jolt-persistent! fallback)
               (make-pmap root (pmap-cnt m))))))))

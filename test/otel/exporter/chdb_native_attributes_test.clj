@@ -86,6 +86,87 @@
           (is (= n (:visits (run :native-guarded-byte-batch))))
           (is (= before (vec input))))))))
 
+(deftest hash-value-clone-replays-a-partially-populated-child-after-wide-reentry
+  (when (native?)
+    (let [input (into {} (map (fn [i] [(str "key-" i) i]) (range 128)))
+          before (vec input)
+          ;; Positive representation witness: choose the second seq-order leaf
+          ;; of an actual child node, not a guessed key/hash distribution.
+          changed-key
+          ((scheme/eval-string
+             "(lambda (m)
+                (let ((arr (hnode-arr (pmap-root m))))
+                  (define (keys node)
+                    (let ((out '()) (a (hnode-arr node)))
+                      (do ((i 0 (+ i 1))) ((= i (vector-length a)) (reverse out))
+                        (let ((child (vector-ref a i)))
+                          (if (hnode? child)
+                              (for-each (lambda (k) (set! out (cons k out))) (keys child))
+                              (set! out (cons (car child) out)))))))
+                  (let seek ((i 0))
+                    (if (= i (vector-length arr)) jolt-nil
+                        (let ((child (vector-ref arr i)))
+                          (if (hnode? child)
+                              (let ((ks (keys child)))
+                                (if (>= (length ks) 2) (cadr ks) (seek (+ i 1))))
+                              (seek (+ i 1))))))))") input)
+          nested (into {} (map (fn [i] [(str "nested-" i) (+ 1000 i)]) (range 16)))
+          stock-key @#'exporter/key-string stock-value @#'exporter/value-string]
+      (is (string? changed-key))
+      (is (some #(= changed-key (first %)) before))
+      (doseq [replacement ["changed-key" (ffirst before)]]
+        (let [run (fn [backend]
+                    (let [effects (atom [])]
+                      (with-redefs
+                        [exporter/key-string
+                         (fn [k]
+                           (swap! effects conj [:key k])
+                           (if (= k changed-key) replacement (stock-key k)))
+                         exporter/value-string
+                         (fn [v]
+                           (swap! effects conj [:value v])
+                           (when (= v (get input changed-key))
+                             (swap! effects conj [:nested (vec (convert backend nested))]))
+                           (stock-value v))]
+                        (let [out (convert backend input)]
+                          {:rows (vec out) :hash (hash out)
+                           :json (json/write-str out) :effects @effects}))))]
+          (is (= (run :configured) (run :native-guarded-byte-batch)))
+          (is (= before (vec input))))))))
+
+(deftest hash-value-clone-shares-only-unchanged-leaves-and-isolates-updates
+  (when (native?)
+    (let [input (into {} (map (fn [i] [(str "key-" i) (str "value-" i)]) (range 16)))
+          clone (scheme/eval-string
+                  (slurp (io/resource "otel/exporter/chdb/native_attribute_value_clone.ss")))
+          output (clone input #'exporter/key-string #'exporter/value-string)
+          before (vec input)
+          witness
+          ((scheme/eval-string
+             "(lambda (a b)
+                (let ((distinct? #t) (shared 0))
+                  (define (walk x y)
+                    (let ((xa (hnode-arr x)) (ya (hnode-arr y)))
+                      (when (eq? xa ya) (set! distinct? #f))
+                      (do ((i 0 (+ i 1))) ((= i (vector-length xa)))
+                        (let ((xc (vector-ref xa i)) (yc (vector-ref ya i)))
+                          (if (hnode? xc) (walk xc yc)
+                              (when (eq? xc yc) (set! shared (+ shared 1))))))))
+                  (walk (pmap-root a) (pmap-root b))
+                  (jolt-vector distinct? shared)))") input output)
+          k (ffirst before)
+          input-edit (assoc input k "input-edit")
+          output-edit (assoc output k "output-edit")
+          input-transient (persistent! (assoc! (transient input) k "input-transient"))
+          output-transient (persistent! (assoc! (transient output) k "output-transient"))]
+      (is (= [true 16] witness))
+      (is (= before (vec input) (vec output)))
+      (is (= "input-edit" (get input-edit k)))
+      (is (= "output-edit" (get output-edit k)))
+      (is (= "input-transient" (get input-transient k)))
+      (is (= "output-transient" (get output-transient k)))
+      (is (= before (vec input) (vec output))))))
+
 (deftest hash-value-clone-normalization-and-layout-matrix
   (when (native?)
     (let [stock-key @#'exporter/key-string]

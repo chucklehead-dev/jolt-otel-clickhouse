@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Use the experimental native attribute transform's private output tree to
+  replay completed entries after a changed key, instead of allocating a second
+  converted-entry ledger. Share only unchanged immutable leaf pairs; output
+  node storage stays private. Retain live callbacks, seq order, duplicates and
+  ordinary fallback. A prepared row screen reduces allocation, not a proven
+  Durable throughput or tail guarantee.
+
 - Build experimental native typed-span positional output in one private,
   exact-sized buffer instead of repeatedly copying a growing persistent vector.
   Preserve live status projection, pair destructuring, field order and immutable
