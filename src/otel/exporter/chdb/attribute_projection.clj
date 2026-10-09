@@ -35,8 +35,15 @@
     :int64 (and (integer? value) (<= int64-min value int64-max))
     false))
 
+;; The public codebook is sorted for stable presentation. Its stock contents
+;; are immutable; a private compact lookup avoids comparator work per field.
+;; Do not cache replacement codebooks or change their observable lookups.
+(def ^:private stock-status-codes registry/status-codes)
+(def ^:private compact-status-codes (into {} stock-status-codes))
+
 (defn- projected-value [type values]
   (let [codes registry/status-codes
+        codes (if (identical? codes stock-status-codes) compact-status-codes codes)
         fallback (default-value type)]
     (cond
       (empty? values) [fallback (:absent codes)]

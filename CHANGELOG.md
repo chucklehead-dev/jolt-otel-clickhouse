@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Use a private compact lookup for the exact immutable stock typed-status
+  codebook. Preserve its public sorted representation, live replacement
+  behavior and all value/status rules; no storage or schema change.
+
 - Use the experimental native attribute transform's private output tree to
   replay completed entries after a changed key, instead of allocating a second
   converted-entry ledger. Share only unchanged immutable leaf pairs; output
