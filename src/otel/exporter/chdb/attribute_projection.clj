@@ -148,11 +148,17 @@
     ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-declared-collector!)
      #'key-string #'clojure.core/contains?)))
 
+(def ^:private owned-plan-output
+  (delay
+    (require 'otel.exporter.chdb.native-attributes)
+    ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-positional-output!)
+     #'projected-value)))
+
 (defn- indexed-vector-projector [locations wanted plan]
   ;; Compile immutable plan sizes once. Avoid per-row mapv/reduce closures and
   ;; sequence traversal of the already positional vectors. Converters and
   ;; status projection remain live calls in their established order.
-  (let [location-count (count locations) field-count (count plan)]
+  (let [location-count (count locations)]
     (fn [span]
       (let [values
             (loop [i 0 out []]
@@ -167,12 +173,7 @@
                                         (assoc out normalized (conj (get out normalized []) value)) out)))
                                   {} attributes))]
                   (recur (inc i) (conj out collected)))))]
-        (loop [i 0 out []]
-          (if (= i field-count) out
-            (let [[index key type] (nth plan i)
-                  [value status] (projected-value type (get (nth values index) key []))]
-              ;; Fixed-arity operations avoid the variadic conj argument path.
-              (recur (inc i) (conj (conj out value) status)))))))))
+        (@owned-plan-output plan values)))))
 
 (defn trace-vector-projector
   "Compile a confirmed trace capability into value/status pairs in field order.

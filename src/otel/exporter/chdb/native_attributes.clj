@@ -20,6 +20,21 @@
 
 (def ^:private declared (declared-source))
 
+(defmacro ^:private projected-source []
+  (if-let [url (io/resource "otel/exporter/chdb/native_projected_values.ss")]
+    (slurp url)
+    (throw (ex-info "Missing native positional-output resource" {}))))
+
+(def ^:private projected (projected-source))
+
+(defn load-positional-output!
+  "Internal exact-sized immutable output builder. Resolve the supplied live
+  status projector Var per field; preserve pair destructuring and field order.
+  Mutable construction storage is fresh per invocation and never shared."
+  [project-var]
+  (let [emit (scheme/eval-string projected)]
+    (fn [plan collected] (emit plan collected project-var))))
+
 (defn load-declared-collector!
   "Internal bounded built-in map collection, or false on declined layouts. Converter Vars
   stay live per key; raw matching values and duplicates are preserved. No

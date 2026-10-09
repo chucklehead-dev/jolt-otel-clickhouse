@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build experimental native typed-span positional output in one private,
+  exact-sized buffer instead of repeatedly copying a growing persistent vector.
+  Preserve live status projection, pair destructuring, field order and immutable
+  results; portable/default projection and Durable acknowledgement are unchanged.
+
 - Size the experimental native declared-attribute collector's small-output
   storage from the wanted set, instead of setting up a transient map for every
   wide input. Retain live normalization/membership, duplicate values and ordered

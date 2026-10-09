@@ -20,6 +20,63 @@
                 (assoc out normalized (conj (get out normalized []) value)) out)))
           {} attrs))
 
+(deftest positional-output-is-sealed-once-and-remains-independent
+  (let [[emit seals]
+        (scheme/eval-string
+          (str "(let ((count 0) (old make-pvec)) "
+               "(let ((make-pvec (case-lambda "
+               "((v) (set! count (+ count 1)) (old v)) "
+               "((v kind) (set! count (+ count 1)) (old v kind))))) "
+               "(jolt-vector "
+               (slurp (io/resource "otel/exporter/chdb/native_projected_values.ss"))
+               " (lambda () count))))"))
+        original @#'p/projected-value]
+    (doseq [n [0 1 3 8 16 17 32 33 65]]
+      (let [plan (mapv (fn [i] [0 (str i) :int64]) (range n))
+            collected [(into {} (map (fn [i] [(str i) [i]]) (range n)))]
+            before (seals)
+            a (emit plan collected #'p/projected-value)
+            b (with-redefs [p/projected-value (fn [_ values] [(- (first values)) 99])]
+                (emit plan collected #'p/projected-value))]
+        (is (= 2 (- (seals) before)))
+        (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
+        (is (= (vec (mapcat (fn [i] [(- i) 99]) (range n))) b))
+        (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
+        (when (pos? n)
+          (is (= 0 (first a)))
+          (is (= :changed (first (assoc a 0 :changed)))))))))
+
+(deftest positional-output-preserves-live-pair-destructuring-and-reentry
+  (let [emit (native/load-positional-output! #'p/projected-value)
+        plan [[0 "a" :int64] [0 "b" :int64] [0 "c" :int64]]
+        collected [{"a" [1] "b" [2] "c" [3]}]
+        original @#'p/projected-value
+        effects (atom []) nested (atom nil)
+        replacement (fn [_ values] (swap! effects conj (first values))
+                      (case (first values) 2 (list 20) 3 nil))]
+    (with-redefs [p/projected-value
+                  (fn [type values]
+                    (swap! effects conj (first values))
+                    (alter-var-root #'p/projected-value (constantly replacement))
+                    (reset! nested (emit [[0 "b" :int64]] collected))
+                    (original type values))]
+      (is (= [1 3 20 nil nil nil] (emit plan collected)))
+      (is (= [1 2 2 3] @effects))
+      (is (= [20 nil] @nested)))
+    (with-redefs [p/projected-value (fn [& _] (throw (ex-info "controlled output failure" {})))]
+      (is (thrown? clojure.lang.ExceptionInfo (emit plan collected))))
+    (let [visited (atom [])]
+      (with-redefs [p/projected-value
+                    (fn [type values]
+                      (swap! visited conj (first values))
+                      (when (= 2 (first values))
+                        (throw (ex-info "partial output failure" {})))
+                      (original type values))]
+        (is (thrown? clojure.lang.ExceptionInfo (emit plan collected)))
+        (is (= [1 2] @visited))))
+    (is (= [1 3 2 3 3 3] (emit plan collected)))
+    (is (= [20 nil] @nested))))
+
 (deftest wide-small-output-avoids-transient-setup-with-positive-promotion-control
   (let [[collect setups]
         (scheme/eval-string
