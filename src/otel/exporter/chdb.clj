@@ -114,15 +114,21 @@
 
       :else fallback)))
 
+(def ^:dynamic ^:private *timestamp-wire* :unix-nanos)
+
 (defn- timestamp [nanos]
   ;; Pinned libchdb package 26.7.3 / SQL engine 26.7.2.1 reads JSONEachRow
   ;; integer DateTime64(9) values as raw nanosecond ticks (pre-26.8 semantics).
-  ;; Preserve exact integers through maintained data.json, including epoch zero.
-  ;; A future engine upgrade must requalify this wire; 26.8 changes integers.
+  ;; 26.9 uses canonical UTC ISO strings instead; both retain the same bounded
+  ;; source domain, including epoch zero. Selection belongs to each exporter.
   (when-not (and (integer? nanos) (<= 0 nanos 9223372036854775807))
     (throw (ex-info "Telemetry timestamp exceeds DateTime64 nanosecond domain"
                     {:type ::invalid-timestamp-nanos})))
-  nanos)
+  (case *timestamp-wire*
+    :unix-nanos nanos
+    :iso-utc (.toString (java.time.Instant/ofEpochSecond
+                         (quot nanos 1000000000) (rem nanos 1000000000)))
+    (throw (ex-info "Unsupported telemetry timestamp wire" {:type ::unqualified-timestamp-wire}))))
 
 (defn- metric-timestamp [nanos]
   ;; The pinned ClickStack collector stores metric timestamps as DateTime,
@@ -606,13 +612,30 @@
 (defn- uint64? [value]
   (and (integer? value) (<= 0 value 18446744073709551615N)))
 
+(defn- valid-timestamp-value? [value]
+  (case *timestamp-wire*
+    :unix-nanos (and (integer? value) (<= 0 value 9223372036854775807))
+    :iso-utc (and (string? value)
+                 (boolean (re-matches #"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z" value))
+                 (try
+                   (let [instant (java.time.Instant/parse value)
+                         seconds (.getEpochSecond instant)
+                         nanos (.getNano instant)]
+                     ;; Some host parsers normalize invalid calendar dates.
+                     ;; Accept only the canonical string our producer emits.
+                     (and (= value (.toString instant))
+                          (<= 0 seconds 9223372036)
+                          (or (< seconds 9223372036) (<= nanos 854775807))))
+                   (catch Throwable _ false)))
+    false))
+
 (defn- valid-row-value? [column value]
   ;; These are exporter-owned physical UInt64 domains, not promoted Int64
   ;; attributes. Preserve the full integer domain supported by JSONEachRow.
   (case column
-    "Timestamp" (and (integer? value) (<= 0 value 9223372036854775807))
+    "Timestamp" (valid-timestamp-value? value)
     "Events.Timestamp" (and (sequential? value)
-                            (every? #(and (integer? %) (<= 0 % 9223372036854775807)) value))
+                            (every? valid-timestamp-value? value))
     "Duration" (uint64? value)
     "Count" (uint64? value)
     "BucketCounts" (and (sequential? value) (every? uint64? value))
@@ -1516,7 +1539,8 @@
     (if-not (admit-signal! owned? expected-signals state :spans)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [receipts
               (when (seq spans)
                 (let [snapshot @state
@@ -1588,7 +1612,8 @@
     (if-not (admit-signal! owned? expected-signals state :metrics)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [snapshot @state
               direct? (direct-metric-layout? snapshot)
               groups (if direct?
@@ -1610,7 +1635,8 @@
     (if-not (admit-signal! owned? expected-signals state :logs)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (when (seq records)
           (insert-untyped-log-records! connection state records))
         (complete-batch! connection state (boolean (seq records))))
@@ -1780,7 +1806,9 @@
        ;; change integer DateTime64 semantics. Fence the actual package before
        ;; any exporter DDL/checkpoint; neither ordinary nor Durable can bypass.
        (native/ensure-loaded!)
-       (when-not (= "26.7.3" (native/chdb-version))
+       (let [package (native/chdb-version)
+             timestamp-wire (case package "26.7.3" :unix-nanos "26.9.0" :iso-utc nil)]
+       (when-not timestamp-wire
          (throw (ex-info "Unqualified chDB telemetry timestamp wire"
                          {:type ::unqualified-timestamp-wire})))
        (when create-schema? (schema/ensure-schema! conn))
@@ -1854,11 +1882,12 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :timestamp-wire timestamp-wire
                               :owned-statement-output? owned-statement-output?
                               :insert-format insert-format
                               :compact-plans compact-plans
                               :durable-phase-receipts durable-phase-receipts
-                              :last-error nil})))
+                              :last-error nil}))))
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
          (when owned? (try (.close conn) (catch Throwable _ nil)))

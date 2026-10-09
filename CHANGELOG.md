@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Qualify an exporter-local UTC ISO timestamp wire for native chDB 26.9.0;
+  retain exact integer nanoseconds for 26.7.3 and reject unknown packages before
+  schema writes. Spans, nested event arrays and log observed-time fallback use
+  the same bounded nanosecond domain. Metric second-based timestamps are unchanged.
+
 - Use invocation-owned bounded slots instead of a per-entry linked replay list
   in the opt-in native wide-attribute transform. Preserve converter order,
   immediate changed-key fallback, input ownership, and unchanged defaults.

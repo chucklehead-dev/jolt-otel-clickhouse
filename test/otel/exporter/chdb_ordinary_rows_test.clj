@@ -32,7 +32,7 @@
 
 (defn- version-fence-checks [check]
   (doseq [durable? [false true] owned? [false true]
-          version ["26.7.3" "26.8.1" "unknown" nil]
+          version ["26.7.3" "26.9.0" "26.8.1" "unknown" nil]
           close-fails? [false true]]
     (let [effects (atom []) closes (atom 0)
           drv (reify driver/Driver
@@ -61,8 +61,11 @@
           ;; that this context fixture contains an actual native Durable writer.
           (let [[writer error] (try [(exporter/exporter options) nil]
                                     (catch Throwable error [nil error]))]
-            (if (= "26.7.3" version)
+            (if (contains? #{"26.7.3" "26.9.0"} version)
               (do (check "qualified package constructor succeeds" true (some? writer))
+                  (check "timestamp wire belongs to this exporter"
+                         (if (= version "26.9.0") :iso-utc :unix-nanos)
+                         (:timestamp-wire @(:state writer)))
                   (check "driver check and version probe precede schema/checkpoint"
                          (cond-> [:context :load :version :schema] durable? (conj :checkpoint)) @effects)
                   (check "successful constructor retains connection ownership" 0 @closes))

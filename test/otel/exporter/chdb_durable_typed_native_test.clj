@@ -178,7 +178,8 @@
 
 (defn run! [phase root & format-arguments]
   (native/ensure-loaded!)
-  (check! :actual-package "26.7.3" (native/chdb-version))
+  (check! :actual-package true (contains? #{"26.7.3" "26.9.0"} (native/chdb-version)))
+  (println :native-package (native/chdb-version))
   (let [insert-format (wire-config/parse-format format-arguments)
         namespace (local/local-backend (str root "/objects"))
         telemetry (backend/object-backend namespace "telemetry")
