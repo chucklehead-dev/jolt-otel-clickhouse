@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add an offline contract verifier for the cumulative plain collector runtime's
+  manifest and capability claims. Keep hosted authentication, executable checks
+  and credential exposure separate; no new downloadable profile is enabled.
+
 - Use a private compact lookup for the exact immutable stock typed-status
   codebook. Preserve its public sorted representation, live replacement
   behavior and all value/status rules; no storage or schema change.
