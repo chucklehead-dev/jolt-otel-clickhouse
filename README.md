@@ -121,6 +121,14 @@ connections. Each exporter selects integer nanoseconds for 26.7.3 or UTC ISO
 strings for 26.9.0; spans, event arrays and logs preserve exact nanoseconds.
 Metric timestamps remain whole seconds. Other packages are rejected.
 
+For experimental Durable export on 26.9.0, `:datetime64-wire :raw-ticks`
+keeps numeric nanoseconds and records
+`SETTINGS input_format_read_datetime_number_as_raw_value=1` in every INSERT.
+This avoids calendar formatting; the WAL carries the setting too, so a reader
+does not need a session toggle. Ordinary connections reject this selection.
+`:auto` remains the default; `:iso-utc` explicitly selects the 26.9 string wire.
+Performance and hosted-S3 qualification of this option are still pending.
+
 The installer/default dependency pins have not changed. Use a new test object
 when evaluating 26.9.0: this candidate does **not** qualify replay of older
 26.7 integer-timestamp WAL on the newer engine. Do not point it at existing

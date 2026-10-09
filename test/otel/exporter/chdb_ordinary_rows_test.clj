@@ -33,6 +33,7 @@
 (defn- version-fence-checks [check]
   (doseq [durable? [false true] owned? [false true]
           version ["26.7.3" "26.9.0" "26.8.1" "unknown" nil]
+          wire [:auto :iso-utc :raw-ticks]
           close-fails? [false true]]
     (let [effects (atom []) closes (atom 0)
           drv (reify driver/Driver
@@ -47,7 +48,7 @@
           connection (with-redefs [driver/resolve-driver (fn [_] drv)]
                        (jdbc-shim/connection "wire-version-test:memory"))
           context! jdbc-shim/driver-context
-          options (cond-> {:durable? durable? :signals #{:spans}}
+          options (cond-> {:durable? durable? :signals #{:spans} :datetime64-wire wire}
                     (not owned?) (assoc :connection connection))]
       (try
         (with-redefs [jdbc/connection (fn [_] connection)
@@ -61,10 +62,12 @@
           ;; that this context fixture contains an actual native Durable writer.
           (let [[writer error] (try [(exporter/exporter options) nil]
                                     (catch Throwable error [nil error]))]
-            (if (contains? #{"26.7.3" "26.9.0"} version)
+            (if (or (and (= version "26.7.3") (= wire :auto))
+                    (and (= version "26.9.0") (or (not= wire :raw-ticks) durable?)))
               (do (check "qualified package constructor succeeds" true (some? writer))
                   (check "timestamp wire belongs to this exporter"
-                         (if (= version "26.9.0") :iso-utc :unix-nanos)
+                         (if (= wire :raw-ticks) :raw-ticks
+                           (if (= version "26.9.0") :iso-utc :unix-nanos))
                          (:timestamp-wire @(:state writer)))
                   (check "driver check and version probe precede schema/checkpoint"
                          (cond-> [:context :load :version :schema] durable? (conj :checkpoint)) @effects)

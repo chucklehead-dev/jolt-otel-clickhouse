@@ -181,6 +181,9 @@
   (check! :actual-package true (contains? #{"26.7.3" "26.9.0"} (native/chdb-version)))
   (println :native-package (native/chdb-version))
   (let [insert-format (wire-config/parse-format format-arguments)
+        timestamp-wire (case (System/getenv "CHDB_TYPED_DATETIME64_WIRE")
+                         nil :auto "raw-ticks" :raw-ticks
+                         (throw (ex-info "Invalid fixture timestamp wire" {})))
         namespace (local/local-backend (str root "/objects"))
         telemetry (backend/object-backend namespace "telemetry")
         catalog (backend/object-backend namespace "typed-catalog")
@@ -208,12 +211,15 @@
           (let [primary (atom nil)
                 writer (exporter/exporter {:connection connection :durable? true :create-schema? false
                                           :insert-format insert-format
+                                          :datetime64-wire timestamp-wire
                                           :signals #{:spans :logs :metrics}
                                           :typed-span-descriptors spans
                                           :typed-log-descriptors records
                                           :typed-gauge-descriptors gauges
                                           :typed-sum-descriptors sums})]
             (try
+              (when (= timestamp-wire :raw-ticks)
+                (check! :selected-raw-ticks :raw-ticks (:timestamp-wire @(:state writer))))
               (let [encoder (:typed-span-encoder @(:state writer))
                     projector (:typed-span-projector @(:state writer))
                     samples (conj (mapv span-record (range 4))
@@ -234,6 +240,9 @@
                                                             "resource.generic" "kept-generic"}}
                                               (metric-batch)))
               (check! :writer-counts [4 4 1 1 0] (counts connection))
+              (when (= "26.9.0" (native/chdb-version))
+                (check! :writer-session-setting-unchanged "0"
+                        (:value (jdbc/fetch-one connection "SELECT value FROM system.settings WHERE name='input_format_read_datetime_number_as_raw_value'"))))
               (let [head (:head (snapshot))]
                 (check! :base-present true (some? (get-in head ["manifest" "base"])))
                 (check! :wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
@@ -263,6 +272,9 @@
           (check! :reader-base-present true (some? (get-in head ["manifest" "base"])))
           (check! :reader-wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
         (check! :reader-counts [4 4 1 1 0] (counts connection))
+        (when (= "26.9.0" (native/chdb-version))
+          (check! :reader-session-setting-unchanged "0"
+                  (:value (jdbc/fetch-one connection "SELECT value FROM system.settings WHERE name='input_format_read_datetime_number_as_raw_value'"))))
         (doseq [signal [:spans :logs]]
           (let [result (installer/acquire-active! catalog (selector signal)
                          {:target connection :observe-columns #(observe connection signal)})]

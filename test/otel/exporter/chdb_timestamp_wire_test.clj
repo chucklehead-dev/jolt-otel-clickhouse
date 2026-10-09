@@ -24,3 +24,17 @@
   (is (= 1 (#'e/timestamp 1)))
   (is (#'e/valid-row-value? "Timestamp" 1))
   (is (false? (#'e/valid-row-value? "Timestamp" "1970-01-01T00:00:00Z"))))
+
+(deftest raw-ticks-setting-is-part-of-the-generated-sql
+  (let [clause " SETTINGS input_format_read_datetime_number_as_raw_value=1"]
+    (with-bindings {#'e/*timestamp-wire* :raw-ticks}
+      (doseq [n [0 1 1700000000123456789 9223372036854775807]]
+        (is (= n (#'e/timestamp n)))
+        (is (#'e/valid-row-value? "Timestamp" n)))
+      (is (= (str "insert into otel_traces (`Timestamp`)" clause)
+             (#'e/compact-insert-query "otel_traces" ["Timestamp"])))
+      (is (= (str "insert into otel_logs" clause)
+             (#'e/timestamp-insert-query "insert into otel_logs")))
+      (doseq [n [-1 9223372036854775808N nil 0.5]]
+        (is (thrown? clojure.lang.ExceptionInfo (#'e/timestamp n)))))
+    (is (= "insert into otel_logs" (#'e/timestamp-insert-query "insert into otel_logs")))))
