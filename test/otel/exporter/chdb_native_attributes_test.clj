@@ -57,6 +57,35 @@
       (is (identical? stock-key @#'exporter/key-string))
       (is (identical? stock-value @#'exporter/value-string)))))
 
+(deftest hash-value-clone-replays-first-middle-and-last-prefix-in-order
+  (when (native?)
+    (let [stock-key @#'exporter/key-string stock-value @#'exporter/value-string]
+      (doseq [n [9 16 128]
+              changed-at [1 (quot n 2) n]
+              mode [:fresh :duplicate]]
+        (let [input (into {} (map (fn [i] [(str "key-" i) i]) (range n)))
+              before (vec input)
+              ;; Nine entries collapsed at the last callback yield an array
+              ;; map: replay order is observable, not merely hash-map equality.
+              changed-key (if (= mode :duplicate) (ffirst before) "changed-key")
+              run (fn [backend]
+                    (let [effects (atom []) visits (atom 0)]
+                      (with-redefs [exporter/key-string
+                                    (fn [k]
+                                      (swap! effects conj [:key k])
+                                      (if (= changed-at (swap! visits inc))
+                                        changed-key (stock-key k)))
+                                    exporter/value-string
+                                    (fn [v]
+                                      (swap! effects conj [:value v])
+                                      (stock-value v))]
+                        (let [out (convert backend input)]
+                          {:rows (vec out) :json (json/write-str out)
+                           :effects @effects :visits @visits}))))]
+          (is (= (run :configured) (run :native-guarded-byte-batch)))
+          (is (= n (:visits (run :native-guarded-byte-batch))))
+          (is (= before (vec input))))))))
+
 (deftest hash-value-clone-normalization-and-layout-matrix
   (when (native?)
     (let [stock-key @#'exporter/key-string]

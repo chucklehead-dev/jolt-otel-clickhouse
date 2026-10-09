@@ -14,19 +14,26 @@
   (lambda (m key-var value-var)
     (and (pmap? m) (> (pmap-cnt m) 8) (<= (pmap-cnt m) 128)
          (hnode? (pmap-root m)) (admitted-node? (pmap-root m))
-      (let ((converted '()) (fallback #f))
+      ;; One invocation-owned slot per admitted entry replaces the linked
+      ;; replay ledger. Replay still happens in original conversion order.
+      (let ((converted (make-vector (pmap-cnt m))) (used 0) (fallback #f))
         (define (convert! child)
           (let* ((key (jolt-invoke1 (var-cell-deref key-var) (car child)))
                  (value (jolt-invoke1 (var-cell-deref value-var) (cdr child)))
                  (pair (cons key value)))
             (cond
               (fallback (tmap-put! fallback key value))
-              ((eq? key (car child)) (set! converted (cons pair converted)))
+              ((eq? key (car child))
+               (vector-set! converted used pair)
+               (set! used (+ used 1)))
               (else
                 (set! fallback (jolt-transient-new empty-pmap))
-                (for-each (lambda (old) (tmap-put! fallback (car old) (cdr old)))
-                          (reverse converted))
-                (set! converted '())
+                (let replay ((i 0))
+                  (unless (= i used)
+                    (let ((old (vector-ref converted i)))
+                      (tmap-put! fallback (car old) (cdr old)))
+                    (replay (+ i 1))))
+                (set! converted #f)
                 ;; Preserve hashing/equality effects of this changed key before
                 ;; observing the next converter. No rows/keys are reconverted.
                 (tmap-put! fallback key value)))

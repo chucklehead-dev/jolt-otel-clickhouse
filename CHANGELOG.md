@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Use invocation-owned bounded slots instead of a per-entry linked replay list
+  in the opt-in native wide-attribute transform. Preserve converter order,
+  immediate changed-key fallback, input ownership, and unchanged defaults.
+
 - Avoid rebuilding the hash index when the opt-in native attribute transform
   keeps the string keys of a bounded, collision-free wide map unchanged. Copy
   private output nodes, retain live converter order, and switch to the existing
