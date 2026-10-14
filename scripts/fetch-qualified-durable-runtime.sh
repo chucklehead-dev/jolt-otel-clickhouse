@@ -11,6 +11,17 @@ artifact_name=
 expected_branch=integration/aspects
 profile=${QUALIFIED_RUNTIME_PROFILE-bf8}
 case "$profile" in
+  current-0821-1ae7)
+    compiler=1ae7e0d19aa3088789410106610beb171bcfb0ef
+    compiler_tree=e9b3978fbd7949e85827578b8bf79581cb176861
+    artifact_name=durable-runtime-1ae7e0d1-linux-x64
+    expected_branch=ci/measured-runtime-0821-20261014
+    pair_run=38618434034
+    pair_workflow=1533b9fe6f7782f4d024a07aefbfb7ce50c4251b
+    pair_artifact=11921513712
+    pair_archive=931dda8bf4e9d9beeaa92ad64b8a1c925d3ab670f87414ec9efee9af28cb3537
+    pair_binary=06a2ccb858c072bfcd74ce94d96eb95f008d75e0fb1f46117728602572189811
+    ;;
   bcb)
     compiler=bcb376a04f8e3d4508e9f77f4fa33b50bae7924b
     compiler_tree=eb24fdfdba7da4e468304376e37db3117b3c50b9
@@ -140,6 +151,12 @@ require_manifest_line runner_arch=X64
 require_manifest_line require_buildlib=1
 require_manifest_line gate=pass
 require_manifest_line ranged_append_ascii=98
+if [[ "$profile" == current-0821-1ae7 ]]; then
+  require_manifest_line 'binary_version=jolt v0.8.21-58-g1ae7e0d1'
+  require_manifest_line runtime_kind=plain
+  require_manifest_line upstream_source=5b46858a171f30949f5b09eb484bc6c5ff93c6ea
+  require_manifest_line upstream_tree=a6e73f0343dae1cc8ae311612f2ecd9ca0a7b8c5
+fi
 if [[ "$profile" == bcb ]]; then
   require_manifest_line runtime_kind=plain
   require_manifest_line upstream_source=58980ac9faa6c3c571d1cb251eb7b09799af1b67

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicit authenticated cumulative Jolt 0.8.21 runtime profile after
+  the Linux/Chez producer passed its full behavioral/build gate. Pin the exact
+  run, workflow, artifact, ZIP, binary, compiler tree and upstream ancestry;
+  retain older profiles and rejection controls. Gambit/aspects, app and cloud
+  throughput qualification are separate; no application dependency change.
+
 - Add an explicit authenticated runtime profile for the measured 0.8.17-lineage
   compiler after full behavioral/shared CI passed. Pin run, workflow, artifact,
   archive and binary identities; keep older profiles/default and branch guards

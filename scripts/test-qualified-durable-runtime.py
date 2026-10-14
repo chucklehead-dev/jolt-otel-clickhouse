@@ -180,6 +180,10 @@ assert len(CONTROLS) == 12 and failures == 0
 # before executable mode/probe. The original controls above cover full archive
 # and manifest acceptance with a fake child; neither set runs a real compiler.
 PROFILES = {
+    "current-0821-1ae7": ("38618434034", "1533b9fe6f7782f4d024a07aefbfb7ce50c4251b",
+        "11921513712", "durable-runtime-1ae7e0d1-linux-x64",
+        "931dda8bf4e9d9beeaa92ad64b8a1c925d3ab670f87414ec9efee9af28cb3537",
+        "06a2ccb858c072bfcd74ce94d96eb95f008d75e0fb1f46117728602572189811"),
     "bcb": ("37650983199", "2d0f4b59e068b269780b0a669e8bc06524ec98b1",
         "11497896255", "durable-runtime-bcb376a0-linux-x64",
         "6d7043b502ab7839fe4a91ae977b7be8be088ebe620ead6115d2d0afdb9819db",
@@ -198,6 +202,8 @@ PROFILES = {
         "f54b2f14ba06abbd4666a617762221b7c8da3e7b01e6578bdc39541cc729f102"),
 }
 COMPILER_PINS = {
+    "current-0821-1ae7": ("1ae7e0d19aa3088789410106610beb171bcfb0ef",
+                          "e9b3978fbd7949e85827578b8bf79581cb176861"),
     "bcb": ("bcb376a04f8e3d4508e9f77f4fa33b50bae7924b",
             "eb24fdfdba7da4e468304376e37db3117b3c50b9"),
     "baseline-09a2": ("09a2baac9714f98b994473f64fd239f431a9fffb",
@@ -241,7 +247,9 @@ for profile, pins in PROFILES.items():
             "QUALIFIED_RUNTIME_ARTIFACT_SHA256": pins[4],
             "QUALIFIED_RUNTIME_BINARY_SHA256": pins[5],
             "PAIR_ARTIFACT_NAME": pins[3], "PAIR_API_LEDGER": str(ledger),
-            "PAIR_HEAD_BRANCH": "ci/measured-runtime-ab9b-20261007" if profile == "bcb" else "integration/aspects",
+            "PAIR_HEAD_BRANCH": ("ci/measured-runtime-ab9b-20261007" if profile == "bcb"
+                                 else "ci/measured-runtime-0821-20261014" if profile == "current-0821-1ae7"
+                                 else "integration/aspects"),
             "OFFLINE_CONTROL": control, "OFFLINE_ARCHIVE": str(archive),
             "FIXTURE_EXEC_SENTINEL": str(sentinel),
         }
