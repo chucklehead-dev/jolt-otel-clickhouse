@@ -169,6 +169,9 @@ chmod 755 "$root/jolt"
 if [[ "$profile" == bcb ]]; then
   test "$("$root/jolt" --version)" = 'jolt v0.8.17-39-gbcb376a0'
 fi
+if [[ "$profile" == current-0821-1ae7 ]]; then
+  test "$(cd "$root" && timeout --signal=TERM --kill-after=5s 30s ./jolt --version)" = 'jolt v0.8.21-58-g1ae7e0d1'
+fi
 # This is an artifact capability check, not qualification of the caller's
 # application graph. The newly owned artifact directory contains no deps.edn.
 (

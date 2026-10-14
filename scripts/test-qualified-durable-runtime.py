@@ -68,6 +68,10 @@ else:
 BINARY = b'''#!/usr/bin/python3
 import os, pathlib, sys
 pathlib.Path(os.environ["FIXTURE_EXEC_SENTINEL"]).write_text(str(pathlib.Path.cwd()))
+if sys.argv[1:] == ["--version"]:
+    print("wrong-runtime-version" if os.environ["OFFLINE_CONTROL"] == "wrong-runtime-version"
+          else "jolt v0.8.21-58-g1ae7e0d1")
+    sys.exit(0)
 assert sys.argv[1:3] == ["-Srepro", "-e"] and len(sys.argv) == 4
 assert '(assert (= [98] (vec (.toByteArray out))))' in sys.argv[3]
 if (pathlib.Path.cwd() / "deps.edn").exists():
@@ -283,3 +287,89 @@ for profile, pins in PROFILES.items():
         print(f"pair={prefix} exit={result.returncode} requests={len(requests)} pass={passed}")
 print(f"PAIR-SELECTION-CONTROLS={len(PROFILES) * len(pair_controls)} FAILURES={pair_failures}")
 assert pair_failures == 0
+
+# Logic-only controls reach the four new manifest guards. They rewrite the
+# pins in a TEST COPY to independently constructed synthetic ZIP/binary hashes;
+# no production pin changes or fabricated acceptance of a public artifact.
+current_profile = "current-0821-1ae7"
+current_pins = PROFILES[current_profile]
+current_compiler, current_tree = COMPILER_PINS[current_profile]
+current_fields = {
+    "version": "binary_version=jolt v0.8.21-58-g1ae7e0d1",
+    "kind": "runtime_kind=plain",
+    "upstream-source": "upstream_source=5b46858a171f30949f5b09eb484bc6c5ff93c6ea",
+    "upstream-tree": "upstream_tree=a6e73f0343dae1cc8ae311612f2ecd9ca0a7b8c5",
+}
+manifest_controls = [("valid", None), ("wrong-runtime-version", None)] + [
+    (action, field) for field in current_fields for action in ("missing", "wrong", "duplicate")
+]
+manifest_failures = 0
+mutant_exposed = False
+for action, field in manifest_controls:
+    label = f"current-manifest-{action}-{field or 'all'}"
+    lines = [line for line in LINES if not line.startswith(
+        ("compiler_source=", "compiler_tree=", "workflow_source=", "run_id=", "binary_sha256="))]
+    lines += [f"compiler_source={current_compiler}", f"compiler_tree={current_tree}",
+              f"workflow_source={current_pins[1]}", f"run_id={current_pins[0]}",
+              f"binary_sha256={BINARY_HASH}", *current_fields.values()]
+    if field is not None:
+        line = current_fields[field]
+        if action == "missing":
+            lines.remove(line)
+        elif action == "wrong":
+            lines[lines.index(line)] = line.split("=", 1)[0] + "=wrong"
+        else:
+            lines.append(line)
+    manifest = ("\n".join(lines) + "\n").encode()
+    sums = f"{BINARY_HASH}  jolt\n{hashlib.sha256(manifest).hexdigest()}  build-manifest.txt\n".encode()
+    archive = ROOT / f"{label}.zip"
+    with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as target:
+        target.writestr("jolt", BINARY)
+        target.writestr("build-manifest.txt", manifest)
+        target.writestr("SHA256SUMS", sums)
+    synthetic_archive_hash = hashlib.sha256(archive.read_bytes()).hexdigest()
+    fixture_script_source = script_source.replace(current_pins[4], synthetic_archive_hash).replace(
+        current_pins[5], BINARY_HASH)
+    fixture_script = ROOT / f"{label}.sh"
+    fixture_script.write_text(fixture_script_source)
+    sentinel = ROOT / f"{label}.executed"
+    ledger = ROOT / f"{label}.api"
+    environment = {
+        "PATH": f"{MOCK}:/usr/bin:/bin", "TMPDIR": str(ROOT), "LC_ALL": "C",
+        "QUALIFIED_RUNTIME_PROFILE": current_profile,
+        "QUALIFIED_RUNTIME_RUN_ID": current_pins[0], "QUALIFIED_RUNTIME_RUN_ATTEMPT": "1",
+        "QUALIFIED_RUNTIME_WORKFLOW_SHA": current_pins[1],
+        "QUALIFIED_RUNTIME_ARTIFACT_ID": current_pins[2],
+        "QUALIFIED_RUNTIME_ARTIFACT_SHA256": synthetic_archive_hash,
+        "QUALIFIED_RUNTIME_BINARY_SHA256": BINARY_HASH,
+        "PAIR_ARTIFACT_NAME": current_pins[3], "PAIR_API_LEDGER": str(ledger),
+        "PAIR_HEAD_BRANCH": "ci/measured-runtime-0821-20261014",
+        "OFFLINE_CONTROL": action, "OFFLINE_ARCHIVE": str(archive),
+        "FIXTURE_EXEC_SENTINEL": str(sentinel),
+    }
+    result = subprocess.run(["bash", str(fixture_script)], env=environment,
+                            capture_output=True, timeout=10)
+    (ROOT / f"{label}.log").write_bytes(result.stdout + result.stderr)
+    executed = sentinel.exists()
+    returned_bin = b"QUALIFIED_RUNTIME_BIN=" in result.stdout
+    if action == "valid":
+        passed = result.returncode == 0 and executed and returned_bin
+    elif action == "wrong-runtime-version":
+        passed = result.returncode != 0 and executed and not returned_bin
+    else:
+        passed = result.returncode != 0 and not executed and not returned_bin
+    manifest_failures += not passed
+    print(f"manifest={label} exit={result.returncode} executed={executed} pass={passed}")
+    if action == "missing" and field == "kind":
+        # Causal negative control: removing exactly the current-profile
+        # manifest block must wrongly accept this same malformed archive.
+        start = fixture_script_source.index('if [[ "$profile" == current-0821-1ae7 ]]; then\n  require_manifest_line')
+        end = fixture_script_source.index("\nfi", start) + 3
+        mutant = ROOT / "current-manifest-guardless-mutant.sh"
+        mutant.write_text(fixture_script_source[:start] + fixture_script_source[end:])
+        broken = subprocess.run(["bash", str(mutant)], env=environment,
+                                capture_output=True, timeout=10)
+        mutant_exposed = broken.returncode == 0 and sentinel.exists() and b"QUALIFIED_RUNTIME_BIN=" in broken.stdout
+        print(f"manifest-causal-control guardless-mutant-wrongly-accepts={mutant_exposed}")
+print(f"CURRENT-MANIFEST-CONTROLS={len(manifest_controls)} FAILURES={manifest_failures}")
+assert manifest_failures == 0 and mutant_exposed

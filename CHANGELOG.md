@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Check the current authenticated runtime's observed version before its
+  capability probe. Exercise missing/wrong/duplicate profile manifest fields
+  in explicitly synthetic logic controls, including a guardless negative
+  control; fixed public pins and live positive authentication remain separate.
+
 - Add an explicit authenticated cumulative Jolt 0.8.21 runtime profile after
   the Linux/Chez producer passed its full behavioral/build gate. Pin the exact
   run, workflow, artifact, ZIP, binary, compiler tree and upstream ancestry;
