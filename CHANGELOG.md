@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Qualify the current chDB Durable writer with shared selection reads and
+  preserved seal-error provenance. Check its actual resolved source revision,
+  including a prior-revision negative control; retain the existing OTel, JSON,
+  crypto and native-package choices. This is not a new throughput claim.
+
 - Normalize keyword attribute names without allocating a colon-prefixed
   intermediate string. Preserve namespaces, collision precedence, converter
   order and all non-keyword behavior. No encoding or persistence contract change.
