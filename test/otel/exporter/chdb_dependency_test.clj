@@ -10,13 +10,13 @@
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
 
 (def ^:private chdb-root
-  "https___github.com_chucklehead-dev_jolt-chdb.git/16e44fcb09a6c85334a98da4d252ff5d110feff8/")
+  "https___github.com_chucklehead-dev_jolt-chdb.git/677219027d68702a18ee826b55ee1f2ccc3d172d/")
 
 (def ^:private prior-chdb-root
-  "https___github.com_chucklehead-dev_jolt-chdb.git/ed6efde5eac1bef76d4a588d41aa44dead7f47c3/")
+  "https___github.com_chucklehead-dev_jolt-chdb.git/16e44fcb09a6c85334a98da4d252ff5d110feff8/")
 
 (def ^:private prior-chdb-coordinate
-  "{:deps {io.github.chucklehead-dev/jolt-chdb {:git/url \"https://github.com/chucklehead-dev/jolt-chdb.git\" :git/sha \"ed6efde5eac1bef76d4a588d41aa44dead7f47c3\"}}}")
+  "{:deps {io.github.chucklehead-dev/jolt-chdb {:git/url \"https://github.com/chucklehead-dev/jolt-chdb.git\" :git/sha \"16e44fcb09a6c85334a98da4d252ff5d110feff8\"}}}")
 
 (def ^:private data-json-source-root
   "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
@@ -139,7 +139,7 @@
     (check "data.json missing provider is rejected" false (boolean (oracle "./test")))))
 
 (defn- run-chdb-oracle-controls! [check]
-  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/16e44fcb09a6c85334a98da4d252ff5d110feff8/"
+  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/677219027d68702a18ee826b55ee1f2ccc3d172d/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src") resources (str root "resources")
@@ -149,8 +149,8 @@
            (oracle (str source ":" resources)))
     (check "chDB prior revision is rejected" false
            (oracle (str/replace source
-                                "16e44fcb09a6c85334a98da4d252ff5d110feff8"
-                                "ed6efde5eac1bef76d4a588d41aa44dead7f47c3")))
+                                "677219027d68702a18ee826b55ee1f2ccc3d172d"
+                                "16e44fcb09a6c85334a98da4d252ff5d110feff8")))
     (check "chDB duplicate source provider is rejected" false
            (oracle (str source ":" source)))
     (check "chDB distinct checkout at same SHA is rejected" false

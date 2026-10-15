@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update chDB to the qualified native SQL placeholder detector. Confirm the
+  exact resolved revision and reject the prior pin; preserve SDK, JSON, crypto
+  and native-package choices. Query results, parameter handling and Durable
+  acknowledgements are unchanged; no exporter throughput gain is claimed.
+
 - Qualify the current chDB Durable writer with shared selection reads and
   preserved seal-error provenance. Check its actual resolved source revision,
   including a prior-revision negative control; retain the existing OTel, JSON,
