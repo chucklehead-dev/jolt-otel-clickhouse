@@ -9,6 +9,15 @@
 (def ^:private otel-root
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
 
+(def ^:private chdb-root
+  "https___github.com_chucklehead-dev_jolt-chdb.git/16e44fcb09a6c85334a98da4d252ff5d110feff8/")
+
+(def ^:private prior-chdb-root
+  "https___github.com_chucklehead-dev_jolt-chdb.git/ed6efde5eac1bef76d4a588d41aa44dead7f47c3/")
+
+(def ^:private prior-chdb-coordinate
+  "{:deps {io.github.chucklehead-dev/jolt-chdb {:git/url \"https://github.com/chucklehead-dev/jolt-chdb.git\" :git/sha \"ed6efde5eac1bef76d4a588d41aa44dead7f47c3\"}}}")
+
 (def ^:private data-json-source-root
   "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
 
@@ -129,6 +138,26 @@
            (boolean (oracle (str source ":" source))))
     (check "data.json missing provider is rejected" false (boolean (oracle "./test")))))
 
+(defn- run-chdb-oracle-controls! [check]
+  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/16e44fcb09a6c85334a98da4d252ff5d110feff8/"
+        root (str "/public-fixture/a/" fixture-root)
+        other (str "/public-fixture/b/" fixture-root)
+        source (str root "src") resources (str root "resources")
+        oracle #(boolean (exact-coordinate? % "chucklehead-dev_jolt-chdb.git" chdb-root))]
+    (check "chDB source provider is accepted" true (oracle source))
+    (check "chDB source/resources share one checkout" true
+           (oracle (str source ":" resources)))
+    (check "chDB prior revision is rejected" false
+           (oracle (str/replace source
+                                "16e44fcb09a6c85334a98da4d252ff5d110feff8"
+                                "ed6efde5eac1bef76d4a588d41aa44dead7f47c3")))
+    (check "chDB duplicate source provider is rejected" false
+           (oracle (str source ":" source)))
+    (check "chDB distinct checkout at same SHA is rejected" false
+           (oracle (str source ":" other "resources")))
+    (check "chDB unexpected checkout child is rejected" false (oracle (str root "test")))
+    (check "chDB missing provider is rejected" false (oracle "./test"))))
+
 (defn- dependency-report [extra-args]
   (let [child (process/process (into [(child-test-executable) "-Srepro"]
                                      (concat extra-args ["-Spath"]))
@@ -141,6 +170,7 @@
 (defn run [check]
   (run-oracle-controls! check)
   (run-data-json-oracle-controls! check)
+  (run-chdb-oracle-controls! check)
   (println "clean jolt-crypto dependency resolution")
   (let [result (dependency-report [])]
     (check "dependency report completes"
@@ -159,7 +189,18 @@
                (exact-coordinate? classpath "casselc_otel.git" otel-root))
         (check "data.json resolves once from casselc/data.json at the reviewed full SHA"
                true
-               (exact-concrete-root? classpath "casselc_data.json.git" data-json-source-root))))
+               (exact-concrete-root? classpath "casselc_data.json.git" data-json-source-root))
+        (check "chDB resolves once from the reviewed full SHA"
+               true
+               (exact-coordinate? classpath "chucklehead-dev_jolt-chdb.git" chdb-root))))
+    (let [prior (dependency-report ["-Sdeps" prior-chdb-coordinate])]
+      (check "prior chDB dependency report completes" true
+             (and (map? prior) (zero? (:exit prior))))
+      (when (map? prior)
+        (check "prior chDB mutation selects the real old checkout" true
+               (exact-coordinate? (:out prior) "chucklehead-dev_jolt-chdb.git" prior-chdb-root))
+        (check "current chDB oracle rejects the prior checkout" false
+               (exact-coordinate? (:out prior) "chucklehead-dev_jolt-chdb.git" chdb-root))))
     (let [wrong (dependency-report ["-Sdeps" wrong-coordinate])]
       (check "wrong-coordinate dependency report completes"
              true
