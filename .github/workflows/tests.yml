@@ -321,6 +321,20 @@ jobs:
           test "$(realpath "$root")" = "$root"
           test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
           test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
+      - name: Qualify direct typed compact vectors with a fresh WAL reader
+        timeout-minutes: 4
+        shell: bash
+        run: |
+          set -euo pipefail
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s \
+            bash scripts/qualify-durable-typed-native.sh --compact-native-byte \
+            | tee "$RUNNER_TEMP/exporter-typed-compact-native.log"
+          test "$(grep -Fxc 'durable-typed-native-qualified' "$RUNNER_TEMP/exporter-typed-compact-native.log")" = 1
+          root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$RUNNER_TEMP/exporter-typed-compact-native.log")
+          [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
+          test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
+
       - name: Reopen typed Durable WAL after verified writer crash
         id: durable_crash_reopen
         timeout-minutes: 4

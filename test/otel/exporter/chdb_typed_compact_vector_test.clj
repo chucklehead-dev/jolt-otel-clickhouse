@@ -122,4 +122,3 @@
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-typed-compact-vector-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
-

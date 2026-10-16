@@ -16,6 +16,7 @@
 
 (def last-check (atom :not-started))
 (def observed-checks (atom 0))
+(def ^:dynamic *compact-native-byte?* false)
 (defn- check! [label expected actual]
   (reset! last-check label)
   (swap! observed-checks inc)
@@ -203,12 +204,15 @@
               sums (install :metric-sum (sum-approved))]
           (check! :schema-checkpoint :committed (:status (durable/checkpoint! connection)))
           (let [primary (atom nil)
-                writer (exporter/exporter {:connection connection :durable? true :create-schema? false
+                writer (exporter/exporter (cond-> {:connection connection :durable? true :create-schema? false
                                           :signals #{:spans :logs :metrics}
                                           :typed-span-descriptors spans
                                           :typed-log-descriptors records
                                           :typed-gauge-descriptors gauges
-                                          :typed-sum-descriptors sums})]
+                                          :typed-sum-descriptors sums}
+                                           *compact-native-byte?*
+                                           (assoc :insert-format :json-compact-each-row
+                                                  :json-backend :native-guarded-byte-batch)))]
             (try
               (let [encoder (:typed-span-encoder @(:state writer))
                     projector (:typed-span-projector @(:state writer))
@@ -222,7 +226,14 @@
                         (every? (fn [span]
                                   (= (json/write-str (#'exporter/span-row span projector))
                                      (encoder span))) samples)))
-              (check! :spans-accepted true (export/export-spans! writer (mapv span-record (range 4))))
+              (check! :spans-accepted true
+                      (if *compact-native-byte?*
+                        ;; Require public-constructor selection, not equivalent
+                        ;; readback through the legacy physical-map route.
+                        (with-redefs [exporter/compact-rows
+                                      (fn [& _] (throw (ex-info "Unexpected map projection" {:fixture true})))]
+                          (export/export-spans! writer (mapv span-record (range 4))))
+                        (export/export-spans! writer (mapv span-record (range 4)))))
               (check! :logs-accepted true (logs/export-logs! writer (mapv log-record (range 4))))
               (check! :metrics-accepted true
                       (export/export-metrics! writer
@@ -278,7 +289,10 @@
         (println :reader-verified)))))
 
 (defn -main [phase root]
-  (try (run! phase root)
+  (try (let [mode (System/getenv "JOLT_DURABLE_COMPACT_NATIVE_BYTE")]
+         (when-not (or (nil? mode) (= "true" mode))
+           (throw (ex-info "Invalid typed fixture mode" {})))
+         (binding [*compact-native-byte?* (= "true" mode)] (run! phase root)))
        (println :observed-checks @observed-checks)
        (catch Throwable _
          ;; Values are assigned exclusively by internal fixed-label checks.
