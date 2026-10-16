@@ -19,11 +19,16 @@
     ;; Never attach telemetry, SQL, credentials or arbitrary backend errors.
     (throw (ex-info "Scoped S3 exporter check failed" {:check label}))))
 
-(defn- check-sdk! [condition label target]
+(defn- check-sdk! [condition label target handle]
   (when-not condition
     (let [data (ex-data (exporter/last-error target))]
       (throw (ex-info "Scoped S3 SDK operation failed"
                       {:check label :exporter-type (:type data)
+                       :metric-worker (select-keys @(:state (:reader handle))
+                                                  [:worker-export-failed?
+                                                   :shutdown-cancelled?
+                                                   :worker-interrupt-count
+                                                   :worker-export-active?])
                        :jdbc-sql-error (true? (:jdbc/sql-error data))})))))
 
 (defn- options [endpoint]
@@ -128,11 +133,11 @@
                            {:unit "ms" :boundaries [1.0 5.0 10.0]})]
             (metrics/record! histogram 4.5 {"work.kind" "sample"})
             (metrics/record! histogram 9.0 {"work.kind" "sample"}))
-          (check-sdk! (sdk/force-flush! handle) :sdk-flush target)
+          (check-sdk! (sdk/force-flush! handle) :sdk-flush target handle)
           (catch Throwable error (reset! primary error) (throw error))
           (finally
             (try
-              (check-sdk! (sdk/shutdown! handle) :sdk-shutdown target)
+              (check-sdk! (sdk/shutdown! handle) :sdk-shutdown target handle)
               (catch Throwable error
                 (if @primary
                   (println :secondary-sdk-shutdown-failed true)
