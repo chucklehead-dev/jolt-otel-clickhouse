@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Expose opt-in native guarded, bounded string-cache and serial byte-batch
+  JSON backends for the exporter's general JSONEachRow fallback. Validate
+  availability before opening storage; give each payload its own encoder and
+  preserve row effects, 8 MiB limits and cleanup. Configured defaults,
+  specialized codecs, timestamp wire and persistence acknowledgements are
+  unchanged. The optional collector dependency remains explicit.
+
 - Qualify the current chDB scoped S3 writer through the normal exporter and
   one SDK owner for spans, logs and metrics. Document borrowed-connection
   shutdown and add stock Jolt 0.8.22 CI with actual handle reuse/cleanup and
