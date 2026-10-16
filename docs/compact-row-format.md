@@ -52,12 +52,31 @@ invariants do not prove positional field binding. That obligation belongs to
 the projection, unknown-field negative control and native field-readback gates
 below; green model checks alone would not detect same-type field swaps.
 
+## Direct untyped Durable rows
+
+When the confirmed untyped layout matches, Durable compact export constructs
+span, log and metric vectors directly. It avoids first building physical
+string-keyed maps and projecting those maps into arrays. Metric routing stays
+outside row values, avoiding temporary tag insertion/removal and one-point
+input scaffolding. Values and conversion order are shared with the named path.
+
+Typed projectors and incompatible layouts keep the general map projection.
+Arbitrary caller vectors are still rejected by that general API. Internal
+vectors must match the closed column program; plans are checked before encoding
+and again after custom conversion/serialization callbacks, before mutation.
+This preserves budgets and confirmed ACKs, not a new persistence mode.
+
+The SDK/S3 compact fixture traps the general map projector to ensure it really
+uses direct construction, then compares all physical rows in a fresh reader.
+No end-to-end throughput gain is claimed without matched measurements.
+
 ## Checks for this integration
 
 Run each native command in its own process, with the declared 26.7.3 package:
 
 ```sh
 jolt -M:compact-wire-test
+jolt -M:direct-compact-layout-test
 jolt -M:compact-wire-native-test
 ```
 
@@ -78,6 +97,6 @@ JOLT_CHDB_SOURCE_ROOT=/path/to/declared-clean-driver \
 
 That is not a performance or real-AWS qualification. Existing OTLP socket
 fixtures have not yet been adapted in this port; do not infer format-selection
-arguments there. Direct-vector construction and owned output remain follow-up
-work. The internal plan seal rejects manufactured values; it is not a defense
+arguments there. Owned output remains follow-up work. The internal plan seal
+rejects manufactured values; it is not a defense
 against private Var access, reflection or unsafe FFI.

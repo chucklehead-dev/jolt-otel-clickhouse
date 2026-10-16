@@ -119,7 +119,13 @@
        (fn [] (let [handle (original-init)] (swap! inits conj handle) handle))
        #'curl/curl-easy-cleanup (fn [h] (swap! cleanups conj h) (original-cleanup h))
        #'curl/curl-easy-perform (fn [h] (swap! performs conj h) (original-perform h))}
-      #(writer-body! endpoint root))
+      #(if (= :json-compact-each-row *insert-format*)
+         ;; A real SDK export must use the guarded direct constructors, not
+         ;; merely store equivalent rows through the old intermediate maps.
+         (with-redefs [exporter/compact-rows
+                       (fn [& _] (throw (ex-info "Unexpected map projection" {:fixture true})))]
+           (writer-body! endpoint root))
+         (writer-body! endpoint root)))
     ;; Two persistent owners, then one independent lease-release readback.
     (check! (= 3 (count @inits) (count @cleanups)) :exact-owner-settlement)
     (check! (every? (fn [h] (= 1 (count (filter #(identical? h %) @cleanups)))) @inits)

@@ -76,6 +76,7 @@ jobs:
       - name: Qualify confirmed compact field binding and real native readback
         run: |
           jolt -Srepro -M:compact-wire-test
+          jolt -Srepro -M:direct-compact-layout-test
           jolt -Srepro -M:compact-wire-native-test
       - name: Qualify actual SDK export and fresh S3 recovery
         timeout-minutes: 3

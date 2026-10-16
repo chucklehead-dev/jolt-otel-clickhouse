@@ -4,6 +4,7 @@
             [jdbc.core :as jdbc]
             [jdbc.chdb :as native-driver]
             [otel.exporter.chdb :as exporter]
+            [otel.sdk.export :as sdk-export]
             [otel.exporter.chdb.compact-format :as compact-format]
             [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.exporter.chdb.schema :as schema]
@@ -12,10 +13,102 @@
 (defn error-data [f]
   (try (f) nil (catch clojure.lang.ExceptionInfo e (ex-data e))))
 
-(defn confirmed-plan [connection columns]
+(defn confirmed-plan
+  ([connection columns] (confirmed-plan connection "otel_logs" columns))
+  ([connection table columns]
   (with-redefs [jdbc/fetch (fn [& _] (mapv #(hash-map :name % :type "String") columns))]
-    (compact-format/confirm! connection "otel_logs" columns
-                            (zipmap columns (repeat "String")))))
+    (compact-format/confirm! connection table columns
+                            (zipmap columns (repeat "String"))))))
+
+(deftest direct-metric-layout-retains-conversion-and-wire-binding
+  (let [resource {:attributes {:service.name "service-left/é😀" :nested [1 true]}}
+        scope {:name "scope-right" :attributes {:flag true}}]
+    (doseq [kind [:gauge :sum :histogram]
+            value [0 1 123 9007199254740993]
+            temporality [:delta :cumulative nil]]
+      (let [metric {:type kind :name "metric" :unit "{item}" :temporality temporality
+                    :monotonic? true :explicit-bounds [1.0 10.0]}
+            point {:value value :count value :sum value :bucket-counts [1 2 3]
+                   :min 1 :max 10 :attributes {:route "/x" :count value}}
+            columns (get schema/clickstack-metric-insert-columns kind)
+            row (#'exporter/metric-row resource scope metric point nil)
+            expected (mapv row columns)
+            actual (#'exporter/metric-row resource scope metric point nil true)]
+        (is (= expected actual))
+        (is (= (json/write-str expected) (json/write-str actual)))))))
+
+(deftest direct-metric-selection-is-closed
+  (let [snapshot {:durable? true :insert-format :json-compact-each-row}]
+    (is (#'exporter/direct-metric-layout? snapshot))
+    (doseq [changed [(assoc snapshot :durable? false)
+                     (assoc snapshot :insert-format :json-each-row)
+                     (assoc snapshot :typed-metric-projectors {:gauge identity})
+                     (assoc snapshot :typed-metric-columns {:gauge ["typed"]})]]
+      (is (not (#'exporter/direct-metric-layout? changed))))
+    (with-redefs [schema/clickstack-metric-insert-columns
+                  (update schema/clickstack-metric-insert-columns :gauge
+                          #(assoc % 2 (nth % 7) 7 (nth % 2)))]
+      (is (not (#'exporter/direct-metric-layout? snapshot))))))
+
+(deftest sdk-selects-direct-metrics-only-for-the-closed-durable-layout
+  (doseq [direct? [true false]]
+    (let [state (atom {:durable? direct? :insert-format :json-compact-each-row
+                      :closed-signals #{} :in-flight 0})
+          target (exporter/->ChdbExporter :connection false #{:metrics} state)
+          observed (atom nil)]
+      (with-redefs [exporter/export-metric-groups!
+                    (fn
+                      ([_ _ groups] (reset! observed {:direct? false :row (first (:gauge groups))}))
+                      ([_ _ groups selected] (reset! observed {:direct? selected :row (first (:gauge groups))})))]
+        (is (true? (sdk-export/export-metrics! target {} [{:scope {} :metrics
+                                                         [{:type :gauge :data-points [{:value 1}]}]}]))))
+      (is (= direct? (:direct? @observed)))
+      (is (= direct? (vector? (:row @observed))))
+      (is (zero? (:in-flight @state))))))
+
+(deftest typed-metric-projector-keeps-raw-context-and-last-wins
+  (let [resource {:attributes {"service.name" "resource"}}
+        scope {:attributes {"scope" "value"}}
+        point {:value 1 :attributes {"point" "value"}}
+        effects (atom []) old-attrs @#'exporter/attrs
+        projector (fn [context]
+                    (swap! effects conj :projector)
+                    (is (= {:resource resource :scope scope :point point} context))
+                    {"Value" 42})]
+    (with-redefs [exporter/attrs (fn [attrs]
+                                 (swap! effects conj attrs) (old-attrs attrs))]
+      (is (= 42 (get (#'exporter/metric-row resource scope {:type :gauge} point
+                                      {:gauge projector} true) "Value"))))
+    (is (= [(:attributes resource) (:attributes scope) (:attributes point) :projector]
+           @effects))))
+
+(deftest direct-metric-commit-and-overflow-use-existing-boundaries
+  (let [columns (:gauge schema/clickstack-metric-insert-columns)
+        resource {:attributes {"service.name" "service-left"}}
+        metric {:type :gauge :name "metric"}
+        row (#'exporter/metric-row resource {:name "scope-right"} metric {:value 1} nil true)
+        state (atom {:durable? true :insert-format :json-compact-each-row
+                     :compact-plans {"otel_metrics_gauge" (confirmed-plan :connection "otel_metrics_gauge" columns)}})
+        requests (atom []) effects (atom [])
+        later (reify json/JSONWriter (-write [_ sink _]
+                                     (swap! effects conj :later) (.write sink "null")))]
+    (with-redefs [exporter/execute-durable-sql!
+                  (fn [connection sql] (swap! requests conj [connection sql]) {:status :committed})]
+      (#'exporter/insert-direct-metric-batch! :connection state :gauge columns [row])
+      (is (= [[:connection (str (#'exporter/compact-insert-query "otel_metrics_gauge" columns)
+                               " FORMAT JSONCompactEachRow\n" (json/write-str row) "\n")]]
+             @requests))
+      (reset! requests [])
+      (with-redefs [exporter/max-insert-bytes 1]
+        (is (= {:limit 1}
+               (error-data #(#'exporter/insert-direct-metric-batch!
+                              :connection state :gauge columns [row (assoc row 2 later)])))))
+      (is (empty? @effects))
+      (is (empty? @requests))
+      (swap! state assoc :insert-format :json-each-row)
+      (is (= {:type :otel.exporter.chdb/invalid-direct-metric-plan}
+             (error-data #(#'exporter/insert-direct-metric-batch! :connection state :gauge columns [row]))))
+      (is (empty? @requests)))))
 
 (deftest native-fixture-format-selection-is-closed
   (is (= :json-each-row (wire-config/parse-format [])))
