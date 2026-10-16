@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Qualify actual SDK gauge, sum and histogram capture with an explicit
+  per-reader shutdown budget, using the updated SDK's public option instead
+  of changing global policy. Preserve primary capture failures and bounded
+  cancellation diagnostics; verify every physical row in a fresh reader.
+
+- Build untyped compact Durable span, log and metric rows directly as ordered
+  vectors, without intermediate physical maps or temporary metric routing
+  fields. Keep schema/layout guards, conversion order, typed fallback and
+  confirmed writer boundaries; recheck plans after serialization callbacks.
+
 - Add explicit compact JSON row input bound to the confirmed live schema,
   connection and ordered columns. Reject mismatched types, missing/extra
   fields and changed plans before insertion; retain fixed errors and the

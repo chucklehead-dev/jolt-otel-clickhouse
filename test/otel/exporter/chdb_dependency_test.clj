@@ -7,7 +7,7 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1/")
+  "https___github.com_casselc_otel.git/e8435b381ee0cafd7d1cb5cb7b8639c551544042/")
 
 (def ^:private prior-otel-root
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
@@ -93,7 +93,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1/"
+  (let [fixture-root "https___github.com_casselc_otel.git/e8435b381ee0cafd7d1cb5cb7b8639c551544042/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -106,8 +106,12 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"
+                             "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
+    (check "SDK before per-reader policy is rejected" false
+           (boolean (oracle (str/replace source
+                             "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
+                             "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))
     (check "SDK repeated source provider is rejected" false
