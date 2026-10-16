@@ -108,7 +108,7 @@
            (boolean (oracle (str/replace source
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
-    (check "SDK distinct checkout at same SHA is rejected" false
+    (check "SDK before per-reader policy is rejected" false
            (boolean (oracle (str/replace source
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))

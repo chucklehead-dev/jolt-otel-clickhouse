@@ -70,6 +70,23 @@ The SDK/S3 compact fixture traps the general map projector to ensure it really
 uses direct construction, then compares all physical rows in a fresh reader.
 No end-to-end throughput gain is claimed without matched measurements.
 
+That fixture captures gauges and explicit histograms as well as counters.
+Healthy multi-table persistence can take longer than the SDK's default 250 ms
+cooperative shutdown grace, so it explicitly supplies this owner policy:
+
+```clojure
+(sdk/init! {:exporter target
+            :metric-reader-options {:shutdown-cancel-grace-ms 2000
+                                    :shutdown-join-bound-ms 3000}
+            ;; ... ordinary SDK settings ...
+            })
+```
+
+Choose a budget suitable for the exporter and connection, not a throughput
+target. This does not change global SDK defaults, remove cancellation, or
+guarantee delivery/deadline behavior. The fixture requires the option to appear
+on its reader and verifies that its final drain was not cancelled.
+
 ## Checks for this integration
 
 Run each native command in its own process, with the declared 26.7.3 package:
