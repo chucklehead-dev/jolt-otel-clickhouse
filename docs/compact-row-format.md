@@ -77,6 +77,12 @@ to generic typed rows. The prefix does not consume the 8 MiB row budget, and
 custom writers still see only their current row. Configured JSON keeps its
 existing encoding path. Neither path changes the WAL format or acknowledgement.
 
+Approved typed span descriptors also support direct positional construction
+with the explicit native byte backend. The confirmed field order, target and
+live projector remain checked before and after callbacks. The compiled
+location/field plan shares the map projector's defaults, status rules and
+normalized-key collision handling. Other formats/backends retain map fallback.
+
 That fixture captures gauges and explicit histograms as well as counters.
 Healthy multi-table persistence can take longer than the SDK's default 250 ms
 cooperative shutdown grace, so it explicitly supplies this owner policy:

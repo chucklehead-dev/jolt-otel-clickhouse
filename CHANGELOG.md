@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build approved typed compact Durable span rows directly as vectors with the
+  explicit native byte backend. Compile the field/location plan once; retain
+  target and column fencing, normalized-key collision/status semantics,
+  conversion order and the public map projector's behavior.
+
 - Materialize bounded Durable insert SQL once with the explicitly selected
   native byte-batch collector, including generic typed and closed compact
   rows. Keep row-local custom writer views, payload-only byte limits, schema

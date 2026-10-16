@@ -41,6 +41,7 @@ jobs:
           [[ "$task_bin" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
           "$task_bin" -Srepro -M:native-json-byte-batch:json-backend-test
           "$task_bin" -Srepro -M:native-json-byte-batch:prefixed-payload-test native
+          "$task_bin" -Srepro -M:native-json-byte-batch:typed-compact-vector-test
 
   scoped-s3-sdk:
     runs-on: ubuntu-latest
