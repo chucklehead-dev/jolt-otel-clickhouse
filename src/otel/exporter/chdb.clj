@@ -13,6 +13,7 @@
             [otel.any-value :as any]
             [otel.context :as context]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
+            [otel.exporter.chdb.compact-format :as compact-format]
             [otel.exporter.chdb.schema :as schema]
             [otel.otlp.any-value :as wire-any]
             [otel.sdk.export :as export]
@@ -415,6 +416,61 @@
             (throw e)))
         (finally (row-encoder/close! encoder))))))
 
+(defn- compact-columns! [columns]
+  (when-not (and (vector? columns) (seq columns)
+                 (every? string? columns)
+                 (= (count columns) (count (set columns))))
+    (throw (ex-info "Invalid compact telemetry column plan"
+                    {:type ::invalid-compact-columns})))
+  columns)
+
+(defn- compact-rows [columns rows]
+  (compact-columns! columns)
+  (let [size (count columns) missing (Object.)]
+    (letfn [(step [rows]
+              (lazy-seq
+                (when-let [rows (seq rows)]
+                  (let [row (first rows)]
+                    ;; Do not silently discard unknown fields or fill missing
+                    ;; fields with null: positional input must match its plan.
+                    (when-not (and (map? row) (= size (count row)))
+                      (throw (ex-info "Invalid compact telemetry row"
+                                      {:type ::invalid-compact-row})))
+                    (cons
+                     (mapv (fn [column]
+                             (let [value (get row column missing)]
+                               (when (identical? value missing)
+                                 (throw (ex-info "Invalid compact telemetry row"
+                                                 {:type ::invalid-compact-row})))
+                               value)) columns)
+                     ;; Only request the next input row after the current
+                     ;; encoded row has passed the serial UTF-8 budget check.
+                     (lazy-seq (step (next rows))))))))]
+      (step rows))))
+
+(defn- insert-payload [format columns rows]
+  (json-each-row-payload
+   (if (= :json-compact-each-row format) (compact-rows columns rows) rows)))
+
+(defn- compact-insert-query [table columns]
+  (compact-columns! columns)
+  (when-not (contains? #{"otel_traces" "otel_logs" "otel_metrics_gauge"
+                         "otel_metrics_sum" "otel_metrics_histogram"} table)
+    (throw (ex-info "Invalid compact telemetry table"
+                    {:type ::invalid-compact-table})))
+  (str "insert into " table " ("
+       (str/join ", " (map #(str "`" (str/replace % "`" "``") "`") columns)) ")"))
+
+(defn- insert-format-name [format]
+  (if (= :json-compact-each-row format) "JSONCompactEachRow" "JSONEachRow"))
+
+(defn- insert-ordinary-payload! [connection table columns format payload]
+  (if (= :json-compact-each-row format)
+    (jdbc/execute! connection
+                   (str (compact-insert-query table columns)
+                        " FORMAT JSONCompactEachRow\n" payload))
+    (chdb/insert-json-rows! connection table columns payload)))
+
 (defn- insert-json-rows!
   "Insert one SDK-bounded batch through chDB's ordinary query API. libchdb
   26.7's streaming-insert API corrupts ClickHouse ThreadStatus nesting under
@@ -452,16 +508,18 @@
 
 (declare validate-ordinary-row!)
 
-(defn- ordinary-payload [columns rows]
-  ;; Check every row before encoding or entering the driver. Error data never
-  ;; retains row values, attribute names, or the encoded telemetry payload.
-  (let [rows (vec rows)]
-    (doseq [row rows]
-      (validate-ordinary-row! columns row))
-    ;; The batch-local StringBuilder checks each complete maintained data.json
-    ;; row plus LF in UTF-8 before appending, preserving the pre-overflow
-    ;; rejection boundary while avoiding chunk sequencing/final concatenation.
-    (json-each-row-payload rows)))
+(defn- ordinary-payload
+  ([columns rows] (ordinary-payload columns rows :json-each-row))
+  ([columns rows format]
+   ;; Check every row before encoding or entering the driver. Error data never
+   ;; retains row values, attribute names, or the encoded telemetry payload.
+   (let [rows (vec rows)]
+     (doseq [row rows]
+       (validate-ordinary-row! columns row))
+     ;; The batch-local StringBuilder checks each complete maintained data.json
+     ;; row plus LF in UTF-8 before appending, preserving the pre-overflow
+     ;; rejection boundary while avoiding chunk sequencing/final concatenation.
+     (insert-payload format columns rows))))
 
 (defn- jolt-runtime?
   "The direct log writer is a Jolt-only implementation detail.
@@ -797,16 +855,23 @@
 (declare execute-durable-sql!)
 
 (defn- insert-batch! [connection state table columns query rows]
-  (if (:durable? @state)
-    ;; Durable V1 records the exact materialized SQL.  Its execute and
-    ;; publication acknowledgement are one writer request: splitting this
-    ;; into JDBC execute! plus flush! would let another caller intervene.
-    (execute-durable-sql!
-     connection
-     (str query " FORMAT JSONEachRow\n" (json-each-row-payload rows)))
-    (let [payload (ordinary-payload columns rows)]
-      (context/with-instrumentation-suppressed
-        (chdb/insert-json-rows! connection table columns payload)))))
+  (let [snapshot @state
+        format (:insert-format snapshot :json-each-row)
+        _ (when (= :json-compact-each-row format)
+            (compact-format/require-order! (:compact-plans snapshot) connection table columns))
+        query (if (= :json-compact-each-row format)
+                (compact-insert-query table columns) query)]
+    (if (:durable? snapshot)
+      ;; Durable V1 records the exact materialized SQL. Its execute and
+      ;; publication acknowledgement are one writer request: splitting this
+      ;; into JDBC execute! plus flush! would let another caller intervene.
+      (execute-durable-sql!
+       connection
+       (str query " FORMAT " (insert-format-name format) "\n"
+            (insert-payload format columns rows)))
+      (let [payload (ordinary-payload columns rows format)]
+        (context/with-instrumentation-suppressed
+          (insert-ordinary-payload! connection table columns format payload))))))
 
 (defn- insert-untyped-log-records!
   "Jolt's closed untyped-log encoder is selected only after its schema fence.
@@ -822,7 +887,8 @@
         ;; constructed or mutated exporter state with a different ordered
         ;; column vector must retain insert-batch!'s generic validation and
         ;; query construction rather than pairing its payload with that state.
-        encoder (when (and (not typed-projector)
+        encoder (when (and (= :json-each-row (:insert-format snapshot :json-each-row))
+                           (not typed-projector)
                            (= (:log-insert-columns snapshot)
                               schema/clickstack-log-insert-columns))
                   @untyped-log-encoder)
@@ -931,17 +997,21 @@
     ;; Eagerly validate and encode every physical batch before the first driver
     ;; call. Native execution failures can still partially apply a logical
     ;; batch: this transport does not promise an atomic transaction/rollback.
-    (let [prepared
+    (let [format (:insert-format @state :json-each-row)
+          prepared
           (vec (for [type [:gauge :sum :histogram]
                      :let [selected (vec (map #(dissoc % :_type)
                                                (filter #(= type (:_type %)) rows)))]
                      :when (seq selected)
                      :let [columns (metric-insert-columns state type)
-                           payload (ordinary-payload columns selected)]]
+                           payload (ordinary-payload columns selected format)]]
                  [(get schema/metric-table-names type) columns payload]))]
+      (when (= :json-compact-each-row format)
+        (doseq [[table columns _] prepared]
+          (compact-format/require-order! (:compact-plans @state) connection table columns)))
       (context/with-instrumentation-suppressed
         (doseq [[table columns payload] prepared]
-          (chdb/insert-json-rows! connection table columns payload))))))
+          (insert-ordinary-payload! connection table columns format payload))))))
 
 (defn- admit-signal! [owned? expected-signals state signal]
   ;; Admission and shutdown's signal fence must linearize on this same atom.
@@ -1131,6 +1201,7 @@
               (when (seq spans)
                 (let [snapshot @state
                       encoder (when (and (:durable? snapshot)
+                                         (= :json-each-row (:insert-format snapshot :json-each-row))
                                          (or (nil? (:typed-span-projector snapshot))
                                              (:typed-span-encoder snapshot)))
                                 (or (:typed-span-encoder snapshot)
@@ -1263,14 +1334,22 @@
   backend fails before database acquisition, without silent fallback.
   :native-guarded-string-cache and :native-guarded-byte-batch select the
   corresponding qualified row encoder for that same general fallback only.
-  Contexts are per payload, never shared by concurrent SDK signals."
+  Contexts are per payload, never shared by concurrent SDK signals.
+  :insert-format defaults to :json-each-row. :json-compact-each-row uses
+  schema-ordered arrays and explicit columns with the same serial UTF-8 bound
+  and persistence acknowledgement. It rejects missing/extra physical fields;
+  custom JSONWriter methods see arrays instead of the former row maps."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
-            durable-phase-receipts json-backend]
+            durable-phase-receipts json-backend insert-format]
      :or {db-spec "chdb::memory:" create-schema? true
-          signals #{:spans :metrics} durable? false json-backend :configured}}]
+          signals #{:spans :metrics} durable? false json-backend :configured
+          insert-format :json-each-row}}]
+   (when-not (#{:json-each-row :json-compact-each-row} insert-format)
+     (throw (ex-info "Unsupported exporter insert format"
+                     {:type ::invalid-insert-format})))
    (when-not (#{:configured :native-guarded :native-guarded-string-cache
                :native-guarded-byte-batch} json-backend)
      (throw (ex-info "Unsupported exporter JSON backend"
@@ -1313,29 +1392,24 @@
          typed-histogram-projector (when typed-histogram-descriptors
                                      (attribute-projection/histogram-projector
                                       typed-histogram-descriptors conn))
+         span-fields (when typed-span-descriptors
+                       (attribute-projection/confirmed-span-fields typed-span-descriptors conn))
+         log-fields (when typed-log-descriptors
+                      (attribute-projection/confirmed-log-fields typed-log-descriptors conn))
+         gauge-fields (when typed-gauge-descriptors
+                        (attribute-projection/confirmed-gauge-fields typed-gauge-descriptors conn))
+         sum-fields (when typed-sum-descriptors
+                      (attribute-projection/confirmed-sum-fields typed-sum-descriptors conn))
+         histogram-fields (when typed-histogram-descriptors
+                            (attribute-projection/confirmed-histogram-fields typed-histogram-descriptors conn))
          span-columns (into (into schema/clickstack-trace-insert-columns
                                   ["EventsJSON" "LinksJSON"])
-                            (when typed-span-descriptors
-                              (typed-columns
-                               (attribute-projection/confirmed-span-fields
-                                typed-span-descriptors conn))))
+                            (typed-columns span-fields))
          log-columns (into schema/clickstack-log-insert-columns
-                           (when typed-log-descriptors
-                             (typed-columns
-                              (attribute-projection/confirmed-log-fields
-                               typed-log-descriptors conn))))
-         gauge-columns (vec (when typed-gauge-descriptors
-                              (typed-columns
-                               (attribute-projection/confirmed-gauge-fields
-                                typed-gauge-descriptors conn))))
-         sum-columns (vec (when typed-sum-descriptors
-                            (typed-columns
-                             (attribute-projection/confirmed-sum-fields
-                              typed-sum-descriptors conn))))
-         histogram-columns (vec (when typed-histogram-descriptors
-                                  (typed-columns
-                                   (attribute-projection/confirmed-histogram-fields
-                                    typed-histogram-descriptors conn))))
+                           (typed-columns log-fields))
+         gauge-columns (typed-columns gauge-fields)
+         sum-columns (typed-columns sum-fields)
+         histogram-columns (typed-columns histogram-fields)
          barrier (if durable? durable/flush! persistence-barrier)]
      (try
        (if durable?
@@ -1354,6 +1428,34 @@
          (throw (ex-info "Unqualified chDB telemetry timestamp wire"
                          {:type ::unqualified-timestamp-wire})))
        (when create-schema? (schema/ensure-schema! conn))
+       ;; Confirm before the schema checkpoint/first telemetry acknowledgement.
+       ;; Explicit compact selection fails closed, not a silent named fallback.
+       ;; Source/descriptor types and the exact explicit SQL order are bound at
+       ;; startup under the existing single-schema-owner contract.
+       (let [compact-plans
+             (when (= :json-compact-each-row insert-format)
+               (let [enabled (set signals)
+                     targets
+                     (cond-> []
+                       (contains? enabled :spans)
+                       (conj ["otel_traces" span-columns
+                              (merge schema/clickstack-trace-insert-types
+                                     (compact-format/typed-types span-fields))])
+                       (contains? enabled :logs)
+                       (conj ["otel_logs" log-columns
+                              (merge schema/clickstack-log-insert-types
+                                     (compact-format/typed-types log-fields))])
+                       (contains? enabled :metrics)
+                       (into (mapv (fn [[kind extra fields]]
+                                      [(get schema/metric-table-names kind)
+                                       (into (get schema/clickstack-metric-insert-columns kind) extra)
+                                       (merge (get schema/clickstack-metric-insert-types kind)
+                                              (compact-format/typed-types fields))])
+                                    [[:gauge gauge-columns gauge-fields]
+                                     [:sum sum-columns sum-fields]
+                                     [:histogram histogram-columns histogram-fields]])))]
+                 (into {} (map (fn [[table columns types]]
+                                 [table (compact-format/confirm! conn table columns types)])) targets)))]
        ;; A full checkpoint makes the schema independently recoverable before
        ;; the exporter can acknowledge its first telemetry batch.
        (when (and durable? create-schema?)
@@ -1388,8 +1490,10 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :insert-format insert-format
+                              :compact-plans compact-plans
                               :durable-phase-receipts durable-phase-receipts
-                              :last-error nil}))
+                              :last-error nil})))
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
          (when owned? (try (.close conn) (catch Throwable _ nil)))

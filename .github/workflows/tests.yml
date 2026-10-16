@@ -73,11 +73,20 @@ jobs:
           persist-credentials: false
       - name: Install the declared native package
         run: jolt -Srepro -m jdbc.chdb.install
+      - name: Qualify confirmed compact field binding and real native readback
+        run: |
+          jolt -Srepro -M:compact-wire-test
+          jolt -Srepro -M:compact-wire-native-test
       - name: Qualify actual SDK export and fresh S3 recovery
         timeout-minutes: 3
         env:
           JOLT_CHDB_SOURCE_ROOT: ${{ github.workspace }}/.qualification-driver
         run: timeout --signal=TERM --kill-after=5s 150s bash scripts/qualify-scoped-s3-exporter.sh jolt
+      - name: Qualify compact SDK export and independent full-row S3 recovery
+        timeout-minutes: 3
+        env:
+          JOLT_CHDB_SOURCE_ROOT: ${{ github.workspace }}/.qualification-driver
+        run: timeout --signal=TERM --kill-after=5s 150s bash scripts/qualify-scoped-s3-exporter.sh jolt json-compact-each-row
 
   test:
     runs-on: ubuntu-latest

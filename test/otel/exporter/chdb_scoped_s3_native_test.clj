@@ -8,6 +8,7 @@
             [jdbc.chdb.durable.s3-curl :as curl]
             [jdbc.chdb.durable.s3-writer :as s3-writer]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb-wire-test-config :as wire-config]
             [otel.logs :as logs]
             [otel.metrics :as metrics]
             [otel.sdk :as sdk]
@@ -69,6 +70,8 @@
     (check! (every? #(= {"work.ready" "true"} (:attributes %)) points)
             :metric-attributes)))
 
+(def ^:dynamic ^:private *insert-format* :json-each-row)
+
 (defn- writer-body! [endpoint root]
   (s3-writer/with-connection!
     (options endpoint)
@@ -76,7 +79,7 @@
      :scratch-parent root}
     (fn [connection]
       (let [target (exporter/exporter
-                     {:connection connection :durable? true
+                     {:connection connection :durable? true :insert-format *insert-format*
                       :signals #{:spans :logs :metrics}})
             handle (sdk/init! {:service-name "scoped-s3" :exporter target
                                :processor :simple :metrics? true :logs? true
@@ -142,5 +145,7 @@
                (full-row-receipt connection)) :all-physical-rows-recovered))
   (println "scoped-s3-sdk-reader-qualified"))
 
-(defn -main [phase endpoint root]
-  (case phase "writer" (writer! endpoint root) "reader" (reader! endpoint root)))
+(defn -main [phase endpoint root & formats]
+  (let [format (wire-config/parse-format formats)]
+    (binding [*insert-format* format]
+      (case phase "writer" (writer! endpoint root) "reader" (reader! endpoint root)))))
