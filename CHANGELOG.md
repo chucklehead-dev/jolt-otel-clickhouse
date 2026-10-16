@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Use the SDK's guarded scalar-text helper for attribute strings, Booleans,
+  and Int64 values without allocating a normalization-result map. Keep ordinary
+  canonicalization for other values and changed canonicalizer/default limits;
+  preserve exact attribute text and JSON wire values. Qualify the new SDK pin
+  while retaining chDB, JSON, crypto, and native-package choices.
+
 - Update chDB to the qualified native SQL placeholder detector. Confirm the
   exact resolved revision and reject the prior pin; preserve SDK, JSON, crypto
   and native-package choices. Query results, parameter handling and Durable

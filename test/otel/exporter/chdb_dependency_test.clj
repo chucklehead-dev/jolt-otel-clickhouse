@@ -7,7 +7,13 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
+  "https___github.com_casselc_otel.git/ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1/")
+
+(def ^:private prior-otel-root
   "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
+
+(def ^:private prior-otel-coordinate
+  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2\" :exclusions [jolt-lang/jolt-crypto]}}}")
 
 (def ^:private chdb-root
   "https___github.com_chucklehead-dev_jolt-chdb.git/677219027d68702a18ee826b55ee1f2ccc3d172d/")
@@ -87,7 +93,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/"
+  (let [fixture-root "https___github.com_casselc_otel.git/ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -100,8 +106,8 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"
-                             "0e701ceff526d159884fadae98dcca61272ef6e0"))))
+                             "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"
+                             "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))
     (check "SDK repeated source provider is rejected" false
@@ -193,6 +199,14 @@
         (check "chDB resolves once from the reviewed full SHA"
                true
                (exact-coordinate? classpath "chucklehead-dev_jolt-chdb.git" chdb-root))))
+    (let [prior (dependency-report ["-Sdeps" prior-otel-coordinate])]
+      (check "prior SDK dependency report completes" true
+             (and (map? prior) (zero? (:exit prior))))
+      (when (map? prior)
+        (check "prior SDK mutation selects the real old checkout" true
+               (exact-coordinate? (:out prior) "casselc_otel.git" prior-otel-root))
+        (check "current SDK oracle rejects the prior checkout" false
+               (exact-coordinate? (:out prior) "casselc_otel.git" otel-root))))
     (let [prior (dependency-report ["-Sdeps" prior-chdb-coordinate])]
       (check "prior chDB dependency report completes" true
              (and (map? prior) (zero? (:exit prior))))
