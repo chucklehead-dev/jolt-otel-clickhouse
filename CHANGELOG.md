@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Materialize bounded Durable insert SQL once with the explicitly selected
+  native byte-batch collector, including generic typed and closed compact
+  rows. Keep row-local custom writer views, payload-only byte limits, schema
+  fences and confirmed writer boundaries. Update the driver to its reviewed
+  prefixed encoder API; configured JSON and ordinary insertion are unchanged.
+
 - Qualify actual SDK gauge, sum and histogram capture with an explicit
   per-reader shutdown budget, using the updated SDK's public option instead
   of changing global policy. Preserve primary capture failures and bounded

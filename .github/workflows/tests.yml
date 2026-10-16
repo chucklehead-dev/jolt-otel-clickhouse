@@ -40,6 +40,7 @@ jobs:
           task_bin=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/json-qualified-runtime.log")
           [[ "$task_bin" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
           "$task_bin" -Srepro -M:native-json-byte-batch:json-backend-test
+          "$task_bin" -Srepro -M:native-json-byte-batch:prefixed-payload-test native
 
   scoped-s3-sdk:
     runs-on: ubuntu-latest

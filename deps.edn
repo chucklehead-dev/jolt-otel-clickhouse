@@ -2,7 +2,7 @@
  :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "bad991ad191ffb57d90ff86795ccbeb3992bf186"}
+         :git/sha "af3a902be39fc466246b39864cdf77879032c87a"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
          :git/sha "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
@@ -18,7 +18,10 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:direct-compact-layout-test
+ :aliases {:prefixed-payload-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-prefixed-payload-test"]}
+           :direct-compact-layout-test
            {:extra-paths ["test" "bench"]
             :main-opts ["-m" "otel.exporter.chdb-direct-compact-layout-test"]}
            :compact-wire-test
