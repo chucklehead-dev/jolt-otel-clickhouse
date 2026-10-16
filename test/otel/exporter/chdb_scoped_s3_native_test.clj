@@ -111,9 +111,13 @@
             handle (sdk/init! {:service-name "scoped-s3" :exporter target
                                :processor :simple :metrics? true :logs? true
                                :runtime-metrics? false :metric-interval-ms 600000
+                               :metric-reader-options {:shutdown-cancel-grace-ms 2000
+                                                       :shutdown-join-bound-ms 3000}
                                :bridge-logging? false})
             primary (atom nil)]
         (try
+          (check! (= 2000 (get-in handle [:reader :config :shutdown-cancel-grace-ms]))
+                  :metric-policy-installed)
           (trace/with-span [outer (sdk/tracer "integration") "outer"
                            {:attributes {"work.ready" true}}]
             (logs/emit! (sdk/logger "integration")
@@ -142,6 +146,8 @@
                 (if @primary
                   (println :secondary-sdk-shutdown-failed true)
                   (throw error))))))
+        (check! (false? (:shutdown-cancelled? @(:state (:reader handle))))
+                :metric-drain-not-cancelled)
         (check! (= :confirmed (:state (durable/persistence-observation connection)))
                 :confirmed-after-sdk-shutdown)
         (verify-values! connection)
