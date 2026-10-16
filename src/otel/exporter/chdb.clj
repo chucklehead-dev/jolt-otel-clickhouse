@@ -7,6 +7,7 @@
             [jdbc.chdb :as chdb]
             [jdbc.chdb.native :as native]
             [jdbc.chdb.durable :as durable]
+            [jdbc.chdb.json-each-row :as row-encoder]
             [jdbc.core :as jdbc]
             [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
@@ -373,7 +374,9 @@
       (throw (ex-info "Typed span encoder compilation failed"
                       {:type ::typed-span-encoder-compilation-failed})))))
 
-(defn- json-each-row-payload
+(def ^:private ^:dynamic *json-backend* :configured)
+
+(defn- configured-json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
 
   The builder is deliberately local to this call: exporters may run concurrently
@@ -395,6 +398,22 @@
         (.append out "\n")
         (recur (- remaining bytes) (next rows) out))
       (.toString out))))
+
+(defn- json-each-row-payload [rows]
+  (if (= :configured *json-backend*)
+    (configured-json-each-row-payload rows)
+    ;; A context belongs to this payload, not the exporter: independent SDK
+    ;; signals may serialize concurrently. Preserve incremental row effects.
+    (let [encoder (row-encoder/open-encoder
+                   {:parallelism 1 :json-backend *json-backend*})]
+      (try
+        (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
+        (catch clojure.lang.ExceptionInfo e
+          (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
+            (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
+                            {:limit max-insert-bytes}))
+            (throw e)))
+        (finally (row-encoder/close! encoder))))))
 
 (defn- insert-json-rows!
   "Insert one SDK-bounded batch through chDB's ordinary query API. libchdb
@@ -1107,6 +1126,7 @@
     (if-not (admit-signal! owned? expected-signals state :spans)
       false
       (try
+        (binding [*json-backend* (:json-backend @state :configured)]
         (let [receipts
               (when (seq spans)
                 (let [snapshot @state
@@ -1149,7 +1169,7 @@
                       nil))))]
           (if receipts
             (complete-batch! connection state true receipts (count spans))
-            (complete-batch! connection state (boolean (seq spans)))))
+            (complete-batch! connection state (boolean (seq spans))))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false)
@@ -1172,6 +1192,7 @@
     (if-not (admit-signal! owned? expected-signals state :metrics)
       false
       (try
+        (binding [*json-backend* (:json-backend @state :configured)]
         (let [rows (vec
                     (for [{:keys [scope metrics]} collected
                           metric metrics
@@ -1185,7 +1206,7 @@
                                       (:typed-metric-projectors @state)))]]
                       (assoc row :_type (:type metric))))]
           (export-metric-rows! connection state rows)
-          (complete-batch! connection state (boolean (seq rows))))
+          (complete-batch! connection state (boolean (seq rows)))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false)
@@ -1198,9 +1219,10 @@
     (if-not (admit-signal! owned? expected-signals state :logs)
       false
       (try
+        (binding [*json-backend* (:json-backend @state :configured)]
         (when (seq records)
           (insert-untyped-log-records! connection state records))
-        (complete-batch! connection state (boolean (seq records)))
+        (complete-batch! connection state (boolean (seq records))))
         (catch Throwable e
           (swap! state assoc :last-error e)
           false)
@@ -1234,14 +1256,30 @@
   unchanged. Gauge descriptors cover point, resource, and scope attributes on
   `otel_metrics_gauge`; sum descriptors cover point, resource, and scope
   attributes on `otel_metrics_sum`; histogram descriptors cover the same three
-  locations on `otel_metrics_histogram`."
+  locations on `otel_metrics_histogram`. :json-backend defaults to :configured;
+  :native-guarded opts only the general JSONEachRow fallback into the qualified
+  source-run native writer. It preserves the 8 MiB bound and persistence
+  acknowledgement; specialized codecs are unchanged. An unavailable native
+  backend fails before database acquisition, without silent fallback.
+  :native-guarded-string-cache and :native-guarded-byte-batch select the
+  corresponding qualified row encoder for that same general fallback only.
+  Contexts are per payload, never shared by concurrent SDK signals."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
-            durable-phase-receipts]
+            durable-phase-receipts json-backend]
      :or {db-spec "chdb::memory:" create-schema? true
-          signals #{:spans :metrics} durable? false}}]
+          signals #{:spans :metrics} durable? false json-backend :configured}}]
+   (when-not (#{:configured :native-guarded :native-guarded-string-cache
+               :native-guarded-byte-batch} json-backend)
+     (throw (ex-info "Unsupported exporter JSON backend"
+                     {:type ::invalid-json-backend})))
+   ;; Resolve an explicitly selected backend before opening a database or DDL.
+   ;; Never silently downgrade an unavailable native backend.
+   (when (not= :configured json-backend)
+     (row-encoder/close!
+      (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})))
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
      (throw (ex-info ":persistence-barrier must be callable"
                      {:type ::invalid-persistence-barrier})))
@@ -1349,6 +1387,7 @@
                                                      :sum sum-columns
                                                      :histogram histogram-columns}
                               :durable? durable?
+                              :json-backend json-backend
                               :durable-phase-receipts durable-phase-receipts
                               :last-error nil}))
        (catch Throwable t

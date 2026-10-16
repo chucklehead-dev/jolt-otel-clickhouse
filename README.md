@@ -89,6 +89,33 @@ When supplying an application-owned `:connection`, select its logical database
 in that connection's dbspec. The exporter uses its current database naturally
 and never issues `USE`; shutdown also leaves the shared connection open.
 
+### Optional JSON backends
+
+The default `:json-backend :configured` keeps the configured data.json writer.
+On a matching, qualified source-run Jolt runtime, `:native-guarded`,
+`:native-guarded-string-cache` or `:native-guarded-byte-batch` can select the
+corresponding bounded encoder for the general JSONEachRow fallback. Existing
+specialized span/log codecs are unchanged; this is not yet compact-row or
+owned-statement exporter adoption.
+
+Each payload owns its encoder, so concurrent SDK signals never share mutable
+serialization buffers. Row order, custom-writer effects, the newline-inclusive
+8 MiB payload limit and confirmed Durable ACK contract remain unchanged.
+Unavailable explicit selections fail before acquiring a connection or running
+schema DDL, rather than silently choosing another backend.
+
+The optional `:native-json-byte-batch` dependency alias selects the matching
+data.json collector; it does not change the default dependency graph. A version
+label alone does not establish runtime capability: these source-only backends
+are qualified on compiler `1ae7e0d19aa3088789410106610beb171bcfb0ef`, not stock
+Jolt 0.8.22 or standalone/AOT builds. For the focused real-encoder tests:
+
+```sh
+/path/to/qualified-jolt -M:native-json-byte-batch:json-backend-test
+```
+
+No new end-to-end throughput result is claimed by this selection API.
+
 ### Durable acknowledgement
 
 Pass a Durable writer connection with `:durable? true` when exporter success

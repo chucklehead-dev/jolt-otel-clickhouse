@@ -18,7 +18,14 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:benchmark {:extra-paths ["bench"]
+ :aliases {:json-backend-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-json-backend-test"]}
+           :native-json-byte-batch
+           {:extra-deps {org.clojure/data.json
+                         {:git/url "https://github.com/casselc/data.json.git"
+                          :git/sha "b959a5625c28cc8571e04de5ca02a2c8902b8b5e"}}}
+           :benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test
            {:extra-paths ["test"]
