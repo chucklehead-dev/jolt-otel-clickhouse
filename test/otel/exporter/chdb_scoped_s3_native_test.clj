@@ -49,7 +49,10 @@
         records (jdbc/fetch connection
                   "SELECT Body, ServiceName, LogAttributes, TraceId, SpanId FROM otel_logs ORDER BY Body")
         points (jdbc/fetch connection
-                 "SELECT MetricName, Value, Attributes FROM otel_metrics_sum ORDER BY TimeUnix")]
+                 "SELECT MetricName, Value, Attributes FROM otel_metrics_sum ORDER BY TimeUnix")
+        gauges (jdbc/fetch connection "SELECT MetricName, Value, Attributes FROM otel_metrics_gauge")
+        histograms (jdbc/fetch connection
+                     "SELECT MetricName, Count n, Sum total, BucketCounts buckets, ExplicitBounds bounds, Min lo, Max hi, Attributes FROM otel_metrics_histogram")]
     (check! (= ["inner" "outer"] (mapv :spanname spans)) :span-names)
     (check! (= ["scoped-s3" "scoped-s3"] (mapv :servicename spans)) :span-service)
     (check! (= [{"work.count" "2"} {"work.ready" "true"}]
@@ -68,7 +71,19 @@
     ;; Check numeric value, not the JSON reader's integral/floating wrapper.
     (check! (every? #(and (number? (:value %)) (== 3 (:value %))) points) :metric-value)
     (check! (every? #(= {"work.ready" "true"} (:attributes %)) points)
-            :metric-attributes)))
+            :metric-attributes)
+    (check! (seq gauges) :gauge-not-empty)
+    (check! (every? #(and (= "work.depth" (:metricname %)) (== 7.5 (:value %))
+                          (= {"work.ready" "true"} (:attributes %))) gauges)
+            :gauge-values)
+    (check! (seq histograms) :histogram-not-empty)
+    (check! (every? #(and (= "work.duration" (:metricname %))
+                          (= 2 (:n %)) (== 13.5 (:total %))
+                          (= [0 1 1 0] (:buckets %))
+                          (= [1.0 5.0 10.0] (mapv double (:bounds %)))
+                          (== 4.5 (:lo %)) (== 9.0 (:hi %))
+                          (= {"work.kind" "sample"} (:attributes %))) histograms)
+            :histogram-values)))
 
 (def ^:dynamic ^:private *insert-format* :json-each-row)
 
@@ -97,6 +112,14 @@
           (metrics/add! (metrics/counter (sdk/meter "integration") "work.completed"
                                          {:unit "{work}"})
                         3 {"work.ready" true})
+          (metrics/set-value! (metrics/gauge (sdk/meter "integration") "work.depth"
+                                              {:unit "{work}"})
+                              7.5 {"work.ready" true})
+          (let [histogram (metrics/histogram
+                           (sdk/meter "integration") "work.duration"
+                           {:unit "ms" :boundaries [1.0 5.0 10.0]})]
+            (metrics/record! histogram 4.5 {"work.kind" "sample"})
+            (metrics/record! histogram 9.0 {"work.kind" "sample"}))
           (check! (sdk/force-flush! handle) :sdk-flush)
           (finally (check! (sdk/shutdown! handle) :sdk-shutdown)))
         (check! (= :confirmed (:state (durable/persistence-observation connection)))
