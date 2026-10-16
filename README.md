@@ -118,6 +118,13 @@ No new end-to-end throughput result is claimed by this selection API.
 
 ### Durable acknowledgement
 
+An explicit `:insert-format :json-compact-each-row` selects schema-ordered
+arrays instead of repeating field names in every row. Startup confirms live
+column types and binds the order to that connection; missing/extra fields or
+changed plans fail before insertion. Named JSONEachRow remains the default.
+See [compact row input](docs/compact-row-format.md) for callback differences,
+schema ownership limits and validation commands.
+
 Pass a Durable writer connection with `:durable? true` when exporter success
 must mean that the batch can be recovered from object storage:
 

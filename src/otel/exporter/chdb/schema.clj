@@ -177,6 +177,21 @@
    "Events.Timestamp" "Events.Name" "Events.Attributes" "Links.TraceId"
    "Links.SpanId" "Links.TraceState" "Links.Attributes"])
 
+(def clickstack-trace-insert-types
+  {"Timestamp" "DateTime64(9)" "TraceId" "String" "SpanId" "String"
+   "ParentSpanId" "String" "TraceState" "String" "SpanName" "String"
+   "SpanKind" "String" "ServiceName" "String"
+   "ResourceAttributes" "Map(String,String)" "ScopeName" "String"
+   "ScopeVersion" "String" "SpanAttributes" "Map(String,String)"
+   "Duration" "UInt64" "StatusCode" "String" "StatusMessage" "String"
+   "Events.Timestamp" "Array(DateTime64(9))"
+   "Events.Name" "Array(LowCardinality(String))"
+   "Events.Attributes" "Array(Map(LowCardinality(String),String))"
+   "Links.TraceId" "Array(String)" "Links.SpanId" "Array(String)"
+   "Links.TraceState" "Array(String)"
+   "Links.Attributes" "Array(Map(LowCardinality(String),String))"
+   "EventsJSON" "String" "LinksJSON" "String"})
+
 (def clickstack-log-base-insert-columns
   "The pinned collector's unconditional log insert columns, in order."
   ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText"

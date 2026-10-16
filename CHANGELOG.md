@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add explicit compact JSON row input bound to the confirmed live schema,
+  connection and ordered columns. Reject mismatched types, missing/extra
+  fields and changed plans before insertion; retain fixed errors and the
+  single-schema-owner contract. Named input remains the default, with the
+  same persistence acknowledgements and native timestamp behavior.
+
 - Expose opt-in native guarded, bounded string-cache and serial byte-batch
   JSON backends for the exporter's general JSONEachRow fallback. Validate
   availability before opening storage; give each payload its own encoder and
