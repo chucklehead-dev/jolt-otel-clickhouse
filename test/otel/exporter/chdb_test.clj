@@ -10,6 +10,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-keyword-attribute-names-test]
+            [otel.exporter.chdb-scalar-attribute-test]
             [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
@@ -852,6 +853,9 @@
 
 (defn -main [& _]
   (reset! failures 0)
+  (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
+    (check "scalar attribute regressions are nonempty" true (pos? (:test result)))
+    (check "scalar attribute regressions pass" 0 (+ (:fail result) (:error result))))
   (let [result (test/run-tests 'otel.exporter.chdb-keyword-attribute-names-test)]
     (check "keyword attribute name regressions are nonempty" true (pos? (:test result)))
     (check "keyword attribute name regressions pass" 0 (+ (:fail result) (:error result))))
