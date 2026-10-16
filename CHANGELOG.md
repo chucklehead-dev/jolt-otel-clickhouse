@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Qualify the current chDB scoped S3 writer through the normal exporter and
+  one SDK owner for spans, logs and metrics. Document borrowed-connection
+  shutdown and add stock Jolt 0.8.22 CI with actual handle reuse/cleanup and
+  independent full-row recovery. SDK, JSON, crypto and native-package choices
+  remain unchanged; no throughput or real-AWS qualification is claimed.
+
 - Use the SDK's guarded scalar-text helper for attribute strings, Booleans,
   and Int64 values without allocating a normalization-result map. Keep ordinary
   canonicalization for other values and changed canonicalizer/default limits;
