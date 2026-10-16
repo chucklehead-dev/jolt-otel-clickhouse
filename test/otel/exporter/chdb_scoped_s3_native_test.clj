@@ -19,6 +19,13 @@
     ;; Never attach telemetry, SQL, credentials or arbitrary backend errors.
     (throw (ex-info "Scoped S3 exporter check failed" {:check label}))))
 
+(defn- check-sdk! [condition label target]
+  (when-not condition
+    (let [data (ex-data (exporter/last-error target))]
+      (throw (ex-info "Scoped S3 SDK operation failed"
+                      {:check label :exporter-type (:type data)
+                       :jdbc-sql-error (true? (:jdbc/sql-error data))})))))
+
 (defn- options [endpoint]
   {:endpoint endpoint :bucket "bucket" :prefix "exporter-scoped"
    :region "us-east-1" :access-key "ACCESS" :secret-key "SECRET"
@@ -99,7 +106,8 @@
             handle (sdk/init! {:service-name "scoped-s3" :exporter target
                                :processor :simple :metrics? true :logs? true
                                :runtime-metrics? false :metric-interval-ms 600000
-                               :bridge-logging? false})]
+                               :bridge-logging? false})
+            primary (atom nil)]
         (try
           (trace/with-span [outer (sdk/tracer "integration") "outer"
                            {:attributes {"work.ready" true}}]
@@ -120,8 +128,15 @@
                            {:unit "ms" :boundaries [1.0 5.0 10.0]})]
             (metrics/record! histogram 4.5 {"work.kind" "sample"})
             (metrics/record! histogram 9.0 {"work.kind" "sample"}))
-          (check! (sdk/force-flush! handle) :sdk-flush)
-          (finally (check! (sdk/shutdown! handle) :sdk-shutdown)))
+          (check-sdk! (sdk/force-flush! handle) :sdk-flush target)
+          (catch Throwable error (reset! primary error) (throw error))
+          (finally
+            (try
+              (check-sdk! (sdk/shutdown! handle) :sdk-shutdown target)
+              (catch Throwable error
+                (if @primary
+                  (println :secondary-sdk-shutdown-failed true)
+                  (throw error))))))
         (check! (= :confirmed (:state (durable/persistence-observation connection)))
                 :confirmed-after-sdk-shutdown)
         (verify-values! connection)
