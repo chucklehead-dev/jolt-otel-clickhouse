@@ -120,6 +120,57 @@ manifest. If insertion or the persistence barrier fails, export returns
 `false` and `last-error` retains the cause. Span force-flush reaches the same
 barrier.
 
+For S3, an explicit scoped owner can reuse connections without making lease
+renewal compete with data uploads on one serial sender:
+
+```clojure
+(require '[jdbc.chdb.durable.s3-writer :as s3-writer]
+         '[otel.exporter.chdb :as chdb-export]
+         '[otel.sdk :as sdk]
+         '[otel.trace :as trace])
+
+;; s3-options contains endpoint, bucket, prefix, region and private credentials.
+(s3-writer/with-connection!
+  s3-options
+  {:object-id "telemetry" :owner "my-app" :database "otel"}
+  (fn [connection]
+    (let [target (chdb-export/exporter
+                   {:connection connection :durable? true :signals #{:spans}})
+          otel (sdk/init! {:service-name "my-app" :exporter target
+                           :metrics? false})]
+      (try
+        (trace/with-span [span (sdk/tracer "my-app") "work"]
+          ;; Run the application here, joining producers before shutdown.
+          (trace/set-attribute! span "work.ready" true))
+        (finally (sdk/shutdown! otel))))))
+```
+
+The exporter borrows this connection. Shut down the SDK and its exporters
+inside the callback; the outer owner then closes and joins the Durable writer
+before freeing either transport. Do not return live workers or the connection.
+This experimental path does not change confirmed returns, enable checksum
+confirmation by default, rotate credentials, or increase network bandwidth.
+Use a new scope when credentials change. Logs and metrics can use the same SDK
+owner by enabling their signals, as in the integration gate below.
+
+The dedicated `scoped-s3-sdk` CI job uses stock Jolt 0.8.22, the declared native
+package and exact declared driver source. It emits real SDK spans, correlated
+Unicode logs and metrics through fake-credential loopback S3, asserts actual
+native owner reuse/cleanup, then compares every physical row using count and
+SHA-256 receipts in a fresh reader process. It does not use the experimental
+measured JSON/compiler stack or contact AWS. To run locally with an installed
+native package and a qualified Jolt wrapper:
+
+```sh
+JOLT_CHDB_SOURCE_ROOT=/path/to/exact-driver-checkout \
+  bash scripts/qualify-scoped-s3-exporter.sh /path/to/pinned-jolt-wrapper
+```
+
+The driver checkout must match this repository's root dependency pin and pass
+the existing cleanliness check. Successful fixture data is removed; failed
+fixtures are retained for diagnosis. This is ingestion/recovery qualification,
+not a throughput benchmark, real-AWS fault test or compiled-app claim.
+
 For a local-only Linux native integration check, run the following from this
 repository, replacing every placeholder with independently qualified paths
 and SHA-256 checksums:

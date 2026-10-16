@@ -11,6 +11,44 @@ permissions:
   actions: read
 
 jobs:
+  scoped-s3-sdk:
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    env:
+      JOLT_CHDB_CACHE_DIR: ${{ github.workspace }}/.scoped-s3-native
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install stock Jolt v0.8.22
+        shell: bash
+        run: |
+          set -euo pipefail
+          install_dir="$RUNNER_TEMP/scoped-s3-jolt"
+          curl -fsSL https://raw.githubusercontent.com/jolt-lang/jolt/v0.8.22/install \
+            | bash -s -- --dir "$install_dir" --version 0.8.22
+          echo "$install_dir" >> "$GITHUB_PATH"
+      - name: Verify runtime and read the root driver pin
+        id: driver
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(jolt --version)" = "jolt v0.8.22"
+          revision=$(jolt -Srepro -e "(require 'clojure.edn) (println (get-in (clojure.edn/read-string (slurp \"deps.edn\")) [:deps 'io.github.chucklehead-dev/jolt-chdb :git/sha]))")
+          [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
+          printf 'revision=%s\n' "$revision" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: chucklehead-dev/jolt-chdb
+          ref: ${{ steps.driver.outputs.revision }}
+          path: .qualification-driver
+          persist-credentials: false
+      - name: Install the declared native package
+        run: jolt -Srepro -m jdbc.chdb.install
+      - name: Qualify actual SDK export and fresh S3 recovery
+        timeout-minutes: 3
+        env:
+          JOLT_CHDB_SOURCE_ROOT: ${{ github.workspace }}/.qualification-driver
+        run: timeout --signal=TERM --kill-after=5s 150s bash scripts/qualify-scoped-s3-exporter.sh jolt
+
   test:
     runs-on: ubuntu-latest
     timeout-minutes: 15
