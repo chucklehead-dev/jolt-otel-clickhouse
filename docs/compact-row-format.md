@@ -70,6 +70,13 @@ The SDK/S3 compact fixture traps the general map projector to ensure it really
 uses direct construction, then compares all physical rows in a fresh reader.
 No end-to-end throughput gain is claimed without matched measurements.
 
+With the explicit `:native-guarded-byte-batch` backend, the bounded collector
+can produce the SQL prefix and encoded rows as one String instead of first
+materializing a payload String and then copying it into SQL. This also applies
+to generic typed rows. The prefix does not consume the 8 MiB row budget, and
+custom writers still see only their current row. Configured JSON keeps its
+existing encoding path. Neither path changes the WAL format or acknowledgement.
+
 That fixture captures gauges and explicit histograms as well as counters.
 Healthy multi-table persistence can take longer than the SDK's default 250 ms
 cooperative shutdown grace, so it explicitly supplies this owner policy:

@@ -3,6 +3,7 @@
             [otel.exporter.chdb-compact-wire-test]
             [otel.exporter.chdb-compact-span-layout-test]
             [otel.exporter.chdb-compact-log-layout-test]
+            [otel.exporter.chdb-prefixed-payload-test]
             [otel.exporter.chdb-metric-row-test]))
 
 (defn -main [& _]
@@ -10,5 +11,6 @@
                  'otel.exporter.chdb-compact-wire-test
                  'otel.exporter.chdb-compact-span-layout-test
                  'otel.exporter.chdb-compact-log-layout-test
+                 'otel.exporter.chdb-prefixed-payload-test
                  'otel.exporter.chdb-metric-row-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

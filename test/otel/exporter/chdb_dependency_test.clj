@@ -16,7 +16,7 @@
   "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2\" :exclusions [jolt-lang/jolt-crypto]}}}")
 
 (def ^:private chdb-root
-  "https___github.com_chucklehead-dev_jolt-chdb.git/bad991ad191ffb57d90ff86795ccbeb3992bf186/")
+  "https___github.com_chucklehead-dev_jolt-chdb.git/af3a902be39fc466246b39864cdf77879032c87a/")
 
 (def ^:private prior-chdb-root
   "https___github.com_chucklehead-dev_jolt-chdb.git/677219027d68702a18ee826b55ee1f2ccc3d172d/")
@@ -149,7 +149,7 @@
     (check "data.json missing provider is rejected" false (boolean (oracle "./test")))))
 
 (defn- run-chdb-oracle-controls! [check]
-  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/bad991ad191ffb57d90ff86795ccbeb3992bf186/"
+  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/af3a902be39fc466246b39864cdf77879032c87a/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src") resources (str root "resources")
@@ -159,10 +159,14 @@
            (oracle (str source ":" resources)))
     (check "chDB prior revision is rejected" false
            (oracle (str/replace source
-                                "bad991ad191ffb57d90ff86795ccbeb3992bf186"
+                                "af3a902be39fc466246b39864cdf77879032c87a"
                                 "677219027d68702a18ee826b55ee1f2ccc3d172d")))
     (check "chDB duplicate source provider is rejected" false
            (oracle (str source ":" source)))
+    (check "chDB before prefixed encoder API is rejected" false
+           (oracle (str/replace source
+                                "af3a902be39fc466246b39864cdf77879032c87a"
+                                "bad991ad191ffb57d90ff86795ccbeb3992bf186")))
     (check "chDB distinct checkout at same SHA is rejected" false
            (oracle (str source ":" other "resources")))
     (check "chDB unexpected checkout child is rejected" false (oracle (str root "test")))
