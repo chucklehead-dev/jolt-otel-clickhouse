@@ -323,10 +323,33 @@ jobs:
           test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
           test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
       - name: Qualify direct typed compact vectors with a fresh WAL reader
-        timeout-minutes: 4
+        timeout-minutes: 7
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUALIFIED_RUNTIME_PROFILE: current-0821-1ae7
+          QUALIFIED_RUNTIME_RUN_ID: '38618434034'
+          QUALIFIED_RUNTIME_RUN_ATTEMPT: '1'
+          QUALIFIED_RUNTIME_WORKFLOW_SHA: 1533b9fe6f7782f4d024a07aefbfb7ce50c4251b
+          QUALIFIED_RUNTIME_ARTIFACT_ID: '11921513712'
+          QUALIFIED_RUNTIME_ARTIFACT_SHA256: 931dda8bf4e9d9beeaa92ad64b8a1c925d3ab670f87414ec9efee9af28cb3537
+          QUALIFIED_RUNTIME_BINARY_SHA256: 06a2ccb858c072bfcd74ce94d96eb95f008d75e0fb1f46117728602572189811
         run: |
           set -euo pipefail
+          # This explicit backend requires the same runtime ABI as its pure
+          # collector gate, not the older ordinary/aspect compatibility lane.
+          helper="$RUNNER_TEMP/typed-compact-runtime.sh"
+          curl -fsSL --connect-timeout 15 --max-time 30 \
+            https://raw.githubusercontent.com/chucklehead-dev/jolt-otel-clickhouse/96119103195b67cfc9fd52277251888980fc7852/scripts/fetch-qualified-durable-runtime.sh \
+            -o "$helper"
+          printf '%s  %s\n' 81030fafdb2e3c79765792d043585139f4410c27a281113dd19874b4c27e74b2 "$helper" | sha256sum -c -
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 120s bash "$helper" > "$RUNNER_TEMP/typed-compact-runtime.log"
+          test "$(grep -c '^QUALIFIED_RUNTIME_BIN=' "$RUNNER_TEMP/typed-compact-runtime.log")" = 1
+          selected_bin=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/typed-compact-runtime.log")
+          [[ "$selected_bin" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
+          printf 'typed-compact-runtime-source=%s\ntyped-compact-runtime-binary=%s\n' \
+            1ae7e0d19aa3088789410106610beb171bcfb0ef "$QUALIFIED_RUNTIME_BINARY_SHA256"
+          export JOLT_BIN="$selected_bin" JOLT_EXPECTED_BINARY_SHA256="$QUALIFIED_RUNTIME_BINARY_SHA256"
           TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s \
             bash scripts/qualify-durable-typed-native.sh --compact-native-byte \
             | tee "$RUNNER_TEMP/exporter-typed-compact-native.log"
@@ -383,7 +406,7 @@ jobs:
             fi
           done
           # Never traverse or upload native stores, WAL, databases or env files.
-          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable durable-crash; do
+          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable durable-crash typed-compact; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
@@ -417,6 +440,20 @@ jobs:
               done
             else printf 'durable-root=unconfirmed\n' >> "$evidence/status.txt"; fi
           else printf 'durable-root=missing-or-ambiguous\n' >> "$evidence/status.txt"; fi
+          log="$RUNNER_TEMP/exporter-typed-compact-native.log"
+          if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
+            root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
+            if [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ &&
+                  -d "$root" && ! -L "$root" && "$(realpath "$root")" == "$root" ]]; then
+              for child in writer reader; do
+                log="$root/$child.log"
+                if [[ -f "$log" && ! -L "$log" && "$(realpath "$log")" == "$root/$child.log" ]]; then
+                  cp "$log" "$evidence/typed-compact-$child.log"
+                  sha256sum "$evidence/typed-compact-$child.log" >> "$evidence/status.txt"
+                fi
+              done
+            fi
+          fi
           log="$RUNNER_TEMP/exporter-durable-crash-native.log"
           if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
             root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
@@ -446,6 +483,9 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/untyped-encoder.log
             ${{ runner.temp }}/exporter-native-evidence/durable.log
             ${{ runner.temp }}/exporter-native-evidence/durable-crash.log
+            ${{ runner.temp }}/exporter-native-evidence/typed-compact.log
+            ${{ runner.temp }}/exporter-native-evidence/typed-compact-writer.log
+            ${{ runner.temp }}/exporter-native-evidence/typed-compact-reader.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
             ${{ runner.temp }}/exporter-native-evidence/crash-writer.log
