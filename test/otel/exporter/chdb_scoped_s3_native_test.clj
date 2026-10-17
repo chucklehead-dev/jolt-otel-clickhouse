@@ -4,6 +4,7 @@
             [jdbc.core :as jdbc]
             [jdbc.chdb.durable :as durable]
             [jdbc.chdb.owned-statement :as owned]
+            [otel.exporter.chdb-curl-owner-ledger :as owner-ledger]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.chdb.durable.control :as control]
             [jdbc.chdb.durable.s3-curl :as curl]
@@ -168,7 +169,7 @@
   nil)
 
 (defn- writer! [endpoint root]
-  (let [inits (atom []) cleanups (atom []) performs (atom []) owned-requests (atom 0)
+  (let [ledger (atom (owner-ledger/initial)) owned-requests (atom 0)
         original-owned durable/execute-owned-and-flush!
         original-init @#'curl/curl-easy-init
         original-cleanup @#'curl/curl-easy-cleanup
@@ -176,9 +177,14 @@
     ;; Count the real native calls, never substitute a transport response.
     (with-redefs-fn
       (cond-> {#'curl/curl-easy-init
-       (fn [] (let [handle (original-init)] (swap! inits conj handle) handle))
-       #'curl/curl-easy-cleanup (fn [h] (swap! cleanups conj h) (original-cleanup h))
-       #'curl/curl-easy-perform (fn [h] (swap! performs conj h) (original-perform h))}
+       (fn [] (let [handle (original-init)] (owner-ledger/step! ledger :init handle) handle))
+       #'curl/curl-easy-cleanup
+       (fn [h] (let [token (owner-ledger/step! ledger :retire h)]
+                 (original-cleanup h) (owner-ledger/step! ledger :cleaned token) nil))
+       #'curl/curl-easy-perform
+       (fn [h] (let [token (owner-ledger/step! ledger :perform h)
+                     result (original-perform h)]
+                 (owner-ledger/step! ledger :performed token) result))}
         *owned-output?*
         (assoc #'owned/text (fn [_] (throw (ex-info "Unexpected owned SQL text materialization" {:fixture true})))
                #'durable/execute-owned-and-flush!
@@ -196,17 +202,15 @@
       (check! (>= @owned-requests 5) :actual-owned-sdk-requests)
       (prn {:gate :scoped-s3-sdk-owned-requests :requests @owned-requests}))
     ;; Two persistent owners, then one independent lease-release readback.
-    (check! (= 3 (count @inits) (count @cleanups)) :exact-owner-settlement)
-    (check! (every? (fn [h] (= 1 (count (filter #(identical? h %) @cleanups)))) @inits)
-            :each-owner-cleaned-once)
-    (let [requests (mapv (fn [h] (count (filter #(identical? h %) @performs))) @inits)]
+    (check! (= 3 (count (:owners @ledger))) :exact-owner-settlement)
+    (check! (owner-ledger/settled? @ledger) :each-owner-cleaned-once)
+    (let [requests (mapv :requests (:owners @ledger))]
       (check! (and (> (nth requests 0) 1) (> (nth requests 1) 1)
-                   (= 1 (nth requests 2))
-                   (= (reduce + requests) (count @performs))) :real-reused-http)
+                   (= 1 (nth requests 2))) :real-reused-http)
       ;; Counts may vary with legitimate heartbeat/reconciliation scheduling;
       ;; the invariant is which owned handle performs each actual request.
-      (prn {:gate :scoped-s3-sdk-native-owners :inits (count @inits)
-            :cleanups (count @cleanups) :requests (count @performs)
+      (prn {:gate :scoped-s3-sdk-native-owners :inits (count (:owners @ledger))
+            :cleanups (reduce + (map :cleanups (:owners @ledger))) :requests (reduce + requests)
             :per-owner-requests requests})))
   (println "scoped-s3-sdk-writer-qualified"))
 

@@ -8,6 +8,7 @@
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as exporter]
             [otel.exporter.chdb-scoped-s3-native-test :as scoped]
+            [otel.exporter.chdb-curl-owner-ledger-test]
             [otel.exporter.chdb-compact-wire-test :as wire]))
 
 (defn insert [rows]
@@ -157,5 +158,6 @@
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'otel.exporter.chdb-owned-output-test
+                                      'otel.exporter.chdb-curl-owner-ledger-test
                                       'otel.exporter.chdb-compact-wire-test)]
     (System/exit (if (zero? (+ fail error)) 0 1))))
