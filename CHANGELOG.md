@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reduce temporary attribute-map construction for the explicit native-byte
+  backend. Preserve current string-map reuse, live key/value conversion order,
+  normalized-key precedence and captured dictionaries. Unsupported layouts
+  retain the original portable conversion; unavailable kernels fail at startup.
+
 - For explicitly selected native-byte compact typed spans, collect only
   declared values without temporary map entries and build positional output
   once. Keep every normalized duplicate and live converter call in source

@@ -21,6 +21,8 @@
             [otel.sdk.export :as export]
             [otel.sdk.logs :as logs]))
 
+(def ^:private ^:dynamic *json-backend* :configured)
+
 (defn- key-string [k]
   (cond
     (string? k) k
@@ -81,11 +83,23 @@
                       (reduced false)))
                   true m)))
 
+(def ^:private small-attribute-transform
+  (delay
+    (try
+      (require 'otel.exporter.chdb.native-attributes)
+      ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
+       #'key-string #'value-string)
+      (catch Throwable _
+        (throw (ex-info "Native attribute projection is unavailable"
+                        {:type ::native-attributes-unavailable}))))))
+
 (defn- attrs [m]
   (if (reusable-string-attrs? m)
     ;; Match the old fresh map's metadata without copying immutable entries.
     (with-meta m nil)
-    (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {}))))
+    (or (when (= :native-guarded-byte-batch *json-backend*)
+          (@small-attribute-transform m))
+        (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]
@@ -430,8 +444,6 @@
     (catch Throwable _
       (throw (ex-info "Typed span encoder compilation failed"
                       {:type ::typed-span-encoder-compilation-failed})))))
-
-(def ^:private ^:dynamic *json-backend* :configured)
 
 (defn- configured-json-each-row-payload
   "Encode one batch as JSONEachRow with the maintained data.json defaults.
@@ -1697,6 +1709,8 @@
                            (catch Throwable _ false))))
            (throw (ex-info "Owned statement stack unavailable"
                            {:type ::owned-statement-unavailable})))
+         (when (= :native-guarded-byte-batch json-backend)
+           @small-attribute-transform)
          (finally (row-encoder/close! encoder)))))
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
      (throw (ex-info ":persistence-barrier must be callable"
