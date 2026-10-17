@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Avoid empty event/link vector folds when constructing span rows. Preserve
+  named/compact layouts, JSON encoding calls and generic/lazy input traversal;
+  nonempty events and links retain the existing conversion path.
+
 - Update the chDB driver pin to the reviewed current Durable implementation,
   including optional owned compact streaming. Keep default native installation,
   encoding choices and persistence semantics unchanged; requalify source identity.
