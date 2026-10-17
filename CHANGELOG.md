@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- For explicitly selected native-byte compact typed spans, collect only
+  declared values without temporary map entries and build positional output
+  once. Keep every normalized duplicate and live converter call in source
+  order, with invocation-owned storage and fallback for unsupported maps.
+  The default portable projector, captured dictionaries and WAL are unchanged.
+
 - Avoid sorted-map comparisons for the built-in typed status codebook during
   row projection. Keep its public sorted presentation and live replacement
   behavior, including codebooks installed before the projector loads.

@@ -44,6 +44,7 @@ jobs:
           "$task_bin" -Srepro -M:native-json-byte-batch:json-backend-test
           "$task_bin" -Srepro -M:native-json-byte-batch:prefixed-payload-test native
           "$task_bin" -Srepro -M:native-json-byte-batch:typed-compact-vector-test
+          "$task_bin" -Srepro -M:native-projection-test
           "$task_bin" -Srepro -M:native-json-byte-batch:owned-output-test
 
   scoped-s3-sdk:

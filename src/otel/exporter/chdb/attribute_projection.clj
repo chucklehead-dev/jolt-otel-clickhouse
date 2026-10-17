@@ -142,23 +142,62 @@
     (fn [span]
       (project-fields fields #(attributes-at span %)))))
 
+(def ^:private small-declared-collector
+  (delay
+    (require 'otel.exporter.chdb.native-projection)
+    ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
+     #'key-string #'clojure.core/contains?)))
+
+(def ^:private owned-plan-output
+  (delay
+    (require 'otel.exporter.chdb.native-projection)
+    ((ns-resolve 'otel.exporter.chdb.native-projection 'load-positional-output!)
+     #'projected-value)))
+
+(defn- indexed-vector-projector [locations wanted plan]
+  (let [location-count (count locations)]
+    (fn [span]
+      (let [values
+            (loop [i 0 out []]
+              (if (= i location-count) out
+                (let [attributes (or (attributes-at span (nth locations i)) {})
+                      wanted-keys (nth wanted i)
+                      collected
+                      (or (@small-declared-collector attributes wanted-keys)
+                          (reduce (fn [out [key value]]
+                                    (let [normalized (key-string key)]
+                                      (if (contains? wanted-keys normalized)
+                                        (assoc out normalized (conj (get out normalized []) value)) out)))
+                                  {} attributes))]
+                  (recur (inc i) (conj out collected)))))]
+        (@owned-plan-output plan values)))))
+
 (defn trace-vector-projector
   "Compile confirmed trace fields into positional value/status pairs.
 
   Internal compact transport only. The public map projector is unchanged;
-  both share normalized-key collisions, defaults and status classification."
-  [descriptor-set target]
+  both share normalized-key collisions, defaults and status classification.
+  Internal third argument opts into invocation-owned Jolt projection; the
+  default two-argument path remains portable and unchanged."
+  ([descriptor-set target] (trace-vector-projector descriptor-set target false))
+  ([descriptor-set target native-maps?]
   (let [fields (confirmed-span-fields descriptor-set target)
         locations (vec (distinct (map :location fields)))
         indices (zipmap locations (range))
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
+    (if native-maps?
+      (indexed-vector-projector
+       locations
+       (mapv (fn [location]
+               (set (map :key (filter #(= location (:location %)) fields)))) locations)
+       plan)
     (fn [span]
       (let [values (mapv #(values-by-key (attributes-at span %)) locations)]
         (reduce (fn [out [index key type]]
                   (let [[value status] (projected-value type (get (nth values index) key []))]
                     (conj out value status)))
-                [] plan)))))
+                [] plan)))))))
 
 (defn log-projector
   "Compile one confirmed log-attribute capability into a log-row projector."
