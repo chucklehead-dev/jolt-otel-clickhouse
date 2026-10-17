@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Check builtin string-map shape and SDK string bounds in one allocation-free
+  walk. Keep generic normalization for changed helpers, policies and unsupported
+  layouts; do not change captured values or byte budgets.
+
 - Repin the optional native byte-JSON backend to include local ASCII cursor
   emission and safe reuse of never-exposed row writers. Preserve custom writer
   behavior and ordinary JSON, SDK, driver, schema and persistence defaults.

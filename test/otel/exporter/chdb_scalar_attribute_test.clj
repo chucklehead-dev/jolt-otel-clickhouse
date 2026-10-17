@@ -161,7 +161,8 @@
                      (throw (ex-info "unsupported collision primitive" {})))
                    (and (not (and (instance? clojure.lang.PersistentHashMap m)
                                   (<= (count m) 8)))
-                        (every? string? (vals m)))))]
+                        (every? string? (vals m))
+                        (reduce max 0 (map count (vals m))))))]
       (with-redefs [scheme/eval-string load
                     attribute-map-shape/native-shape-check
                     (delay (#'attribute-map-shape/make-native-shape-check))]
@@ -171,20 +172,55 @@
           (is (= 1 @attempts))
           (is (= (= mode :late-branch-failure) @collision-probed?)))))))
 
-(deftest mixed-map-shapes-decline-before-sdk-value-admission
-  (let [original @#'any/try-scalar-string seen (atom [])
+(deftest bounded-shape-admission-never-probes-the-scalar-formatter
+  (let [original @#'any/try-scalar-string seen (atom []) queries (atom 0)
+        maximum (any/default-string-value-max-chars)
         observed (fn [value] (swap! seen conj value) (original value))]
-    ;; Explicitly trust this observer so the positive case reaches admission;
-    ;; ordinary helper replacements must fail the SDK-owned qualification.
+    ;; Explicitly trust this test issuer to exercise the scan. The real SDK
+    ;; issuer declines changed formatters, covered by the live-policy controls.
     (with-redefs [any/try-scalar-string observed
-                  any/default-scalar-string? (constantly true)]
+                  any/default-string-value-max-chars
+                  (fn [] (swap! queries inc) maximum)]
       (is (true? (#'exporter/reusable-string-attrs? (array-map "a" "first" "b" "second"))))
-      (is (= ["first" "second"] @seen))
+      (is (= 1 @queries))
+      (is (empty? @seen))
       (doseq [source [(array-map "a" 42 "b" "second")
                       (array-map "a" "first" "b" 42)]]
         (reset! seen [])
         (is (false? (#'exporter/reusable-string-attrs? source)))
         (is (empty? @seen))))))
+
+(deftest one-pass-shape-reports-the-largest-value-not-key-length
+  (doseq [size [0 1 8 9 16 128]]
+    (let [source (into {} (map (fn [i] [(str "deliberately-long-key-" i)
+                                      (apply str (repeat (mod i 7) "漢😀"))]))
+                       (range size))
+          expected (reduce max 0 (map count (vals source)))]
+      (is (= expected (attribute-map-shape/reusable-string-map-required-chars source)))
+      (is (true? (attribute-map-shape/reusable-string-map-shape? source)))))
+  (is (= 7 (attribute-map-shape/reusable-string-map-required-chars
+             (array-map "a" "largest" "b" ""))))
+  (doseq [source [(sorted-map "a" "value") (hash-map "a" "value")
+                  (array-map :a "value") (array-map "a" 1)
+                  (apply array-map (mapcat #(vector (str %) "value") (range 16)))
+                  (assoc (into {} (map #(vector (str %) "value")) (range 16))
+                         "Aa" "first" "BB" "second")]]
+    (is (nil? (attribute-map-shape/reusable-string-map-required-chars source)))))
+
+(deftest changed-byte-counter-declines-before-its-first-effect
+  (let [source (array-map "a" "first" "b" "second")
+        effects (atom []) original-key @#'exporter/key-string]
+    (with-redefs [exporter/key-string original-key
+                  any/string-bytes
+                  (fn [value]
+                    (swap! effects conj value)
+                    (alter-var-root #'exporter/key-string
+                                    (constantly (fn [key] (str "changed-" key))))
+                    (* 4 (count value)))]
+      (is (false? (#'exporter/reusable-string-attrs? source)))
+      (is (empty? @effects))
+      (is (= {"a" "first" "changed-b" "second"} (#'exporter/attrs source)))
+      (is (= ["first" "second"] @effects)))))
 
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]

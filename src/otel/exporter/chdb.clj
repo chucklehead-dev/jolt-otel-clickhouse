@@ -84,18 +84,16 @@
   ;; strings. Merely checking string? would silently bypass that policy.
   ;; This pure native predicate also owns the builtin-map type check; avoid
   ;; repeating reflective class admission and SDK checks for mixed maps.
-  (and (attribute-map-shape/reusable-string-map-shape? m)
-       (identical? key-string original-attribute-key-string)
+  (if-some [required (attribute-map-shape/reusable-string-map-required-chars m)]
+    (and (identical? key-string original-attribute-key-string)
        (identical? value-string original-attribute-value-string)
        ;; The SDK, not a consumer-load snapshot, owns the default identity.
        ;; A preinstalled replacement may return strings while changing later
        ;; converters, so it must reach the generic path without a trial call.
-       (any/default-scalar-string?)
-       (reduce-kv (fn [_ key value]
-                    (if (identical? value (any/try-scalar-string value))
-                      true
-                      (reduced false)))
-                  true m)))
+       (if-some [maximum (any/default-string-value-max-chars)]
+         (<= required maximum)
+         false))
+    false))
 
 (def ^:private small-attribute-transform
   (delay
