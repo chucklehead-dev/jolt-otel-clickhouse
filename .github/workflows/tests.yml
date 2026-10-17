@@ -323,6 +323,7 @@ jobs:
           test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
           test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
       - name: Qualify direct typed compact vectors with a fresh WAL reader
+        id: typed_compact_native
         timeout-minutes: 7
         shell: bash
         env:
@@ -347,6 +348,7 @@ jobs:
           test "$(grep -c '^QUALIFIED_RUNTIME_BIN=' "$RUNNER_TEMP/typed-compact-runtime.log")" = 1
           selected_bin=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/typed-compact-runtime.log")
           [[ "$selected_bin" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
+          printf 'qualified-bin=%s\n' "$selected_bin" >> "$GITHUB_OUTPUT"
           printf 'typed-compact-runtime-source=%s\ntyped-compact-runtime-binary=%s\n' \
             1ae7e0d19aa3088789410106610beb171bcfb0ef "$QUALIFIED_RUNTIME_BINARY_SHA256"
           export JOLT_BIN="$selected_bin" JOLT_EXPECTED_BINARY_SHA256="$QUALIFIED_RUNTIME_BINARY_SHA256"
@@ -358,6 +360,28 @@ jobs:
           [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
           test "$(grep -Fxc ':observed-checks 25' "$root/writer.log")" = 1
           test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
+
+      - name: Qualify owned native WAL and actual SDK S3 capture
+        id: owned_native
+        timeout-minutes: 8
+        shell: bash
+        env:
+          JOLT_BIN: ${{ steps.typed_compact_native.outputs.qualified-bin }}
+          JOLT_EXPECTED_BINARY_SHA256: 06a2ccb858c072bfcd74ce94d96eb95f008d75e0fb1f46117728602572189811
+        run: |
+          set -euo pipefail
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s \
+            bash scripts/qualify-durable-typed-native.sh --compact-native-byte-owned \
+            | tee "$RUNNER_TEMP/exporter-owned-native.log"
+          test "$(grep -Fxc 'durable-typed-native-qualified' "$RUNNER_TEMP/exporter-owned-native.log")" = 1
+          root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$RUNNER_TEMP/exporter-owned-native.log")
+          [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ ]]
+          test "$(grep -Fxc ':observed-checks 26' "$root/writer.log")" = 1
+          test "$(grep -Fxc ':observed-checks 24' "$root/reader.log")" = 1
+          TMPDIR=/tmp timeout --signal=TERM --kill-after=5s 210s \
+            bash scripts/qualify-scoped-s3-exporter.sh "$JOLT_BIN" json-compact-each-row owned \
+            | tee "$RUNNER_TEMP/exporter-owned-sdk-native.log"
+          test "$(grep -Fxc 'scoped-s3-exporter-qualified' "$RUNNER_TEMP/exporter-owned-sdk-native.log")" = 1
 
       - name: Reopen typed Durable WAL after verified writer crash
         id: durable_crash_reopen
@@ -389,6 +413,7 @@ jobs:
           UNTYPED_ENCODER_OUTCOME: ${{ steps.untyped_encoder_native.outcome }}
           DURABLE_OUTCOME: ${{ steps.durable_native.outcome }}
           DURABLE_CRASH_OUTCOME: ${{ steps.durable_crash_reopen.outcome }}
+          OWNED_OUTCOME: ${{ steps.owned_native.outcome }}
           DRIVER_REVISION: ${{ steps.driver.outputs.revision }}
           DURABLE_COMPILER_REVISION: ${{ steps.durable_jolt.outputs.source-sha }}
         run: |
@@ -398,6 +423,7 @@ jobs:
           printf 'ordinary-step=%s\ntyped-metric-step=%s\ntyped-metric-socket-step=%s\ntyped-histogram-socket-step=%s\nuntyped-encoder-step=%s\ndurable-step=%s\ndurable-crash-step=%s\nroot-driver=%s\ndurable-jolt=%s\n' \
             "$ORDINARY_OUTCOME" "$TYPED_METRIC_OUTCOME" "$TYPED_METRIC_SOCKET_OUTCOME" "$TYPED_HISTOGRAM_SOCKET_OUTCOME" "$UNTYPED_ENCODER_OUTCOME" "$DURABLE_OUTCOME" "$DURABLE_CRASH_OUTCOME" "$DRIVER_REVISION" "$DURABLE_COMPILER_REVISION" > "$evidence/status.txt"
           # Only public authentication diagnostics/boundary fixture output.
+          printf 'owned-step=%s\n' "$OWNED_OUTCOME" >> "$evidence/status.txt"
           for kind in official-capability-negative; do
             log="$RUNNER_TEMP/exporter-$kind.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
@@ -406,7 +432,7 @@ jobs:
             fi
           done
           # Never traverse or upload native stores, WAL, databases or env files.
-          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable durable-crash typed-compact; do
+          for kind in ordinary typed-metric typed-metric-socket typed-histogram-socket untyped-encoder durable durable-crash typed-compact owned owned-sdk; do
             log="$RUNNER_TEMP/exporter-$kind-native.log"
             if [[ -f "$log" && ! -L "$log" ]]; then
               cp "$log" "$evidence/$kind.log"
@@ -440,7 +466,8 @@ jobs:
               done
             else printf 'durable-root=unconfirmed\n' >> "$evidence/status.txt"; fi
           else printf 'durable-root=missing-or-ambiguous\n' >> "$evidence/status.txt"; fi
-          log="$RUNNER_TEMP/exporter-typed-compact-native.log"
+          for kind in typed-compact owned; do
+          log="$RUNNER_TEMP/exporter-$kind-native.log"
           if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
             root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
             if [[ "$root" =~ ^/tmp/exporter-durable-native\.[A-Za-z0-9]+$ &&
@@ -448,12 +475,13 @@ jobs:
               for child in writer reader; do
                 log="$root/$child.log"
                 if [[ -f "$log" && ! -L "$log" && "$(realpath "$log")" == "$root/$child.log" ]]; then
-                  cp "$log" "$evidence/typed-compact-$child.log"
-                  sha256sum "$evidence/typed-compact-$child.log" >> "$evidence/status.txt"
+                  cp "$log" "$evidence/$kind-$child.log"
+                  sha256sum "$evidence/$kind-$child.log" >> "$evidence/status.txt"
                 fi
               done
             fi
           fi
+          done
           log="$RUNNER_TEMP/exporter-durable-crash-native.log"
           if [[ -f "$log" && ! -L "$log" && "$(grep -c '^EVIDENCE_ROOT=' "$log" || true)" == 1 ]]; then
             root=$(sed -n 's/^EVIDENCE_ROOT=//p' "$log")
@@ -486,6 +514,10 @@ jobs:
             ${{ runner.temp }}/exporter-native-evidence/typed-compact.log
             ${{ runner.temp }}/exporter-native-evidence/typed-compact-writer.log
             ${{ runner.temp }}/exporter-native-evidence/typed-compact-reader.log
+            ${{ runner.temp }}/exporter-native-evidence/owned.log
+            ${{ runner.temp }}/exporter-native-evidence/owned-sdk.log
+            ${{ runner.temp }}/exporter-native-evidence/owned-writer.log
+            ${{ runner.temp }}/exporter-native-evidence/owned-reader.log
             ${{ runner.temp }}/exporter-native-evidence/writer.log
             ${{ runner.temp }}/exporter-native-evidence/reader.log
             ${{ runner.temp }}/exporter-native-evidence/crash-writer.log
