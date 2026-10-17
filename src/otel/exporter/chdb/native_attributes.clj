@@ -28,15 +28,24 @@
          "(amap-index 3) (vec-copy-range 3) (var-cell-deref 1) (jolt-invoke1 2))) "
          "(error 'native-attributes \"Required runtime projection primitives are unavailable\")) "
          "(let ((clone " (slurp clone) ") (generic " (slurp generic) ")) "
-         "(lambda (m key-var value-var) "
-         "(or (clone m key-var value-var) (generic m key-var value-var)))))")))
+         "(lambda (key-var value-var original-key) "
+         "(lambda (m) "
+         "(or (clone m key-var value-var original-key) (generic m key-var value-var))))))")))
 
 (def ^:private transform-source (source))
 
 (defn load-transform!
   "Convert supported built-in maps, returning false for declined inputs.
   Converter Vars stay live per entry; input nodes are never mutated. Each call
-  owns mutable construction storage and preserves sequence-order effects."
-  [key-var value-var]
-  (let [transform (scheme/eval-string transform-source)]
-    (fn [attributes] (transform attributes key-var value-var))))
+   owns mutable construction storage and preserves sequence-order effects.
+   The internal third argument must be the exporter's original string-identity
+   key converter, not an arbitrary callback; two-argument callers retain the
+   fully generic live converter path."
+  ([key-var value-var] (load-transform! key-var value-var false))
+  ([key-var value-var original-key]
+   (let [factory (scheme/eval-string transform-source)
+         transform (factory key-var value-var original-key)]
+     ;; Bind stable Var identities once, on the native side. Dereferencing the
+     ;; Vars stays per entry. Keep a Clojure IFn facade while reducing each
+     ;; native call to its sole varying argument, the map being converted.
+     (fn [attributes] (transform attributes)))))
