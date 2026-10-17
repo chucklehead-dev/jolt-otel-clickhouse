@@ -51,6 +51,10 @@
     (format "%064x" (java.math.BigInteger. 1 (.digest digest)))))
 
 (defn- full-row-receipt [connection]
+  ;; Keep this obligation independent of selections: writer and reader sharing
+  ;; an accidentally incomplete table list must not validate each other.
+  (check! (= #{:spans :logs :metrics :gauges :histograms} (set (keys selections)))
+          :all-physical-table-receipts)
   (into {} (map (fn [[signal sql]]
                   (let [rows (vec (jdbc/fetch connection sql))]
                     [signal {:rows (count rows)

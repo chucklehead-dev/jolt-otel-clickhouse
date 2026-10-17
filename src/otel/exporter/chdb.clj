@@ -1109,8 +1109,8 @@
        (= direct-metric-columns schema/clickstack-metric-insert-columns)))
 
 (defn- execute-closed-compact-rows! [connection table columns rows checked-snapshot!]
-  (let [snapshot (checked-snapshot!)]
-    (compact-format/require-order! (:compact-plans snapshot) connection table columns)
+  (let [initial-snapshot (checked-snapshot!)]
+    (compact-format/require-order! (:compact-plans initial-snapshot) connection table columns)
     (letfn [(checked [remaining]
               (lazy-seq
                 (when-let [remaining (seq remaining)]
@@ -1123,7 +1123,7 @@
             prefix (str query " FORMAT JSONCompactEachRow\n")
             sql (if (= :native-guarded-byte-batch *json-backend*)
                   (json-each-row-payload (checked rows) prefix
-                                        (boolean (:owned-statement-output? snapshot)))
+                                        (boolean (:owned-statement-output? initial-snapshot)))
                   (str prefix (json-each-row-payload (checked rows))))
             snapshot (checked-snapshot!)]
         ;; Custom conversion/JSON callbacks may have changed private state.

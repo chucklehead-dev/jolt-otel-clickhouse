@@ -7,6 +7,7 @@
             [jdbc.chdb.json-each-row :as encoder]
             [jdbc.core :as jdbc]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb-scoped-s3-native-test :as scoped]
             [otel.exporter.chdb-compact-wire-test :as wire]))
 
 (defn insert [rows]
@@ -135,6 +136,24 @@
         (let [error (try (insert rows) nil (catch Throwable e e))]
           (is (if (= failure :producer) (identical? sentinel error) (= {:limit 1} (ex-data error))))))
       (is (= [:write] @effects)) (is (zero? @executions)))))
+
+(deftest full-row-recovery-receipt-cannot-silently-omit-metric-tables
+  (let [selections @#'scoped/selections
+        changed (atom false)
+        fetch (fn [_ sql]
+                [{:visible 1 :otherwise-unchecked
+                  (if (and @changed (.contains sql "otel_metrics_histogram")) 2 1)}])]
+    (with-redefs [jdbc/fetch fetch]
+      (let [before (#'scoped/full-row-receipt :connection)]
+        (is (= #{:spans :logs :metrics :gauges :histograms} (set (keys before))))
+        (doseq [missing [:gauges :histograms]]
+          (with-redefs [scoped/selections (dissoc selections missing)]
+            (is (= {:check :all-physical-table-receipts}
+                   (wire/error-data #(#'scoped/full-row-receipt :connection))))))
+        (reset! changed true)
+        (let [after (#'scoped/full-row-receipt :connection)]
+          (is (= (get-in before [:histograms :rows]) (get-in after [:histograms :rows])))
+          (is (not= (get-in before [:histograms :sha256]) (get-in after [:histograms :sha256]))))))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'otel.exporter.chdb-owned-output-test
