@@ -153,9 +153,11 @@
             before (seals)
             a (emit plan collected #'p/projected-value)
             b (with-redefs [p/projected-value (fn [_ values] [(- (first values)) 99])]
-                (emit plan collected #'p/projected-value))]
-        (is (= 2 (- (seals) before)))
+                (emit plan collected #'p/projected-value))
+            direct (emit plan collected #'p/projected-value @#'p/original-projected-value)]
+        (is (= 3 (- (seals) before)))
         (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
+        (is (= a direct))
         (is (= (vec (mapcat (fn [i] [(- i) 99]) (range n))) b))
         (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
         (when (pos? n)

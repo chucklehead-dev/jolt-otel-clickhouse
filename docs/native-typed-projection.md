@@ -23,3 +23,31 @@ The focused gate is `jolt -M:native-projection-test`. It checks callback order,
 live replacement and reentry, collision buckets, fallback, input ownership,
 single-seal positional output and deliberately wrong traversal/field-order
 controls. The gate runs in CI with the authenticated qualified Jolt artifact.
+
+The original classifier can deliver its value and status directly to the native
+builder, avoiding a temporary pair for each typed field. Both forms are generated
+from one classification rule. Replacing the projector still uses its ordinary
+two-argument API, including list/short/nil results. The result continuation never
+captures the output buffer, so retaining it cannot mutate a completed row.
+
+## Component benchmark
+
+With the qualified native-projection runtime, compare pair construction and
+direct results through the same indexed projector:
+
+```sh
+jolt -Srepro -A:native-projection-test \
+  -m otel.exporter.chdb-native-projection-benchmark \
+  target/projection.edn 1000 24
+```
+
+Arguments are the output file, rows per sample and number of A/B/B/A cycles.
+The default runs 48 samples per mode, with three typed fields among 16 captured
+attributes. It checks exact portable vectors and JSON before and after timing,
+reports p50/p90/p95/p99 trial latency and Jolt heap bytes allocated per row, and saves bounded
+scalar samples. Var handles are captured once outside the timed loop.
+
+This opens no database or network connection and creates only the small report.
+Results describe a projection component, not ingestion throughput or a latency
+SLA. Full-pipeline results depend on typed-field count, encoding, native execution
+and persistence; retain separate Durable recovery and throughput checks.
