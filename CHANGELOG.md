@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- Add explicit experimental Durable `:datetime64-wire :raw-ticks` for chDB
+  26.9.0. Keep numeric nanoseconds and include the fixed raw-tick setting in
+  every generated INSERT/WAL statement, without changing session settings.
+  Default ISO selection and ordinary transports remain unchanged.
+
+- Qualify an exporter-local UTC ISO timestamp wire for native chDB 26.9.0;
+  retain exact integer nanoseconds for 26.7.3 and reject unknown packages before
+  schema writes. Spans, nested event arrays and log observed-time fallback use
+  the same bounded nanosecond domain. Metric second-based timestamps are unchanged.
+
 - Reuse ordinary immutable attribute maps whose string keys and bounded string
   values need no conversion. Preserve live normalization policies, converter
   overrides, metadata stripping and generic fallback; JSON encoding and Durable

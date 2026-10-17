@@ -11,6 +11,7 @@
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-keyword-attribute-names-test]
             [otel.exporter.chdb-scalar-attribute-test]
+            [otel.exporter.chdb-timestamp-wire-test]
             [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
@@ -860,6 +861,9 @@
     (check "keyword attribute name regressions are nonempty" true (pos? (:test result)))
     (check "keyword attribute name regressions pass" 0 (+ (:fail result) (:error result))))
   (run-ordinary-transport-diagnostics-checks)
+  (let [result (test/run-tests 'otel.exporter.chdb-timestamp-wire-test)]
+    (check "timestamp wire regressions are nonempty" true (pos? (:test result)))
+    (check "timestamp wire regressions pass" 0 (+ (:fail result) (:error result))))
   (ordinary-rows-test/run check)
   (ordinary-typed-rows-test/run check)
   (dependency-test/run check)

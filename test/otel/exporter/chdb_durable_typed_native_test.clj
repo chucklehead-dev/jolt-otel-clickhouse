@@ -76,7 +76,7 @@
                    [[:metric-attributes "request.success" :boolean]
                     [:metric-attributes "request.count" :int64]]))
 
-(def ticks [0 1 1700000000123456789 0])
+(def ticks [0 1 1700000000123456789 9223372036854775807])
 (def inputs [["a-zero" {"flag" false "count" 0}]
              ["b-min" {"flag" true "count" -9223372036854775808}]
              ["c-max" {"count" 9223372036854775807}]
@@ -180,8 +180,12 @@
 
 (defn run! [phase root]
   (native/ensure-loaded!)
-  (check! :actual-package "26.7.3" (native/chdb-version))
-  (let [namespace (local/local-backend (str root "/objects"))
+  (check! :actual-package true (contains? #{"26.7.3" "26.9.0"} (native/chdb-version)))
+  (println :native-package (native/chdb-version))
+  (let [timestamp-wire (case (System/getenv "CHDB_TYPED_DATETIME64_WIRE")
+                         nil :auto "raw-ticks" :raw-ticks
+                         (throw (ex-info "Invalid fixture timestamp wire" {})))
+        namespace (local/local-backend (str root "/objects"))
         telemetry (backend/object-backend namespace "telemetry")
         catalog (backend/object-backend namespace "typed-catalog")
         snapshot #(control/read-head-read-only! telemetry)
@@ -207,6 +211,7 @@
           (check! :schema-checkpoint :committed (:status (durable/checkpoint! connection)))
           (let [primary (atom nil)
                 writer (exporter/exporter (cond-> {:connection connection :durable? true :create-schema? false
+                                          :datetime64-wire timestamp-wire
                                           :signals #{:spans :logs :metrics}
                                           :typed-span-descriptors spans
                                           :typed-log-descriptors records
@@ -217,6 +222,8 @@
                                                   :json-backend :native-guarded-byte-batch)
                                            *owned-output?* (assoc :owned-statement-output? true)))]
             (try
+              (when (= timestamp-wire :raw-ticks)
+                (check! :selected-raw-ticks :raw-ticks (:timestamp-wire @(:state writer))))
               (let [encoder (:typed-span-encoder @(:state writer))
                     projector (:typed-span-projector @(:state writer))
                     samples (conj (mapv span-record (range 4))
@@ -253,6 +260,9 @@
                                                             "resource.generic" "kept-generic"}}
                                               (metric-batch)))
               (check! :writer-counts [4 4 1 1 0] (counts connection))
+              (when (= "26.9.0" (native/chdb-version))
+                (check! :writer-session-setting-unchanged "0"
+                        (:value (jdbc/fetch-one connection "SELECT value FROM system.settings WHERE name='input_format_read_datetime_number_as_raw_value'"))))
               (let [head (:head (snapshot))]
                 (check! :base-present true (some? (get-in head ["manifest" "base"])))
                 (check! :wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
@@ -282,6 +292,9 @@
           (check! :reader-base-present true (some? (get-in head ["manifest" "base"])))
           (check! :reader-wal-present true (boolean (seq (get-in head ["manifest" "wal"])))))
         (check! :reader-counts [4 4 1 1 0] (counts connection))
+        (when (= "26.9.0" (native/chdb-version))
+          (check! :reader-session-setting-unchanged "0"
+                  (:value (jdbc/fetch-one connection "SELECT value FROM system.settings WHERE name='input_format_read_datetime_number_as_raw_value'"))))
         (doseq [signal [:spans :logs]]
           (let [result (installer/acquire-active! catalog (selector signal)
                          {:target connection :observe-columns #(observe connection signal)})]

@@ -118,11 +118,13 @@ worktree=$(cd "$(dirname "$0")/.." && pwd -P)
 fixture="$worktree/test/otel/exporter/chdb_durable_typed_native_test.clj"
 jolt=${JOLT_BIN:?set the exact qualified Jolt binary}
 wrapper=${JOLT_WRAPPER:?set the mandatory Chez 10.4.1 launcher}
-lib=$(realpath "${JOLT_CHDB_LIB:?set the qualified chDB 26.7.3 library}")
+lib=$(realpath "${JOLT_CHDB_LIB:?set the qualified chDB library}")
 header=$(realpath "${JOLT_CHDB_HEADER:?set the matching chDB header}")
 [[ "$(dirname "$lib")" == "$(dirname "$header")" ]] || { echo mismatched-native-pair-directory; exit 1; }
 driver_mode=${JOLT_DURABLE_DRIVER_MODE:-root-pin}
 case "$driver_mode" in root-pin|reviewed-source) ;; *) echo invalid-driver-mode; exit 1 ;; esac
+timestamp_wire=${CHDB_TYPED_DATETIME64_WIRE:-auto}
+case "$timestamp_wire" in auto|raw-ticks) ;; *) echo invalid-timestamp-wire; exit 1 ;; esac
 binary_sha=${JOLT_EXPECTED_BINARY_SHA256:?set selected-binary SHA256}
 wrapper_sha=${JOLT_EXPECTED_WRAPPER_SHA256:?set qualified wrapper SHA256}
 library_sha=${JOLT_CHDB_EXPECTED_LIBRARY_SHA256:?set qualified library SHA256}
@@ -199,6 +201,9 @@ launch=(env -i HOME="${HOME:?}" PATH="$(dirname "$jolt"):${HOME}/.local/bin:/usr
         JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache"
         JOLT_DURABLE_DRAFT_ROOT="$root" JOLT_DURABLE_DRAFT_TOKEN="$task_token"
         OSCOPE_DURABLE_NATIVE_FIXTURE="$fixture")
+if [[ "$timestamp_wire" == raw-ticks ]]; then
+  launch+=(CHDB_TYPED_DATETIME64_WIRE=raw-ticks)
+fi
 aliases=-A:test
 if [[ "$compact_native_byte" == true ]]; then
   aliases=-A:test:native-json-byte-batch

@@ -98,15 +98,22 @@
 
       :else fallback)))
 
+(def ^:dynamic ^:private *timestamp-wire* :unix-nanos)
+
 (defn- timestamp [nanos]
   ;; Pinned libchdb package 26.7.3 / SQL engine 26.7.2.1 reads JSONEachRow
   ;; integer DateTime64(9) values as raw nanosecond ticks (pre-26.8 semantics).
-  ;; Preserve exact integers through maintained data.json, including epoch zero.
-  ;; A future engine upgrade must requalify this wire; 26.8 changes integers.
+  ;; 26.9 uses canonical UTC ISO strings instead; both retain the same bounded
+  ;; source domain, including epoch zero. Selection belongs to each exporter.
   (when-not (and (integer? nanos) (<= 0 nanos 9223372036854775807))
     (throw (ex-info "Telemetry timestamp exceeds DateTime64 nanosecond domain"
                     {:type ::invalid-timestamp-nanos})))
-  nanos)
+  (case *timestamp-wire*
+    :unix-nanos nanos
+    :raw-ticks nanos
+    :iso-utc (.toString (java.time.Instant/ofEpochSecond
+                         (quot nanos 1000000000) (rem nanos 1000000000)))
+    (throw (ex-info "Unsupported telemetry timestamp wire" {:type ::unqualified-timestamp-wire}))))
 
 (defn- metric-timestamp [nanos]
   ;; The pinned ClickStack collector stores metric timestamps as DateTime,
@@ -513,14 +520,22 @@
    (json-each-row-payload
     (if (= :json-compact-each-row format) (compact-rows columns rows) rows) prefix)))
 
+(defn- timestamp-insert-query [query]
+  ;; Query-local, so the SAME setting is persisted in each exact SQL WAL line.
+  ;; Never mutate shared connection settings or rely on replay session state.
+  (if (= :raw-ticks *timestamp-wire*)
+    (str query " SETTINGS input_format_read_datetime_number_as_raw_value=1")
+    query))
+
 (defn- compact-insert-query [table columns]
   (compact-columns! columns)
   (when-not (contains? #{"otel_traces" "otel_logs" "otel_metrics_gauge"
                          "otel_metrics_sum" "otel_metrics_histogram"} table)
     (throw (ex-info "Invalid compact telemetry table"
                     {:type ::invalid-compact-table})))
-  (str "insert into " table " ("
-       (str/join ", " (map #(str "`" (str/replace % "`" "``") "`") columns)) ")"))
+  (timestamp-insert-query
+   (str "insert into " table " ("
+        (str/join ", " (map #(str "`" (str/replace % "`" "``") "`") columns)) ")")))
 
 (defn- insert-format-name [format]
   (if (= :json-compact-each-row format) "JSONCompactEachRow" "JSONEachRow"))
@@ -539,7 +554,7 @@
   [connection query rows]
   (let [payload (json-each-row-payload rows)]
     (context/with-instrumentation-suppressed
-      (jdbc/execute! connection (str query " FORMAT JSONEachRow\n" payload)))))
+      (jdbc/execute! connection (str (timestamp-insert-query query) " FORMAT JSONEachRow\n" payload)))))
 
 (defn- valid-json-value? [value]
   (cond
@@ -555,13 +570,31 @@
 (defn- uint64? [value]
   (and (integer? value) (<= 0 value 18446744073709551615N)))
 
+(defn- valid-timestamp-value? [value]
+  (case *timestamp-wire*
+    :unix-nanos (and (integer? value) (<= 0 value 9223372036854775807))
+    :raw-ticks (and (integer? value) (<= 0 value 9223372036854775807))
+    :iso-utc (and (string? value)
+                 (boolean (re-matches #"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\.[0-9]{1,9})?Z" value))
+                 (try
+                   (let [instant (java.time.Instant/parse value)
+                         seconds (.getEpochSecond instant)
+                         nanos (.getNano instant)]
+                     ;; Some host parsers normalize invalid calendar dates.
+                     ;; Accept only the canonical string our producer emits.
+                     (and (= value (.toString instant))
+                          (<= 0 seconds 9223372036)
+                          (or (< seconds 9223372036) (<= nanos 854775807))))
+                   (catch Throwable _ false)))
+    false))
+
 (defn- valid-row-value? [column value]
   ;; These are exporter-owned physical UInt64 domains, not promoted Int64
   ;; attributes. Preserve the full integer domain supported by JSONEachRow.
   (case column
-    "Timestamp" (and (integer? value) (<= 0 value 9223372036854775807))
+    "Timestamp" (valid-timestamp-value? value)
     "Events.Timestamp" (and (sequential? value)
-                            (every? #(and (integer? %) (<= 0 % 9223372036854775807)) value))
+                            (every? valid-timestamp-value? value))
     "Duration" (uint64? value)
     "Count" (uint64? value)
     "BucketCounts" (and (sequential? value) (every? uint64? value))
@@ -921,7 +954,7 @@
         _ (when (= :json-compact-each-row format)
             (compact-format/require-order! (:compact-plans snapshot) connection table columns))
         query (if (= :json-compact-each-row format)
-                (compact-insert-query table columns) query)]
+                (compact-insert-query table columns) (timestamp-insert-query query))]
     (if (:durable? snapshot)
       ;; Durable V1 records the exact materialized SQL. Its execute and
       ;; publication acknowledgement are one writer request: splitting this
@@ -984,7 +1017,7 @@
                          (map #(log-row % nil) records))
           (if (:durable? snapshot)
             (execute-durable-sql!
-             connection (str query " FORMAT JSONEachRow\n" payload))
+             connection (str (timestamp-insert-query query) " FORMAT JSONEachRow\n" payload))
             (context/with-instrumentation-suppressed
               (chdb/insert-json-rows! connection "otel_logs"
                                       (:log-insert-columns snapshot) payload))))))))
@@ -1471,7 +1504,8 @@
     (if-not (admit-signal! owned? expected-signals state :spans)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [receipts
               (when (seq spans)
                 (let [snapshot @state
@@ -1492,7 +1526,7 @@
                         (let [execute-start (System/nanoTime)]
                           (execute-durable-sql!
                            connection
-                           (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
+                           (str (timestamp-insert-query "insert into otel_traces") " FORMAT JSONEachRow\n" payload))
                           ;; chDB performs native execution and persistence
                           ;; inside one writer request.  Report that combined
                           ;; boundary; separate timings would be invented.
@@ -1505,7 +1539,7 @@
                       (let [payload (untyped-span-payload encoder spans)]
                         (execute-durable-sql!
                          connection
-                         (str "insert into otel_traces FORMAT JSONEachRow\n" payload))
+                         (str (timestamp-insert-query "insert into otel_traces") " FORMAT JSONEachRow\n" payload))
                         nil))
                     (do
                       (cond
@@ -1543,7 +1577,8 @@
     (if-not (admit-signal! owned? expected-signals state :metrics)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [snapshot @state
               direct? (direct-metric-layout? snapshot)
               groups (if direct?
@@ -1565,7 +1600,8 @@
     (if-not (admit-signal! owned? expected-signals state :logs)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)]
+        (binding [*json-backend* (:json-backend @state :configured)
+                  *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (when (seq records)
           (insert-untyped-log-records! connection state records))
         (complete-batch! connection state (boolean (seq records))))
@@ -1618,14 +1654,18 @@
   native-byte compact Durable export and the qualified owned snapshot runtime.
   Direct compact routes can avoid whole-SQL String construction; unsupported
   output decodes already encoded bytes without re-running input producers.
-  Generic fallback routes retain text. WAL and acknowledgement are unchanged."
+  Generic fallback routes retain text. WAL and acknowledgement are unchanged.
+  :datetime64-wire defaults :auto: integer nanos on 26.7.3, UTC ISO on 26.9.0.
+  Explicit :raw-ticks requires 26.9.0 and Durable; each INSERT carries its
+  fixed raw-tick input setting into WAL without a connection/session toggle.
+  Explicit :iso-utc selects the 26.9.0 alternative. Unknown choices fail closed."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
-            durable-phase-receipts json-backend insert-format owned-statement-output?]
+            durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire]
      :or {db-spec "chdb::memory:" create-schema? true
-          signals #{:spans :metrics} durable? false json-backend :configured
+          signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
           insert-format :json-each-row owned-statement-output? false}}]
    (when-not (and (boolean? owned-statement-output?)
                   (or (not owned-statement-output?)
@@ -1672,6 +1712,8 @@
               (nil? connection))
      (throw (ex-info "Typed descriptors require their explicit install connection"
                      {:type ::typed-descriptors-require-connection})))
+   (when-not (contains? #{:auto :iso-utc :raw-ticks} datetime64-wire)
+     (throw (ex-info "Unsupported DateTime64 wire selection" {:type ::unqualified-timestamp-wire})))
    (let [owned? (nil? connection)
          conn (or connection (jdbc/connection db-spec))
          typed-span-projector (when typed-span-descriptors
@@ -1723,7 +1765,14 @@
        ;; change integer DateTime64 semantics. Fence the actual package before
        ;; any exporter DDL/checkpoint; neither ordinary nor Durable can bypass.
        (native/ensure-loaded!)
-       (when-not (= "26.7.3" (native/chdb-version))
+       (let [package (native/chdb-version)
+             timestamp-wire (case package
+                              "26.7.3" (when (= :auto datetime64-wire) :unix-nanos)
+                              "26.9.0" (case datetime64-wire
+                                         :auto :iso-utc :iso-utc :iso-utc
+                                         :raw-ticks (when durable? :raw-ticks))
+                              nil)]
+       (when-not timestamp-wire
          (throw (ex-info "Unqualified chDB telemetry timestamp wire"
                          {:type ::unqualified-timestamp-wire})))
        (when create-schema? (schema/ensure-schema! conn))
@@ -1797,11 +1846,12 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :timestamp-wire timestamp-wire
                               :owned-statement-output? owned-statement-output?
                               :insert-format insert-format
                               :compact-plans compact-plans
                               :durable-phase-receipts durable-phase-receipts
-                              :last-error nil})))
+                              :last-error nil}))))
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
          (when owned? (try (.close conn) (catch Throwable _ nil)))
