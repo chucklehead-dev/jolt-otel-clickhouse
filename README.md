@@ -70,7 +70,8 @@ does not need a session toggle. Ordinary connections reject this selection.
 `:auto` remains the default; `:iso-utc` explicitly selects the 26.9 string wire.
 Performance and hosted-S3 qualification of this option are still pending.
 
-The installer/default dependency pins have not changed. Use a new test object
+The driver pin includes current Durable fixes and optional native streaming;
+the installer still defaults to native 26.7.3. Use a new test object
 when evaluating 26.9.0: this candidate does **not** qualify replay of older
 26.7 integer-timestamp WAL on the newer engine. Do not point it at existing
 Durable telemetry objects until cross-version replay is separately qualified.

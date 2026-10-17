@@ -2,7 +2,7 @@
  :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "af3a902be39fc466246b39864cdf77879032c87a"}
+         :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
          :git/sha "14ffd741351373f07d96aa070b0f9853d7daf8ab"
