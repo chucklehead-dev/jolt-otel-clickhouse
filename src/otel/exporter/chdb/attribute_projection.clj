@@ -35,16 +35,30 @@
     :int64 (and (integer? value) (<= int64-min value int64-max))
     false))
 
-(defn- projected-value [type values]
-  (let [codes (registry/status-code-lookup)
-        fallback (default-value type)]
-    (cond
-      (empty? values) [fallback (:absent codes)]
-      (not= 1 (count values)) [fallback (:invalid codes)]
-      (and (= :string type) (= "" (first values)))
-      ["" (:present-empty codes)]
-      (valid-value? type (first values)) [(first values) (:valid codes)]
-      :else [fallback (:invalid codes)])))
+(defmacro ^:private projected-value-body [type values emit]
+  ;; One rule, expanded into either pair construction or a continuation. The
+  ;; ordinary path gains no forwarding frame; helper/codebook order is shared.
+  (let [codes (gensym "codes") fallback (gensym "fallback")
+        result (fn [value status]
+                 (let [code (list status codes)]
+                   (if emit (list emit value code) [value code])))]
+    `(let [~codes (registry/status-code-lookup)
+           ~fallback (default-value ~type)]
+       (cond
+         (empty? ~values) ~(result fallback :absent)
+         (not= 1 (count ~values)) ~(result fallback :invalid)
+         (and (= :string ~type) (= "" (first ~values)))
+         ~(result "" :present-empty)
+         (valid-value? ~type (first ~values)) ~(result `(first ~values) :valid)
+         :else ~(result fallback :invalid)))))
+
+(defn- projected-value
+  ([type values] (projected-value-body type values nil))
+  ;; Internal continuation accepts values only, never the native output buffer.
+  ([type values emit] (projected-value-body type values emit)))
+
+;; The defining namespace owns this identity, not a consumer-load snapshot.
+(def ^:private original-projected-value projected-value)
 
 (defn confirmed-span-fields
   "Return trace manifest fields after issuer and target identity confirmation."
@@ -152,7 +166,7 @@
   (delay
     (require 'otel.exporter.chdb.native-projection)
     ((ns-resolve 'otel.exporter.chdb.native-projection 'load-positional-output!)
-     #'projected-value)))
+     #'projected-value original-projected-value)))
 
 (defn- indexed-vector-projector [locations wanted plan]
   (let [location-count (count locations)]

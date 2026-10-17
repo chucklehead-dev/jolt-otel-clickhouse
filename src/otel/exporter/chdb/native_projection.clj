@@ -22,7 +22,19 @@
 
 (defn load-positional-output!
   "Build private positional output once; resolve the live projector per field.
-  Preserve ordinary pair destructuring, field order and reentrant calls."
-  [project-var]
-  (let [emit (scheme/eval-string projected)]
-    (fn [plan collected] (emit plan collected project-var))))
+  Preserve ordinary pair destructuring, field order and reentrant calls.
+  The internal second argument is the defining namespace's original projector,
+  which supports a continuation. Other live roots keep the two-argument path."
+  ([project-var] (load-positional-output! project-var false))
+  ([project-var original-projector]
+   (let [factory (scheme/eval-string
+                   (str "(let ((emit " projected ")) "
+                        "(lambda (project-var original) "
+                        "(when original "
+                        "(unless (and (top-level-bound? 'jolt-invoke3) "
+                        "(procedure? (top-level-value 'jolt-invoke3)) "
+                        "(bitwise-bit-set? (procedure-arity-mask (top-level-value 'jolt-invoke3)) 4)) "
+                        "(error 'native-projection \"Runtime continuation bridge is unavailable\"))) "
+                        "(lambda (plan collected) (emit plan collected project-var original))))"))
+         emit (factory project-var original-projector)]
+     (fn [plan collected] (emit plan collected)))))
