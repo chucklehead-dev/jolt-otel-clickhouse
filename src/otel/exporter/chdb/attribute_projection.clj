@@ -142,6 +142,24 @@
     (fn [span]
       (project-fields fields #(attributes-at span %)))))
 
+(defn trace-vector-projector
+  "Compile confirmed trace fields into positional value/status pairs.
+
+  Internal compact transport only. The public map projector is unchanged;
+  both share normalized-key collisions, defaults and status classification."
+  [descriptor-set target]
+  (let [fields (confirmed-span-fields descriptor-set target)
+        locations (vec (distinct (map :location fields)))
+        indices (zipmap locations (range))
+        plan (mapv (fn [{:keys [location key type]}]
+                     [(get indices location) key type]) fields)]
+    (fn [span]
+      (let [values (mapv #(values-by-key (attributes-at span %)) locations)]
+        (reduce (fn [out [index key type]]
+                  (let [[value status] (projected-value type (get (nth values index) key []))]
+                    (conj out value status)))
+                [] plan)))))
+
 (defn log-projector
   "Compile one confirmed log-attribute capability into a log-row projector."
   [descriptor-set target]

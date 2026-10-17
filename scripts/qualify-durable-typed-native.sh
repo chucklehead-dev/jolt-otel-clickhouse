@@ -102,9 +102,11 @@ if [[ "${1:-}" == --check-reviewed-source ]]; then
 fi
 
 crash_reopen=false
+compact_native_byte=false
 case "${1:-}" in
   '') [[ "$#" == 0 ]] || exit 64 ;;
   --wal-crash-reopen) [[ "$#" == 1 ]] || exit 64; crash_reopen=true ;;
+  --compact-native-byte) [[ "$#" == 1 ]] || exit 64; compact_native_byte=true ;;
   *) echo invalid-native-gate-argument >&2; exit 64 ;;
 esac
 
@@ -191,18 +193,24 @@ printf '%s\n' "$driver_mode" >"$root/driver-mode.txt"
 git rev-parse HEAD >"$root/exporter-source.txt"
 sha256sum "$fixture" >"$root/fixture-source.sha256"
 launch=(env -i HOME="${HOME:?}" PATH="$(dirname "$jolt"):${HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin"
-        LANG=C.UTF-8 JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache"
+        LANG=C.UTF-8 JOLT_AOT_CACHE=0 JOLT_NO_USER_DEPS=1
+        JOLT_CHDB_LIB="$lib" JOLT_CACHE_DIR="$root/cache"
         JOLT_DURABLE_DRAFT_ROOT="$root" JOLT_DURABLE_DRAFT_TOKEN="$task_token"
         OSCOPE_DURABLE_NATIVE_FIXTURE="$fixture")
+aliases=-A:test
+if [[ "$compact_native_byte" == true ]]; then
+  aliases=-A:test:native-json-byte-batch
+  launch+=(JOLT_DURABLE_COMPACT_NATIVE_BYTE=true)
+fi
 if [[ -n "${JOLT_GITLIBS_DIR:-}" ]]; then
   launch+=(JOLT_GITLIBS_DIR="$JOLT_GITLIBS_DIR")
 fi
-runtime=("$wrapper" "$jolt" -Srepro "${driver_options[@]}" -A:test -e)
+runtime=("$wrapper" "$jolt" -Srepro "${driver_options[@]}" "$aliases" -e)
 timeout --signal=TERM --kill-after=5s 30s "${launch[@]}" bash -c '
-  wrapper=$1; binary=$2; shift 2
-  "$wrapper" "$binary" -Srepro "$@" -A:test -Spath > "$JOLT_DURABLE_DRAFT_ROOT/classpath.txt"
-  "$wrapper" "$binary" -Srepro -A:test -e "(require (quote clojure.edn)) (let [d ((ns-resolve (quote clojure.edn) (quote read-string)) (slurp \"deps.edn\"))] (println (get-in d [:deps (quote io.github.chucklehead-dev/jolt-chdb) :git/sha])) (println (get-in d [:deps (quote io.github.casselc/otel) :git/sha])))" > "$JOLT_DURABLE_DRAFT_ROOT/declared-pins.txt"
-' _ "$wrapper" "$jolt" "${driver_options[@]}"
+  wrapper=$1; binary=$2; aliases=$3; shift 3
+  "$wrapper" "$binary" -Srepro "$@" "$aliases" -Spath > "$JOLT_DURABLE_DRAFT_ROOT/classpath.txt"
+  "$wrapper" "$binary" -Srepro "$aliases" -e "(require (quote clojure.edn)) (let [d ((ns-resolve (quote clojure.edn) (quote read-string)) (slurp \"deps.edn\"))] (println (get-in d [:deps (quote io.github.chucklehead-dev/jolt-chdb) :git/sha])) (println (get-in d [:deps (quote io.github.casselc/otel) :git/sha])))" > "$JOLT_DURABLE_DRAFT_ROOT/declared-pins.txt"
+' _ "$wrapper" "$jolt" "$aliases" "${driver_options[@]}"
 mapfile -t declared <"$root/declared-pins.txt"
 [[ "${#declared[@]}" == 2 && "${declared[0]}" =~ ^[a-f0-9]{40}$ && "${declared[1]}" =~ ^[a-f0-9]{40}$ ]]
 [[ -z "${JOLT_EXPECTED_DRIVER_REV:-}" || "$driver_mode" != root-pin || "$JOLT_EXPECTED_DRIVER_REV" == "${declared[0]}" ]]
