@@ -36,7 +36,7 @@
     false))
 
 (defn- projected-value [type values]
-  (let [codes registry/status-codes
+  (let [codes (registry/status-code-lookup)
         fallback (default-value type)]
     (cond
       (empty? values) [fallback (:absent codes)]

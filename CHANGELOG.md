@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Avoid sorted-map comparisons for the built-in typed status codebook during
+  row projection. Keep its public sorted presentation and live replacement
+  behavior, including codebooks installed before the projector loads.
+
 - Add explicit experimental Durable `:datetime64-wire :raw-ticks` for chDB
   26.9.0. Keep numeric nanoseconds and include the fixed raw-tick setting in
   every generated INSERT/WAL statement, without changing session settings.

@@ -23,6 +23,18 @@
               :valid 3
               :invalid 4))
 
+(def ^:private original-status-codes status-codes)
+(def ^:private compact-status-codes (into {} original-status-codes))
+
+(defn status-code-lookup
+  "Snapshot the live codebook for row projection, without sorting its lookups.
+  Only this namespace's original immutable table uses the private compact map.
+  Replacement codebooks retain their own lookup behavior, even when installed
+  before a consumer namespace loads. The public sorted table is unchanged."
+  []
+  (let [codes status-codes]
+    (if (identical? codes original-status-codes) compact-status-codes codes)))
+
 (def ^:private status-column-type "UInt8")
 (def ^:private max-generation 9223372036854775807)
 (def ^:private max-catalog-records 4096)
