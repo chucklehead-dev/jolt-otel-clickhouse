@@ -8,6 +8,7 @@
             [jdbc.chdb.native :as native]
             [jdbc.chdb.durable :as durable]
             [jdbc.chdb.json-each-row :as row-encoder]
+            [jdbc.chdb.owned-statement :as owned-statement]
             [jdbc.core :as jdbc]
             [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
@@ -424,7 +425,8 @@
 
 (defn- json-each-row-payload
   ([rows] (json-each-row-payload rows nil))
-  ([rows prefix]
+  ([rows prefix] (json-each-row-payload rows prefix false))
+  ([rows prefix owned-output?]
    (if (= :configured *json-backend*)
     (let [payload (configured-json-each-row-payload rows)]
       (if (nil? prefix) payload (str prefix payload)))
@@ -435,7 +437,9 @@
       (try
         (if (nil? prefix)
           (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
-          (row-encoder/encode-limited-prefixed-text! encoder prefix rows max-insert-bytes))
+          (if owned-output?
+            (row-encoder/encode-limited-prefixed-statement! encoder prefix rows max-insert-bytes)
+            (row-encoder/encode-limited-prefixed-text! encoder prefix rows max-insert-bytes)))
         (catch clojure.lang.ExceptionInfo e
           (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
             (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
@@ -1105,8 +1109,8 @@
        (= direct-metric-columns schema/clickstack-metric-insert-columns)))
 
 (defn- execute-closed-compact-rows! [connection table columns rows checked-snapshot!]
-  (let [snapshot (checked-snapshot!)]
-    (compact-format/require-order! (:compact-plans snapshot) connection table columns)
+  (let [initial-snapshot (checked-snapshot!)]
+    (compact-format/require-order! (:compact-plans initial-snapshot) connection table columns)
     (letfn [(checked [remaining]
               (lazy-seq
                 (when-let [remaining (seq remaining)]
@@ -1118,7 +1122,8 @@
       (let [query (compact-insert-query table columns)
             prefix (str query " FORMAT JSONCompactEachRow\n")
             sql (if (= :native-guarded-byte-batch *json-backend*)
-                  (json-each-row-payload (checked rows) prefix)
+                  (json-each-row-payload (checked rows) prefix
+                                        (boolean (:owned-statement-output? initial-snapshot)))
                   (str prefix (json-each-row-payload (checked rows))))
             snapshot (checked-snapshot!)]
         ;; Custom conversion/JSON callbacks may have changed private state.
@@ -1311,7 +1316,9 @@
 (defn- execute-durable-sql! [connection sql]
   (let [result
         (context/with-instrumentation-suppressed
-          (durable/execute-and-flush! connection sql))]
+          (if (string? sql)
+            (durable/execute-and-flush! connection sql)
+            (durable/execute-owned-and-flush! connection sql)))]
     (when-not (contains? confirmed-durable-statuses (:status result))
       (throw (ex-info "Durable atomic execution did not confirm publication"
                       {:type ::durable-atomic-execution-unconfirmed
@@ -1580,15 +1587,26 @@
   :insert-format defaults to :json-each-row. :json-compact-each-row uses
   schema-ordered arrays and explicit columns with the same serial UTF-8 bound
   and persistence acknowledgement. It rejects missing/extra physical fields;
-  custom JSONWriter methods see arrays instead of the former row maps."
+  custom JSONWriter methods see arrays instead of the former row maps.
+  :owned-statement-output? defaults false. Experimental true requires explicit
+  native-byte compact Durable export and the qualified owned snapshot runtime.
+  Direct compact routes can avoid whole-SQL String construction; unsupported
+  output decodes already encoded bytes without re-running input producers.
+  Generic fallback routes retain text. WAL and acknowledgement are unchanged."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
-            durable-phase-receipts json-backend insert-format]
+            durable-phase-receipts json-backend insert-format owned-statement-output?]
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured
-          insert-format :json-each-row}}]
+          insert-format :json-each-row owned-statement-output? false}}]
+   (when-not (and (boolean? owned-statement-output?)
+                  (or (not owned-statement-output?)
+                      (and durable? (= :native-guarded-byte-batch json-backend)
+                           (= :json-compact-each-row insert-format))))
+     (throw (ex-info "Owned statement output requires native-byte compact Durable export"
+                     {:type ::invalid-owned-statement-output})))
    (when-not (#{:json-each-row :json-compact-each-row} insert-format)
      (throw (ex-info "Unsupported exporter insert format"
                      {:type ::invalid-insert-format})))
@@ -1599,8 +1617,21 @@
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (not= :configured json-backend)
-     (row-encoder/close!
-      (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})))
+     (let [encoder (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})]
+       (try
+         (when (and owned-statement-output?
+                    (not (try
+                           (and (ifn? (:native-prefixed-byte-writer encoder))
+                                (ifn? row-encoder/encode-limited-prefixed-statement!)
+                                (ifn? durable/execute-owned-and-flush!)
+                                ;; Probe the owned snapshot ABI before storage
+                                ;; acquisition, with no SQL or caller payload.
+                                (owned-statement/statement?
+                                  (owned-statement/try-snapshot (byte-array 0))))
+                           (catch Throwable _ false))))
+           (throw (ex-info "Owned statement stack unavailable"
+                           {:type ::owned-statement-unavailable})))
+         (finally (row-encoder/close! encoder)))))
    (when (and persistence-barrier (not (ifn? persistence-barrier)))
      (throw (ex-info ":persistence-barrier must be callable"
                      {:type ::invalid-persistence-barrier})))
@@ -1740,6 +1771,7 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :owned-statement-output? owned-statement-output?
                               :insert-format insert-format
                               :compact-plans compact-plans
                               :durable-phase-receipts durable-phase-receipts

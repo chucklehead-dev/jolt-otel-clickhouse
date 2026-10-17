@@ -2,12 +2,20 @@
 set -euo pipefail
 umask 077
 runner=${1:?supply the selected Jolt executable or pinned wrapper}
-(( $# <= 2 ))
+(( $# <= 3 ))
 format=${2:-json-each-row}
 case "$format" in
   json-each-row|json-compact-each-row) ;;
   *) echo invalid-fixture-format >&2; exit 1 ;;
 esac
+mode=${3:-text}
+case "$mode" in
+  text) ;;
+  owned) [[ "$format" == json-compact-each-row ]] || exit 64 ;;
+  *) echo invalid-fixture-output-mode >&2; exit 64 ;;
+esac
+runtime_options=()
+if [[ "$mode" == owned ]]; then runtime_options=(-A:native-json-byte-batch); fi
 driver=${JOLT_CHDB_SOURCE_ROOT:?supply the exact root dependency checkout}
 revision=$("$runner" -Srepro -e "(require 'clojure.edn) (println (get-in (clojure.edn/read-string (slurp \"deps.edn\")) [:deps 'io.github.chucklehead-dev/jolt-chdb :git/sha]))")
 [[ "$revision" =~ ^[a-f0-9]{40}$ ]]
@@ -40,7 +48,7 @@ test -s "$fixture_dir/port"
 port=$(<"$fixture_dir/port")
 [[ "$port" =~ ^[0-9]+$ ]]
 for phase in writer reader; do
-  "$runner" -Srepro -Sdeps '{:paths ["src" "test"]}' \
+  JOLT_SCOPED_S3_OWNED_OUTPUT="$mode" "$runner" -Srepro -Sdeps '{:paths ["src" "test"]}' "${runtime_options[@]}" \
     -m otel.exporter.chdb-scoped-s3-native-test "$phase" \
     "http://127.0.0.1:$port" "$fixture_dir" "$format"
 done
