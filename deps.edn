@@ -5,7 +5,7 @@
          :git/sha "af3a902be39fc466246b39864cdf77879032c87a"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "e8435b381ee0cafd7d1cb5cb7b8639c551544042"
+         :git/sha "14ffd741351373f07d96aa070b0f9853d7daf8ab"
          ;; OTel now names the canonical crypto provider at this same reviewed
          ;; revision. Keep its subtree declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
@@ -18,7 +18,13 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:owned-output-test
+ :aliases {:preloaded-scalar-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-preloaded-scalar-test"]}
+           :scalar-attribute-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-scalar-attribute-test"]}
+           :owned-output-test
            {:extra-paths ["test" "bench"]
             :main-opts ["-m" "otel.exporter.chdb-owned-output-test"]}
            :typed-compact-vector-test
