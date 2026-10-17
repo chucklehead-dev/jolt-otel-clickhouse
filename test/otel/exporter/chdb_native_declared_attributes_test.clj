@@ -1,8 +1,10 @@
 (ns otel.exporter.chdb-native-declared-attributes-test
   (:require [clojure.test :refer [deftest is]]
             [clojure.java.io :as io]
+            [clojure.string :as str]
             [jolt.scheme :as scheme]
             [otel.exporter.chdb.attribute-projection :as p]
+            [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.native-projection :as native]
             [otel.exporter.chdb-typed-compact-vector-test :as vectors]
             [otel.exporter.chdb-attribute-projection-test :as fixture]
@@ -19,6 +21,120 @@
               (if (contains? wanted normalized)
                 (assoc out normalized (conj (get out normalized []) value)) out)))
           {} attrs))
+
+(defn- legacy-projected-value [type inputs]
+  ;; Frozen pre-change rule; don't derive this oracle from the new macro.
+  (let [codes (registry/status-code-lookup) fallback (@#'p/default-value type)]
+    (cond
+      (empty? inputs) [fallback (:absent codes)]
+      (not= 1 (count inputs)) [fallback (:invalid codes)]
+      (and (= :string type) (= "" (first inputs))) ["" (:present-empty codes)]
+      (@#'p/valid-value? type (first inputs)) [(first inputs) (:valid codes)]
+      :else [fallback (:invalid codes)])))
+
+(defn- projection-verdict [f]
+  (try [:ok (f)]
+       (catch Throwable error [:error (class error) (.getMessage error) (ex-data error)])))
+
+(deftest pair-and-continuation-retain-legacy-classification
+  (doseq [type [:string :boolean :int64 :unknown]
+          inputs [nil [] [nil] [false] [true] [""] ["é😀"] [0] [-1] [1.0]
+                  [-9223372036854775808] [9223372036854775807]
+                  [9223372036854775808N] [[1]] [{:nested true}] [1 2]
+                  (list 42) (list "")]]
+    (is (= (projection-verdict #(legacy-projected-value type inputs))
+           (projection-verdict #(@#'p/projected-value type inputs))
+           (projection-verdict #(@#'p/projected-value type inputs (fn [value status] [value status])))))))
+
+(deftest continuation-mode-has-an-actual-arity-witness-and-live-fallback
+  (let [[emit counts]
+        (scheme/eval-string
+          (str "(let ((two 0) (three 0) (old2 jolt-invoke2) (old3 jolt-invoke3)) "
+               "(let ((jolt-invoke2 (lambda (f a b) (set! two (+ two 1)) (old2 f a b))) "
+               "(jolt-invoke3 (lambda (f a b c) (set! three (+ three 1)) (old3 f a b c)))) "
+               "(jolt-vector "
+               (slurp (io/resource "otel/exporter/chdb/native_projected_values.ss"))
+               " (lambda () (jolt-vector two three)))))"))
+        plan [[0 "a" :int64] [0 "b" :string] [0 "c" :boolean]]
+        collected [{"a" [7] "b" [""] "c" [false]}]
+        original @#'p/original-projected-value]
+    (is (= [7 3 "" 2 false 3] (emit plan collected #'p/projected-value original)))
+    (is (= [0 3] (counts)))
+    (is (= [7 3 "" 2 false 3] (emit plan collected #'p/projected-value)))
+    (is (= [3 3] (counts)))
+    (with-redefs [p/projected-value (fn [_ _] (list :replacement))]
+      (is (= [:replacement nil :replacement nil :replacement nil]
+             (emit plan collected #'p/projected-value original))))
+    (is (= [6 3] (counts)))))
+
+(deftest continuation-runtime-is-qualified-before-returning-a-factory
+  (let [without-three
+        (scheme/eval-string
+          "(lambda (run bad)
+             (let ((old jolt-invoke3))
+               (dynamic-wind jolt-finally-in
+                 (lambda () (set! jolt-invoke3 bad) (jolt-invoke0 run))
+                 (lambda () (set! jolt-invoke3 old)))))")
+        wrong-arity (scheme/eval-string "(lambda (f a b) #f)")]
+    (doseq [bad [false wrong-arity]]
+      (is (thrown? Throwable
+            (without-three
+              #(native/load-positional-output! #'p/projected-value @#'p/original-projected-value) bad)))
+      ;; A legacy factory needs no 3-argument bridge and must still be usable.
+      (let [legacy (without-three #(native/load-positional-output! #'p/projected-value) bad)]
+        (is (= [7 3] (legacy [[0 "a" :int64]] [{"a" [7]}])))))))
+
+(deftest retained-native-continuation-never-borrows-output-storage
+  (let [source (slurp (io/resource "otel/exporter/chdb/native_projected_values.ss"))
+        unsafe (str/replace source
+                 "(jolt-invoke3 projector type inputs return-pair)"
+                 (str "(jolt-invoke3 projector type inputs "
+                      "(lambda (v s) (vector-set! out offset v) "
+                      "(vector-set! out (fx+ offset 1) s) (values v s)))"))
+        invoke-late (scheme/eval-string
+                      "(lambda (f) (let-values (((v s) (jolt-invoke2 f 99 98))) (jolt-vector v s)))")
+        original @#'p/projected-value
+        plan [[0 "a" :int64] [0 "b" :int64] [0 "c" :int64]]
+        collected [{"a" [1] "b" [2] "c" [3]}]
+        expected [1 3 2 3 3 3]]
+    (is (not= source unsafe) "unsafe control must really replace the continuation")
+    (doseq [[mutant? text] [[false source] [true unsafe]]]
+      (let [emit (scheme/eval-string text) retained (atom nil)
+            observed (fn
+                       ([type inputs] (original type inputs))
+                       ([type inputs continuation]
+                        (reset! retained continuation)
+                        (original type inputs continuation)))
+            result (with-redefs [p/projected-value observed]
+                     ;; Unit-only trusted identity arms the actual 3-arg path.
+                     (emit plan collected #'p/projected-value observed))]
+        (is (= expected result))
+        (is (= [99 98] (invoke-late @retained)))
+        ;; Don't snapshot with (vec result): on a vector that aliases itself.
+        (is (= mutant? (not= expected result)))))))
+
+(deftest continuation-mode-observes-codebook-induced-root-change-and-reentry
+  (let [original @#'p/projected-value lookup registry/status-code-lookup
+        plan [[0 "a" :int64] [0 "b" :int64] [0 "c" :int64]]
+        collected [{"a" [1] "b" [2] "c" [3]}]
+        run (fn [fast?]
+              (let [emit (if fast?
+                           (native/load-positional-output! #'p/projected-value @#'p/original-projected-value)
+                           (native/load-positional-output! #'p/projected-value))
+                    effects (atom []) nested (atom nil)]
+                (with-redefs [p/projected-value original
+                              registry/status-code-lookup
+                              (fn []
+                                (swap! effects conj :lookup)
+                                (alter-var-root #'p/projected-value
+                                  (constantly (fn [_ inputs]
+                                                (swap! effects conj (first inputs))
+                                                (list (* 10 (first inputs))))))
+                                (reset! nested (emit [[0 "b" :int64]] collected))
+                                (lookup))]
+                  [(emit plan collected) @effects @nested])))]
+    (is (= [[1 3 20 nil 30 nil] [:lookup 2 2 3] [20 nil]] (run false)))
+    (is (= (run false) (run true)))))
 
 (deftest positional-output-is-sealed-once-and-remains-independent
   (let [[emit seals]
@@ -37,9 +153,11 @@
             before (seals)
             a (emit plan collected #'p/projected-value)
             b (with-redefs [p/projected-value (fn [_ values] [(- (first values)) 99])]
-                (emit plan collected #'p/projected-value))]
-        (is (= 2 (- (seals) before)))
+                (emit plan collected #'p/projected-value))
+            direct (emit plan collected #'p/projected-value @#'p/original-projected-value)]
+        (is (= 3 (- (seals) before)))
         (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
+        (is (= a direct))
         (is (= (vec (mapcat (fn [i] [(- i) 99]) (range n))) b))
         (is (= (vec (mapcat (fn [[_ k type]] (original type (get (first collected) k []))) plan)) a))
         (when (pos? n)

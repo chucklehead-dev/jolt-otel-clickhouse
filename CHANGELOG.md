@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Avoid intermediate typed value/status pairs in explicit native positional
+  projection. Share classification rules with the ordinary pair path and retain
+  live projectors, helper/codebook behavior and private output ownership.
+
 - Avoid redundant key-converter calls for primitive string keys in the explicit
   native attribute-map path. Check the live converter before each entry so
   mid-row replacements, value callbacks and normalized-key fallback remain live.
