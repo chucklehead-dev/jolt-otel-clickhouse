@@ -14,6 +14,53 @@
 
 (defn native? [] (string? (System/getProperty "jolt.version")))
 
+(deftest nested-json-keeps-ordinary-selection-and-legacy-native-fallback
+  (with-redefs [exporter/native-nested-json-writer
+                (delay (throw (ex-info "ordinary path forced optional loader" {})))]
+    (with-bindings {#'exporter/*json-backend* :configured}
+      (is (= "[]" (@#'exporter/nested-json-string [])))))
+  (with-redefs [exporter/native-nested-json-writer (delay nil)
+                json/write-str (fn [_] "live-public-writer")]
+    (with-bindings {#'exporter/*json-backend* :native-guarded-byte-batch}
+      (is (= "live-public-writer" (@#'exporter/nested-json-string []))))))
+
+(deftest nested-json-optional-adapter-is-selected-only-by-explicit-byte-mode
+  (let [calls (atom [])]
+    (with-redefs [exporter/native-nested-json-writer
+                  (delay (fn [value] (swap! calls conj value) (json/write-str value)))]
+      (doseq [backend [:configured :native-guarded :native-guarded-string-cache
+                       :native-guarded-byte-batch]]
+        (with-bindings {#'exporter/*json-backend* backend}
+          (is (= "[]" (@#'exporter/nested-json-string [])))))
+      (is (= [[]] @calls)))))
+
+(deftest real-nested-json-preserves-live-public-writer-and-collection-method
+  (when (native?)
+    (with-bindings {#'exporter/*json-backend* :native-guarded-byte-batch}
+      (doseq [value [[] [{:name "event-漢字😀"}] nil [1 2]]]
+        (is (= (json/write-str value) (@#'exporter/nested-json-string value))))
+      (with-redefs [json/write-str (fn [_] "replacement")]
+        (is (= "replacement" (@#'exporter/nested-json-string []))))
+      (let [original @#'json/write-array calls (atom 0)]
+        (try
+          (extend java.util.Collection json/JSONWriter
+                  {:-write (fn [_ out _] (swap! calls inc) (.write out "[9]"))})
+          (is (= "[9]" (@#'exporter/nested-json-string [])))
+          (is (= 1 @calls))
+          (finally (extend java.util.Collection json/JSONWriter {:-write original})))))))
+
+(deftest available-library-adapter-root-remains-live-after-first-use
+  (when (native?)
+    (with-bindings {#'exporter/*json-backend* :native-guarded-byte-batch}
+      (@#'exporter/nested-json-string [])
+      (when-let [adapter (ns-resolve 'clojure.data.json.jolt-native 'write-str)]
+        (is (identical? adapter @@#'exporter/native-nested-json-writer))
+        (let [calls (atom 0)]
+          (with-redefs-fn {adapter (fn [_] (swap! calls inc) "adapter-root")}
+            (fn []
+              (is (= "adapter-root" (@#'exporter/nested-json-string [])))
+              (is (= 1 @calls)))))))))
+
 (deftest native-factory-captures-vars-not-their-current-values
   (when (native?)
     (let [input (into {} (map (fn [i] [(str "key-" i) i]) (range 16)))
@@ -421,7 +468,13 @@
     (let [transform (native/load-transform! #'exporter/key-string #'exporter/value-string)]
       (is (= {"a" "1"} (transform {:a 1}))))))
 
-(defn -main [& _]
+(defn -main [& args]
   (when-not (native?) (throw (ex-info "Native attribute gate requires Jolt" {})))
+  (when (seq args)
+    (when-not (= ["--require-string-output"] (vec args))
+      (throw (ex-info "Unknown native attribute test option" {})))
+    (require 'clojure.data.json.jolt-native)
+    (when-not (ns-resolve 'clojure.data.json.jolt-native 'write-str)
+      (throw (ex-info "Required native string-output adapter is unavailable" {}))))
   (let [r (clojure.test/run-tests 'otel.exporter.chdb-native-attributes-test)]
     (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1))))

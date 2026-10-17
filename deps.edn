@@ -54,7 +54,7 @@
            :native-json-byte-batch
            {:extra-deps {org.clojure/data.json
                          {:git/url "https://github.com/casselc/data.json.git"
-                          :git/sha "b959a5625c28cc8571e04de5ca02a2c8902b8b5e"}}}
+                          :git/sha "a28b7a88fb9ae2a72253e69e71e8c6dea8598df1"}}}
            :benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test
