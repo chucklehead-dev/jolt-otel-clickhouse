@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add experimental owned statement output for explicit native-byte compact
+  Durable export. Qualify its snapshot ABI before opening storage; preserve
+  schema fences, byte limits and confirmed publication. Unsupported output
+  decodes already encoded bytes without repeating row producers. Defaults and
+  generic fallback routes retain text; WAL and timestamp formats are unchanged.
+
 - Build approved typed compact Durable span rows directly as vectors with the
   explicit native byte backend. Compile the field/location plan once; retain
   target and column fencing, normalized-key collision/status semantics,

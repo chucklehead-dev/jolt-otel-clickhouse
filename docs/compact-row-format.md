@@ -100,6 +100,32 @@ target. This does not change global SDK defaults, remove cancellation, or
 guarantee delivery/deadline behavior. The fixture requires the option to appear
 on its reader and verifies that its final drain was not cancelled.
 
+## Experimental owned statement output
+
+With the qualified byte-collector runtime and explicit optional JSON dependency,
+`:owned-statement-output? true` can avoid whole-SQL String construction on
+direct compact routes:
+
+```clojure
+(exporter/exporter {:connection writer-connection :durable? true
+                    :insert-format :json-compact-each-row
+                    :json-backend :native-guarded-byte-batch
+                    :owned-statement-output? true})
+```
+
+The option defaults to false. Invalid combinations or an unavailable snapshot
+ABI fail before storage acquisition. This is not a stock-Jolt guarantee and not
+zero-copy: the driver privately copies ASCII bytes, prepares fresh WAL chunks
+and copies into scoped native storage. It avoids redundant text conversions,
+not the ownership boundaries needed for safe persistence and replay.
+
+Output outside the owned ASCII subset is decoded from the bytes already
+produced; row producers and custom writers are not invoked again. Producer
+errors and overflows do not retry. Generic typed log/metric fallback routes
+still use text. Every physical insert retains its confirmed publication check,
+exact V1 WAL bytes, schema fences and payload-only limit. Telemetry attribute
+values are not redacted or changed by this representation choice.
+
 ## Checks for this integration
 
 Run each native command in its own process, with the declared 26.7.3 package:

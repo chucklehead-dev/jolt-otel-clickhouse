@@ -7,6 +7,7 @@
             [jdbc.chdb.durable.local-posix :as local]
             [jdbc.chdb.durable.control :as control]
             [jdbc.chdb.native :as native]
+            [jdbc.chdb.owned-statement :as owned]
             [otel.exporter.chdb :as exporter]
             [otel.exporter.chdb.schema :as schema]
             [otel.exporter.chdb.attribute-manifest :as manifest]
@@ -17,6 +18,7 @@
 (def last-check (atom :not-started))
 (def observed-checks (atom 0))
 (def ^:dynamic *compact-native-byte?* false)
+(def ^:dynamic *owned-output?* false)
 (defn- check! [label expected actual]
   (reset! last-check label)
   (swap! observed-checks inc)
@@ -212,7 +214,8 @@
                                           :typed-sum-descriptors sums}
                                            *compact-native-byte?*
                                            (assoc :insert-format :json-compact-each-row
-                                                  :json-backend :native-guarded-byte-batch)))]
+                                                  :json-backend :native-guarded-byte-batch)
+                                           *owned-output?* (assoc :owned-statement-output? true)))]
             (try
               (let [encoder (:typed-span-encoder @(:state writer))
                     projector (:typed-span-projector @(:state writer))
@@ -227,13 +230,22 @@
                                   (= (json/write-str (#'exporter/span-row span projector))
                                      (encoder span))) samples)))
               (check! :spans-accepted true
-                      (if *compact-native-byte?*
+                      (let [requests (atom 0) original-owned durable/execute-owned-and-flush!
+                            result (if *compact-native-byte?*
                         ;; Require public-constructor selection, not equivalent
                         ;; readback through the legacy physical-map route.
                         (with-redefs [exporter/compact-rows
-                                      (fn [& _] (throw (ex-info "Unexpected map projection" {:fixture true})))]
+                                      (fn [& _] (throw (ex-info "Unexpected map projection" {:fixture true})))
+                                      owned/text (if *owned-output?*
+                                                   (fn [_] (throw (ex-info "Unexpected SQL String materialization" {:fixture true})))
+                                                   owned/text)
+                                      durable/execute-owned-and-flush!
+                                      (fn [connection statement]
+                                        (swap! requests inc) (original-owned connection statement))]
                           (export/export-spans! writer (mapv span-record (range 4))))
-                        (export/export-spans! writer (mapv span-record (range 4)))))
+                        (export/export-spans! writer (mapv span-record (range 4))))]
+                        (when *owned-output?* (check! :owned-span-request 1 @requests))
+                        result))
               (check! :logs-accepted true (logs/export-logs! writer (mapv log-record (range 4))))
               (check! :metrics-accepted true
                       (export/export-metrics! writer
@@ -289,10 +301,14 @@
         (println :reader-verified)))))
 
 (defn -main [phase root]
-  (try (let [mode (System/getenv "JOLT_DURABLE_COMPACT_NATIVE_BYTE")]
-         (when-not (or (nil? mode) (= "true" mode))
+  (try (let [mode (System/getenv "JOLT_DURABLE_COMPACT_NATIVE_BYTE")
+             owned-mode (System/getenv "JOLT_DURABLE_OWNED_OUTPUT")]
+         (when-not (and (or (nil? mode) (= "true" mode))
+                        (or (nil? owned-mode) (= "true" owned-mode))
+                        (or (nil? owned-mode) (= "true" mode)))
            (throw (ex-info "Invalid typed fixture mode" {})))
-         (binding [*compact-native-byte?* (= "true" mode)] (run! phase root)))
+         (binding [*compact-native-byte?* (= "true" mode)
+                   *owned-output?* (= "true" owned-mode)] (run! phase root)))
        (println :observed-checks @observed-checks)
        (catch Throwable _
          ;; Values are assigned exclusively by internal fixed-label checks.

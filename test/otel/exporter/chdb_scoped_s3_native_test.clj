@@ -3,6 +3,7 @@
   (:require [clojure.edn :as edn]
             [jdbc.core :as jdbc]
             [jdbc.chdb.durable :as durable]
+            [jdbc.chdb.owned-statement :as owned]
             [jdbc.chdb.durable.backend :as backend]
             [jdbc.chdb.durable.control :as control]
             [jdbc.chdb.durable.s3-curl :as curl]
@@ -40,7 +41,9 @@
 (def ^:private selections
   {:spans "SELECT * FROM otel_traces ORDER BY SpanName, TraceId, SpanId"
    :logs "SELECT * FROM otel_logs ORDER BY Body, TraceId, SpanId, Timestamp"
-   :metrics "SELECT * FROM otel_metrics_sum ORDER BY MetricName, TimeUnix, Value"})
+   :metrics "SELECT * FROM otel_metrics_sum ORDER BY MetricName, TimeUnix, Value"
+   :gauges "SELECT * FROM otel_metrics_gauge ORDER BY MetricName, TimeUnix, Value"
+   :histograms "SELECT * FROM otel_metrics_histogram ORDER BY MetricName, TimeUnix, Count, Sum"})
 
 (defn- sha256 [text]
   (let [digest (java.security.MessageDigest/getInstance "SHA-256")]
@@ -98,6 +101,7 @@
             :histogram-values)))
 
 (def ^:dynamic ^:private *insert-format* :json-each-row)
+(def ^:dynamic ^:private *owned-output?* false)
 
 (defn- writer-body! [endpoint root]
   (s3-writer/with-connection!
@@ -106,8 +110,10 @@
      :scratch-parent root}
     (fn [connection]
       (let [target (exporter/exporter
-                     {:connection connection :durable? true :insert-format *insert-format*
-                      :signals #{:spans :logs :metrics}})
+                     (cond-> {:connection connection :durable? true :insert-format *insert-format*
+                              :signals #{:spans :logs :metrics}}
+                       *owned-output?* (assoc :json-backend :native-guarded-byte-batch
+                                             :owned-statement-output? true)))
             handle (sdk/init! {:service-name "scoped-s3" :exporter target
                                :processor :simple :metrics? true :logs? true
                                :runtime-metrics? false :metric-interval-ms 600000
@@ -158,16 +164,23 @@
   nil)
 
 (defn- writer! [endpoint root]
-  (let [inits (atom []) cleanups (atom []) performs (atom [])
+  (let [inits (atom []) cleanups (atom []) performs (atom []) owned-requests (atom 0)
+        original-owned durable/execute-owned-and-flush!
         original-init @#'curl/curl-easy-init
         original-cleanup @#'curl/curl-easy-cleanup
         original-perform @#'curl/curl-easy-perform]
     ;; Count the real native calls, never substitute a transport response.
     (with-redefs-fn
-      {#'curl/curl-easy-init
+      (cond-> {#'curl/curl-easy-init
        (fn [] (let [handle (original-init)] (swap! inits conj handle) handle))
        #'curl/curl-easy-cleanup (fn [h] (swap! cleanups conj h) (original-cleanup h))
        #'curl/curl-easy-perform (fn [h] (swap! performs conj h) (original-perform h))}
+        *owned-output?*
+        (assoc #'owned/text (fn [_] (throw (ex-info "Unexpected owned SQL text materialization" {:fixture true})))
+               #'durable/execute-owned-and-flush!
+               (fn [connection statement]
+                 (check! (owned/statement? statement) :owned-request-sealed)
+                 (swap! owned-requests inc) (original-owned connection statement))))
       #(if (= :json-compact-each-row *insert-format*)
          ;; A real SDK export must use the guarded direct constructors, not
          ;; merely store equivalent rows through the old intermediate maps.
@@ -175,6 +188,9 @@
                        (fn [& _] (throw (ex-info "Unexpected map projection" {:fixture true})))]
            (writer-body! endpoint root))
          (writer-body! endpoint root)))
+    (when *owned-output?*
+      (check! (>= @owned-requests 5) :actual-owned-sdk-requests)
+      (prn {:gate :scoped-s3-sdk-owned-requests :requests @owned-requests}))
     ;; Two persistent owners, then one independent lease-release readback.
     (check! (= 3 (count @inits) (count @cleanups)) :exact-owner-settlement)
     (check! (every? (fn [h] (= 1 (count (filter #(identical? h %) @cleanups)))) @inits)
@@ -201,6 +217,10 @@
   (println "scoped-s3-sdk-reader-qualified"))
 
 (defn -main [phase endpoint root & formats]
-  (let [format (wire-config/parse-format formats)]
-    (binding [*insert-format* format]
+  (let [format (wire-config/parse-format formats)
+        mode (System/getenv "JOLT_SCOPED_S3_OWNED_OUTPUT")]
+    (when-not (and (or (nil? mode) (#{"text" "owned"} mode))
+                   (or (not= mode "owned") (= :json-compact-each-row format)))
+      (throw (ex-info "Invalid scoped S3 output mode" {})))
+    (binding [*insert-format* format *owned-output?* (= "owned" mode)]
       (case phase "writer" (writer! endpoint root) "reader" (reader! endpoint root)))))

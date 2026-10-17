@@ -103,10 +103,12 @@ fi
 
 crash_reopen=false
 compact_native_byte=false
+owned_output=false
 case "${1:-}" in
   '') [[ "$#" == 0 ]] || exit 64 ;;
   --wal-crash-reopen) [[ "$#" == 1 ]] || exit 64; crash_reopen=true ;;
   --compact-native-byte) [[ "$#" == 1 ]] || exit 64; compact_native_byte=true ;;
+  --compact-native-byte-owned) [[ "$#" == 1 ]] || exit 64; compact_native_byte=true; owned_output=true ;;
   *) echo invalid-native-gate-argument >&2; exit 64 ;;
 esac
 
@@ -201,6 +203,9 @@ aliases=-A:test
 if [[ "$compact_native_byte" == true ]]; then
   aliases=-A:test:native-json-byte-batch
   launch+=(JOLT_DURABLE_COMPACT_NATIVE_BYTE=true)
+fi
+if [[ "$owned_output" == true ]]; then
+  launch+=(JOLT_DURABLE_OWNED_OUTPUT=true)
 fi
 if [[ -n "${JOLT_GITLIBS_DIR:-}" ]]; then
   launch+=(JOLT_GITLIBS_DIR="$JOLT_GITLIBS_DIR")
