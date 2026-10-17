@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Update the chDB driver pin to the reviewed current Durable implementation,
+  including optional owned compact streaming. Keep default native installation,
+  encoding choices and persistence semantics unchanged; requalify source identity.
+
 - Reduce temporary attribute-map construction for the explicit native-byte
   backend. Preserve current string-map reuse, live key/value conversion order,
   normalized-key precedence and captured dictionaries. Unsupported layouts
