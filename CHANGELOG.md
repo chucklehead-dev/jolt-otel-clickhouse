@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update only the optional native byte-JSON dependency for lower per-row
+  bridge allocation. Keep ordinary JSON, SDK, driver, encoding and persistence
+  defaults unchanged. Check the alias's actual resolved source separately;
+  this dependency checkpoint is not a throughput-target qualification.
+
 - Render standard OTel span-kind and status keywords with string literals,
   avoiding temporary case-conversion strings per row. Preserve the general
   rendering path for extensions, named/compact wire values and live enum-helper

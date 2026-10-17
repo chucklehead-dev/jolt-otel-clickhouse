@@ -27,6 +27,9 @@
 (def ^:private data-json-source-root
   "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
 
+(def ^:private native-data-json-source-root
+  "https___github.com_casselc_data.json.git/4aeb24bf64e9c19fb16b945056414bb93ed1b1fb/src/main/clojure")
+
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
 
@@ -193,6 +196,20 @@
   (run-oracle-controls! check)
   (run-data-json-oracle-controls! check)
   (run-chdb-oracle-controls! check)
+  (let [source (str "/public-fixture/" native-data-json-source-root)
+        oracle #(exact-concrete-root? % "casselc_data.json.git" native-data-json-source-root)
+        result (dependency-report ["-A:native-json-byte-batch"])]
+    (check "native byte alias coordinate oracle accepts current source" true (oracle source))
+    ;; This guards selection of the new checkpoint, not ABI compatibility:
+    ;; the old revision remains a valid native backend when chosen explicitly.
+    (check "native byte alias coordinate oracle rejects prior pin" false
+           (oracle (str/replace source "4aeb24bf64e9c19fb16b945056414bb93ed1b1fb"
+                                "a28b7a88fb9ae2a72253e69e71e8c6dea8598df1")))
+    (check "native byte alias resolution completes without warnings" true
+           (and (map? result) (zero? (:exit result))
+                (str/blank? (str (:err result)))))
+    (check "native byte alias selects its sole concrete reviewed source" true
+           (and (map? result) (oracle (:out result)))))
   (println "clean jolt-crypto dependency resolution")
   (let [result (dependency-report [])]
     (check "dependency report completes"
