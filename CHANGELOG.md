@@ -6,6 +6,7 @@
   explicit byte-batch mode. Stock empty vectors can avoid temporary writers;
   live JSON replacements and custom methods remain visible. Ordinary modes
   and older byte dependencies keep their public writer path.
+  Pin only the optional byte dependency and require its real adapter in native CI.
 
 - Avoid intermediate typed value/status pairs in explicit native positional
   projection. Share classification rules with the ordinary pair path and retain

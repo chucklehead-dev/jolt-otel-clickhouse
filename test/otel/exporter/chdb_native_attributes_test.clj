@@ -468,7 +468,13 @@
     (let [transform (native/load-transform! #'exporter/key-string #'exporter/value-string)]
       (is (= {"a" "1"} (transform {:a 1}))))))
 
-(defn -main [& _]
+(defn -main [& args]
   (when-not (native?) (throw (ex-info "Native attribute gate requires Jolt" {})))
+  (when (seq args)
+    (when-not (= ["--require-string-output"] (vec args))
+      (throw (ex-info "Unknown native attribute test option" {})))
+    (require 'clojure.data.json.jolt-native)
+    (when-not (ns-resolve 'clojure.data.json.jolt-native 'write-str)
+      (throw (ex-info "Required native string-output adapter is unavailable" {}))))
   (let [r (clojure.test/run-tests 'otel.exporter.chdb-native-attributes-test)]
     (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1))))
