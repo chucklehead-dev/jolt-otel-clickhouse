@@ -71,9 +71,14 @@
        (identical? key-string original-attribute-key-string)
        (identical? value-string original-attribute-value-string)
        (identical? any/try-scalar-string original-attribute-scalar-string)
+       ;; Reject mixed maps before invoking the more expensive SDK admission
+       ;; helper. Otherwise a late numeric value validates preceding strings
+       ;; twice: once here and again in the generic normalization path.
        (reduce-kv (fn [_ key value]
-                    (if (and (string? key) (string? value)
-                             (identical? value (any/try-scalar-string value)))
+                    (if (and (string? key) (string? value)) true (reduced false)))
+                  true m)
+       (reduce-kv (fn [_ key value]
+                    (if (identical? value (any/try-scalar-string value))
                       true
                       (reduced false)))
                   true m)))

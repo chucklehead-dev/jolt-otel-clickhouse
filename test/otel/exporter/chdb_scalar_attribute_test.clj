@@ -108,6 +108,21 @@
       (is (= {"a" "first" "changed-b" "second"}
              (#'exporter/attrs (array-map "a" "first" "b" "second")))))))
 
+(deftest mixed-map-shapes-decline-before-sdk-value-admission
+  (let [original @#'any/try-scalar-string seen (atom [])
+        observed (fn [value] (swap! seen conj value) (original value))]
+    ;; Replace both sides of the root-identity fence so this observation can
+    ;; see the real admission path rather than making the guard decline early.
+    (with-redefs [any/try-scalar-string observed
+                  exporter/original-attribute-scalar-string observed]
+      (is (true? (#'exporter/reusable-string-attrs? (array-map "a" "first" "b" "second"))))
+      (is (= ["first" "second"] @seen))
+      (doseq [source [(array-map "a" 42 "b" "second")
+                      (array-map "a" "first" "b" 42)]]
+        (reset! seen [])
+        (is (false? (#'exporter/reusable-string-attrs? source)))
+        (is (empty? @seen))))))
+
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
