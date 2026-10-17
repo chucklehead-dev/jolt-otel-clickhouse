@@ -12,6 +12,7 @@
             [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
             [otel.context :as context]
+            [otel.exporter.chdb.attribute-map-shape :as attribute-map-shape]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.compact-format :as compact-format]
             [otel.exporter.chdb.schema :as schema]
@@ -79,7 +80,7 @@
         (throw (ex-info "Native attribute projection is unavailable"
                         {:type ::native-attributes-unavailable}))))))
 
-(defn- attrs [m]
+(defn- copied-attrs [m]
   (if (or (nil? m) (false? m)
           (and (or (instance? clojure.lang.PersistentArrayMap m)
                    (instance? clojure.lang.PersistentHashMap m))
@@ -102,6 +103,27 @@
            (reduce (fn [out [k v]]
                  (assoc! out (key-string k) (value-string v)))
                    (transient {}) (or m {})))))))
+
+(def ^:private original-attribute-key-string key-string)
+(def ^:private original-attribute-value-string value-string)
+
+(defn- reusable-string-attrs? [m]
+  (and (attribute-map-shape/reusable-string-map-shape? m)
+       (identical? key-string original-attribute-key-string)
+       (identical? value-string original-attribute-value-string)
+       (any/default-scalar-string?)
+       (reduce-kv (fn [_ key value]
+                    (if (identical? value (any/try-scalar-string value))
+                      true
+                      (reduced false)))
+                  true m)))
+
+(defn- attrs [m]
+  ;; Port the reviewed admission guard, not the ordinary branch's fallback:
+  ;; experimental native conversion/replay semantics remain unchanged.
+  (if (reusable-string-attrs? m)
+    (with-meta m nil)
+    (copied-attrs m)))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]

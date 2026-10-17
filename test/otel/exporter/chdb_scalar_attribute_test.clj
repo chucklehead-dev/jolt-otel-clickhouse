@@ -78,5 +78,7 @@
       (is (= (observe legacy-attrs fail?) (observe #'exporter/attrs fail?))))))
 
 (defn -main [& _]
-  (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
+  (require 'otel.exporter.chdb-stream-attribute-reuse-test)
+  (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test
+                               'otel.exporter.chdb-stream-attribute-reuse-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

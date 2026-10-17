@@ -20,6 +20,7 @@
             [otel.exporter.chdb-compact-span-layout-test]
             [otel.exporter.chdb-compact-log-layout-test]
             [otel.exporter.chdb-scalar-attribute-test]
+            [otel.exporter.chdb-stream-attribute-reuse-test]
             [otel.exporter.chdb-untyped-encoder-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
@@ -385,7 +386,8 @@
                                'otel.exporter.chdb-compact-wire-test
                                'otel.exporter.chdb-compact-span-layout-test
                                'otel.exporter.chdb-compact-log-layout-test
-                               'otel.exporter.chdb-scalar-attribute-test)]
+                               'otel.exporter.chdb-scalar-attribute-test
+                               'otel.exporter.chdb-stream-attribute-reuse-test)]
     (check "direct metric row regression checks pass" 0
            (+ (:fail result) (:error result))))
   (let [observed (atom 0)

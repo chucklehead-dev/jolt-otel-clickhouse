@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reuse bounded, unchanged string attribute maps in the experimental streaming
+  stack with the reviewed SDK policy witness and kind/order guards. Preserve
+  its existing native-copy fallback, timestamp wire, typed projection and
+  replay behavior. No throughput, tail or persistence guarantee is added.
+
 - Use a private compact lookup for the exact immutable stock typed-status
   codebook. Preserve its public sorted representation, live replacement
   behavior and all value/status rules; no storage or schema change.
