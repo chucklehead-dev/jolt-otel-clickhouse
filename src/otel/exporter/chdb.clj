@@ -160,7 +160,16 @@
 (defn- otel-enum-string [value fallback]
   ;; Matches pdata SpanKind.String()/StatusCode.String() used by the pinned
   ;; collector exporter (for example Server, Client, Ok, Error, Unset).
-  (str/capitalize (name (or value fallback))))
+  ;; These finite standard keywords need no intermediate case-converted strings.
+  ;; Keep the general name/capitalize path for extensions and other input forms.
+  (let [value (or value fallback)]
+    (or (when (keyword? value)
+          (case value
+            :internal "Internal" :server "Server" :client "Client"
+            :producer "Producer" :consumer "Consumer"
+            :unset "Unset" :ok "Ok" :error "Error"
+            nil))
+        (str/capitalize (name value)))))
 
 (defn- event-columns
   ([events] (event-columns events false))

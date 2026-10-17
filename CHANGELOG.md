@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Render standard OTel span-kind and status keywords with string literals,
+  avoiding temporary case-conversion strings per row. Preserve the general
+  rendering path for extensions, named/compact wire values and live enum-helper
+  replacements. No encoding, schema or durability defaults change.
+
 - Use the optional native JSON string-output adapter for span events/links in
   explicit byte-batch mode. Stock empty vectors can avoid temporary writers;
   live JSON replacements and custom methods remain visible. Ordinary modes
