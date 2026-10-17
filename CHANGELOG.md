@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Advance the optional native byte-JSON backend to emit short clean ASCII
+  without fragment-cache lookup, retaining cached Unicode and longer strings.
+  Check the actual resolved source and reject the previous pin. Ordinary JSON,
+  SDK, driver, schema and persistence defaults remain unchanged; short paired
+  improvements do not qualify sustained throughput or tail latency.
+
 - Check builtin string-map shape and SDK string bounds in one allocation-free
   walk. Keep generic normalization for changed helpers, policies and unsupported
   layouts; do not change captured values or byte budgets.
