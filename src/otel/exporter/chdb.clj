@@ -58,8 +58,31 @@
             (pr-str v)
             (canonical-value-string (:value canonical)))))))
 
+(def ^:private original-attribute-key-string key-string)
+(def ^:private original-attribute-value-string value-string)
+(def ^:private original-attribute-scalar-string any/try-scalar-string)
+
+(defn- reusable-string-attrs? [m]
+  ;; Only built-in immutable maps: custom maps may have observable traversal.
+  ;; The SDK helper fences live canonicalizer/limit changes and oversized
+  ;; strings. Merely checking string? would silently bypass that policy.
+  (and (or (instance? clojure.lang.PersistentArrayMap m)
+           (instance? clojure.lang.PersistentHashMap m))
+       (identical? key-string original-attribute-key-string)
+       (identical? value-string original-attribute-value-string)
+       (identical? any/try-scalar-string original-attribute-scalar-string)
+       (reduce-kv (fn [_ key value]
+                    (if (and (string? key) (string? value)
+                             (identical? value (any/try-scalar-string value)))
+                      true
+                      (reduced false)))
+                  true m)))
+
 (defn- attrs [m]
-  (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))
+  (if (reusable-string-attrs? m)
+    ;; Match the old fresh map's metadata without copying immutable entries.
+    (with-meta m nil)
+    (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {}))))
 
 (defn- service-name [resource fallback]
   (let [attributes (:attributes resource)]

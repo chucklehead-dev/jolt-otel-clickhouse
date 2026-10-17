@@ -41,6 +41,73 @@
         (is (= "custom" (#'exporter/value-string value))))
       (is (= ["plain" false 42] @calls)))))
 
+(defn- frozen-attrs [m]
+  (into {} (map (fn [[k v]] [(#'exporter/key-string k)
+                            (#'exporter/value-string v)])) (or m {})))
+
+(defrecord CustomAttributes [])
+
+(deftest unchanged-string-maps-share-entries-without-changing-wire
+  (doseq [source [(array-map "a" "" "b" "é😀\n\u0000")
+                  (into {} (map (fn [i] [(str "field-" i) (str "value-" i)])) (range 16))]]
+    (is (identical? source (#'exporter/attrs source)))
+    (is (= (json/write-str (frozen-attrs source))
+           (json/write-str (#'exporter/attrs source))))
+    (let [tagged (with-meta source {:private true}) result (#'exporter/attrs tagged)]
+      (is (= source result))
+      (is (nil? (meta result)))
+      (is (= {:private true} (meta tagged)))))
+  (doseq [source [nil {} {"n" 1} {"nil" nil} {"nested" [false "x"]}
+                  (array-map :a "first" "a" "last")
+                  (sorted-map "b" "second" "a" "first")
+                  (assoc (->CustomAttributes) "a" "value")]]
+    (is (= (frozen-attrs source) (#'exporter/attrs source)))
+    (is (= (json/write-str (frozen-attrs source))
+           (json/write-str (#'exporter/attrs source)))))
+  (doseq [source [(sorted-map "a" "value")
+                  (assoc (->CustomAttributes) "a" "value")]]
+    (is (false? (#'exporter/reusable-string-attrs? source)))))
+
+(deftest string-map-reuse-retains-live-policies-and-converters
+  (doseq [options [(assoc any/default-limits :max-bytes 0)
+                   (assoc any/default-limits :value-length-limit 1)]]
+    (with-redefs [any/default-limits options]
+      (let [source {"a" "long"} result (#'exporter/attrs source)]
+        (is (= (frozen-attrs source) result))
+        (is (not (identical? source result))))))
+  (let [source (array-map "a" "first" "b" "stop" "c" "later")
+        effects (atom []) error (ex-info "stop" {})]
+    (with-redefs [exporter/key-string (fn [key] (swap! effects conj [:key key]) key)
+                  exporter/value-string (fn [value]
+                                          (swap! effects conj [:value value])
+                                          (when (= "stop" value) (throw error))
+                                          value)]
+      (is (identical? error (try (#'exporter/attrs source) (catch Throwable e e))))
+      (is (= [[:key "a"] [:value "first"] [:key "b"] [:value "stop"]] @effects))))
+  (let [calls (atom [])]
+    (with-redefs [any/canonicalize (fn [value] (swap! calls conj value) {:value "custom"})]
+      (is (= {"a" "custom"} (#'exporter/attrs {"a" "plain"})))
+      (is (= ["plain"] @calls))))
+  (let [calls (atom [])]
+    (with-redefs [any/try-scalar-string (fn [value] (swap! calls conj value) "replacement")]
+      (is (= {"a" "replacement"} (#'exporter/attrs {"a" "plain"})))
+      (is (= ["plain"] @calls))))
+  (let [oversized (apply str (repeat (inc (quot (:max-bytes any/default-limits) 4)) "x"))
+        source {"a" oversized} result (#'exporter/attrs source)]
+    (is (= (frozen-attrs source) result))
+    (is (not (identical? source result)))))
+
+(deftest canonicalizer-can-change-a-later-key-converter
+  (let [original-key @#'exporter/key-string]
+    (with-redefs [exporter/key-string original-key
+                  any/canonicalize
+                  (fn [value]
+                    (alter-var-root #'exporter/key-string
+                                    (constantly (fn [key] (str "changed-" key))))
+                    {:value value})]
+      (is (= {"a" "first" "changed-b" "second"}
+             (#'exporter/attrs (array-map "a" "first" "b" "second")))))))
+
 (defn -main [& _]
   (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

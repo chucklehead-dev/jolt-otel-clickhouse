@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Reuse ordinary immutable attribute maps whose string keys and bounded string
+  values need no conversion. Preserve live normalization policies, converter
+  overrides, metadata stripping and generic fallback; JSON encoding and Durable
+  persistence remain unchanged.
+
 - Add experimental owned statement output for explicit native-byte compact
   Durable export. Qualify its snapshot ABI before opening storage; preserve
   schema fences, byte limits and confirmed publication. Unsupported output
