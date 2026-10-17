@@ -56,10 +56,24 @@ jolt -m jdbc.chdb.install
 ```
 
 Set `JOLT_CHDB_LIB` instead when using an already installed `libchdb` reporting
-the qualified package version **26.7.3**. Exporter startup checks the actual
-loaded version before schema writes, including Durable connections. Its exact
-integer-nanosecond DateTime64 wire is qualified on SQL engine 26.7.2.1; newer
-library versions are rejected until their timestamp wire is qualified.
+package version **26.7.3** or the experimental **26.9.0** candidate. Exporter
+startup checks the loaded version before schema writes, including Durable
+connections. Each exporter selects integer nanoseconds for 26.7.3 or UTC ISO
+strings for 26.9.0; spans, event arrays and logs preserve exact nanoseconds.
+Metric timestamps remain whole seconds. Other packages are rejected.
+
+For experimental Durable export on 26.9.0, `:datetime64-wire :raw-ticks`
+keeps numeric nanoseconds and records
+`SETTINGS input_format_read_datetime_number_as_raw_value=1` in every INSERT.
+This avoids calendar formatting; the WAL carries the setting too, so a reader
+does not need a session toggle. Ordinary connections reject this selection.
+`:auto` remains the default; `:iso-utc` explicitly selects the 26.9 string wire.
+Performance and hosted-S3 qualification of this option are still pending.
+
+The installer/default dependency pins have not changed. Use a new test object
+when evaluating 26.9.0: this candidate does **not** qualify replay of older
+26.7 integer-timestamp WAL on the newer engine. Do not point it at existing
+Durable telemetry objects until cross-version replay is separately qualified.
 
 ```clojure
 (def exporter (otel.exporter.chdb/exporter {:db-spec "chdb:telemetry.chdb"}))
