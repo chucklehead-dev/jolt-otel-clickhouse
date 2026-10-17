@@ -6,36 +6,39 @@
   (try
     (let [check (scheme/eval-string
         "(letrec
-           ((string-pair? (lambda (key value) (and (string? key) (string? value))))
-            (string-node?
+           ((pair-length (lambda (key value)
+                           (and (string? key) (string? value) (string-length value))))
+            (node-length
               (lambda (node)
                 (let ((entries (hnode-arr node)))
-                  (let loop ((index 0))
-                    (or (= index (vector-length entries))
-                        (let ((child (vector-ref entries index)))
-                          (and (cond ((hnode? child) (string-node? child))
-                                     ((hcoll? child) #f)
-                                     (else (string-pair? (car child) (cdr child))))
-                               (loop (+ index 1))))))))))
+                  (let loop ((index 0) (maximum 0))
+                    (if (= index (vector-length entries)) maximum
+                        (let* ((child (vector-ref entries index))
+                               (needed (cond ((hnode? child) (node-length child))
+                                             ((hcoll? child) #f)
+                                             (else (pair-length (car child) (cdr child))))))
+                          (and needed (loop (+ index 1) (fxmax maximum needed))))))))))
            (lambda (value)
              (and (pmap? value)
                   (let ((root (pmap-root value)))
                     (if (hnode? root)
-                        (and (> (pmap-cnt value) 8) (string-node? root))
+                        (and (> (pmap-cnt value) 8) (node-length root))
                         (and (<= (pmap-cnt value) 8)
-                             (let loop ((index 0))
-                               (or (= index (vector-length root))
-                                   (and (string-pair? (vector-ref root index)
-                                                      (vector-ref root (+ index 1)))
-                                        (loop (+ index 2)))))))))))")
+                             (let loop ((index 0) (maximum 0))
+                               (if (= index (vector-length root)) maximum
+                                   (let ((needed (pair-length (vector-ref root index)
+                                                              (vector-ref root (+ index 1)))))
+                                     (and needed (loop (+ index 2) (fxmax maximum needed))))))))))))")
           wide (into {} (map (fn [index] [(str "shape-" index) "value"])) (range 16))]
-      ;; Scheme can leave an unbound reference dormant until a branch runs.
-      ;; Exercise both representations and collision/promotion declines now,
-      ;; before accepting an optional capability, never on application data.
-      (if (and (true? (check {"a" "value"}))
+      ;; Return only a character count, never an input/callback/entry sequence.
+      ;; Exercise every representation before accepting this optional capability.
+      (if (and (= 5 (check {"a" "value"}))
+               (= 0 (check {"a" ""}))
+               (= 0 (check {}))
+               (= 2 (check {"a" "a😀"}))
                (false? (check {"a" 1}))
                (false? (check (hash-map "a" "value")))
-               (true? (check wide))
+               (= 5 (check wide))
                (= (hash "Aa") (hash "BB"))
                (false? (check (assoc wide "Aa" "first" "BB" "second")))
                (false? (check (apply array-map (mapcat identity wide)))))
@@ -52,4 +55,12 @@
   constructing entries, sequences or another map. This does not qualify SDK
   normalization policy or bounds, and invokes no user-supplied converters."
   [value]
-  (@native-shape-check value))
+  (if (@native-shape-check value) true false))
+
+(defn reusable-string-map-required-chars
+  "Maximum value character count for an admissible builtin string map, or nil.
+  Shape and lengths share one callback-free walk. This is not policy acceptance:
+  callers must compare with the current SDK-owned bound. Empty maps return zero."
+  [value]
+  (let [result (@native-shape-check value)]
+    (when (integer? result) result)))
