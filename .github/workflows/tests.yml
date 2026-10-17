@@ -40,6 +40,7 @@ jobs:
           task_bin=$(sed -n 's/^QUALIFIED_RUNTIME_BIN=//p' "$RUNNER_TEMP/json-qualified-runtime.log")
           [[ "$task_bin" =~ ^/tmp/qualified-durable-runtime\.[A-Za-z0-9]+/jolt$ ]]
           "$task_bin" -Srepro -M:scalar-attribute-test
+          "$task_bin" -Srepro -M:preloaded-scalar-test
           "$task_bin" -Srepro -M:native-json-byte-batch:json-backend-test
           "$task_bin" -Srepro -M:native-json-byte-batch:prefixed-payload-test native
           "$task_bin" -Srepro -M:native-json-byte-batch:typed-compact-vector-test
@@ -78,7 +79,9 @@ jobs:
       - name: Install the declared native package
         run: jolt -Srepro -m jdbc.chdb.install
       - name: Qualify scalar normalization and immutable attribute reuse
-        run: jolt -Srepro -M:scalar-attribute-test
+        run: |
+          jolt -Srepro -M:scalar-attribute-test
+          jolt -Srepro -M:preloaded-scalar-test
       - name: Qualify confirmed compact field binding and real native readback
         run: |
           jolt -Srepro -M:compact-wire-test

@@ -7,6 +7,8 @@
   overrides, metadata stripping and generic fallback; JSON encoding and Durable
   persistence remain unchanged. Reject mixed map shapes before SDK value
   admission to avoid repeating normalization work on fallback.
+  Qualify the scalar helper at its SDK definition boundary, including helpers
+  replaced before exporter startup; never trial-invoke unknown helpers.
 
 - Add experimental owned statement output for explicit native-byte compact
   Durable export. Qualify its snapshot ABI before opening storage; preserve

@@ -111,10 +111,10 @@
 (deftest mixed-map-shapes-decline-before-sdk-value-admission
   (let [original @#'any/try-scalar-string seen (atom [])
         observed (fn [value] (swap! seen conj value) (original value))]
-    ;; Replace both sides of the root-identity fence so this observation can
-    ;; see the real admission path rather than making the guard decline early.
+    ;; Explicitly trust this observer so the positive case reaches admission;
+    ;; ordinary helper replacements must fail the SDK-owned qualification.
     (with-redefs [any/try-scalar-string observed
-                  exporter/original-attribute-scalar-string observed]
+                  any/default-scalar-string? (constantly true)]
       (is (true? (#'exporter/reusable-string-attrs? (array-map "a" "first" "b" "second"))))
       (is (= ["first" "second"] @seen))
       (doseq [source [(array-map "a" 42 "b" "second")

@@ -60,7 +60,6 @@
 
 (def ^:private original-attribute-key-string key-string)
 (def ^:private original-attribute-value-string value-string)
-(def ^:private original-attribute-scalar-string any/try-scalar-string)
 
 (defn- reusable-string-attrs? [m]
   ;; Only built-in immutable maps: custom maps may have observable traversal.
@@ -70,7 +69,10 @@
            (instance? clojure.lang.PersistentHashMap m))
        (identical? key-string original-attribute-key-string)
        (identical? value-string original-attribute-value-string)
-       (identical? any/try-scalar-string original-attribute-scalar-string)
+       ;; The SDK, not a consumer-load snapshot, owns the default identity.
+       ;; A preinstalled replacement may return strings while changing later
+       ;; converters, so it must reach the generic path without a trial call.
+       (any/default-scalar-string?)
        ;; Reject mixed maps before invoking the more expensive SDK admission
        ;; helper. Otherwise a late numeric value validates preceding strings
        ;; twice: once here and again in the generic normalization path.
