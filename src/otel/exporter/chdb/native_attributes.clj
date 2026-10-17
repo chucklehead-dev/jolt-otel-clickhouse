@@ -8,13 +8,21 @@
     (when-not (and generic clone)
       (throw (ex-info "Missing native attribute projection resource" {})))
     (str "(begin "
+         "(unless (and "
+         "(eq? (record-type-uid (record-type-descriptor pmap)) 'chez-pmap-v6) "
+         "(equal? (record-type-field-names (record-type-descriptor pmap)) '#(root cnt hasheq meta)) "
+         "(eq? (record-type-uid (record-type-descriptor hnode)) 'chez-hnode-v1) "
+         "(equal? (record-type-field-names (record-type-descriptor hnode)) '#(bm arr)) "
+         "(eq? (record-type-uid (record-type-descriptor hcoll)) 'chez-hcoll-v1) "
+         "(equal? (record-type-field-names (record-type-descriptor hcoll)) '#(hash alist))) "
+         "(error 'native-attributes \"Runtime map layout is not qualified\")) "
          "(unless (for-all (lambda (entry) "
          "(and (top-level-bound? (car entry)) "
          "(procedure? (top-level-value (car entry))) "
          "(bitwise-bit-set? (procedure-arity-mask (top-level-value (car entry))) (cadr entry)))) "
-         ;; Record predicates/accessors are lexical runtime syntax, not
-         ;; top-level procedure bindings. Their representation remains the
-         ;; qualified-runtime boundary; fence these callable helper seams.
+         ;; Record forms are lexical syntax, not top-level procedures. The
+         ;; nongenerative UID/field fence above pins their known image layout;
+         ;; these checks separately fence callable helper presence and arity.
          "'((make-pmap 2) (pmap-fold-seq-order 3) "
          "(jolt-transient-new 1) (jolt-persistent! 1) (tmap-put! 3) "
          "(amap-index 3) (vec-copy-range 3) (var-cell-deref 1) (jolt-invoke1 2))) "

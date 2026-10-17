@@ -20,8 +20,10 @@ the optimization bound is not a limit on captured fields.
 
 This is a qualified Jolt runtime path. Required callable helpers are checked
 for presence/arity when the factory loads, before opening database storage.
-Record-layout semantics remain part of that qualified runtime boundary, not
-a promise for arbitrary compiler builds. The exporter does not add public
+The known map/hash-node/collision-node nongenerative IDs and field layouts
+are checked too; an unexpected layout fails before storage. Runtime operation
+semantics remain a qualified boundary, not a universal ABI proof. The exporter
+does not add public
 receiver-classifier calls to the current attribute conversion path.
 
 Run `jolt -M:native-attributes-test` with the qualified runtime. The gate checks

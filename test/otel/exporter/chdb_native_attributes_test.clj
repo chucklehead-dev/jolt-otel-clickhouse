@@ -276,7 +276,9 @@
 
 (deftest current-input-classifier-boundary-is-unchanged
   (when (native?)
-    (let [observe (scheme/eval-string
+    (doseq [input [(array-map :a 1 :b 2)
+                  (into {} (map (fn [i] [(str "key-" i) i]) (range 16)))]]
+     (let [observe (scheme/eval-string
                    "(lambda (run watched hook)
                       (let ((old jolt-instance-site) (seen '()))
                         (dynamic-wind jolt-finally-in
@@ -289,8 +291,9 @@
                           (lambda () (jolt-invoke0 run))
                           (lambda () (set! jolt-instance-site old)))
                         (make-pvec (list->vector (reverse seen)))))")
-          input (array-map :a 1 :b 2)
           original @#'exporter/key-string
+          expected (convert :configured input)
+          observed-expected (into {} (map (fn [[key value]] [(str "observed-" key) value])) expected)
           run (fn [backend inject?]
                 (let [boundaries (atom 0) converted (atom nil)]
                   (with-redefs [exporter/key-string original]
@@ -309,13 +312,28 @@
           control (run :configured true)]
       ;; The current into/map baseline has no public input classifier call.
       (is (= 0 (last baseline)))
-      (is (= {"a" "1" "b" "2"} (second baseline)))
+      (is (= expected (second baseline)))
       (is (= baseline candidate))
       ;; Prove the observer actually changes conversion if a classifier is added.
       (is (pos? (last control)))
-      (is (= {"observed-a" "1" "observed-b" "2"} (second control)))
+      (is (= observed-expected (second control)))
       (is (not= baseline control))
-      (is (identical? original @#'exporter/key-string)))))
+      (is (identical? original @#'exporter/key-string))
+      (when (> (count input) 8)
+        ;; Positive admission witness for this exact hash-map/clone cohort.
+        (let [clone (scheme/eval-string
+                     (slurp (io/resource "otel/exporter/chdb/native_attribute_value_clone.ss")))]
+          (is (map? (clone input #'exporter/key-string #'exporter/value-string)))))))))
+
+(deftest unexpected-layout-identities-and-fields-are-rejected
+  (let [original @#'native/transform-source]
+    (doseq [shadow ["(record-type-uid (lambda (_) 'unexpected-layout))"
+                    "(record-type-field-names (lambda (_) '#(unexpected-field)))"]]
+      (with-redefs [native/transform-source (str "(let (" shadow ") " original ")")]
+        (is (thrown? Throwable
+              (native/load-transform! #'exporter/key-string #'exporter/value-string)))))
+    (let [transform (native/load-transform! #'exporter/key-string #'exporter/value-string)]
+      (is (= {"a" "1"} (transform {:a 1}))))))
 
 (deftest missing-runtime-primitive-is-rejected-at-factory-load
   (let [without-fold
