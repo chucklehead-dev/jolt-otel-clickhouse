@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Use the optional native JSON string-output adapter for span events/links in
+  explicit byte-batch mode. Stock empty vectors can avoid temporary writers;
+  live JSON replacements and custom methods remain visible. Ordinary modes
+  and older byte dependencies keep their public writer path.
+
 - Avoid intermediate typed value/status pairs in explicit native positional
   projection. Share classification rules with the ordinary pair path and retain
   live projectors, helper/codebook behavior and private output ownership.

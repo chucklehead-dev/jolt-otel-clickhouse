@@ -23,6 +23,20 @@
 
 (def ^:private ^:dynamic *json-backend* :configured)
 
+(def ^:private native-nested-json-writer
+  (delay
+    (require 'clojure.data.json.jolt-native)
+    ;; Retain the Var, not its current function value. Older explicit byte
+    ;; dependencies lack this optional adapter and retain the public path.
+    (ns-resolve 'clojure.data.json.jolt-native 'write-str)))
+
+(defn- nested-json-string [value]
+  (if (= :native-guarded-byte-batch *json-backend*)
+    (if-let [write @native-nested-json-writer]
+      (write value)
+      (json/write-str value))
+    (json/write-str value)))
+
 (defn- key-string [k]
   (cond
     (string? k) k
@@ -211,7 +225,7 @@
         duration (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
         status (otel-enum-string (get-in span [:status :code]) :unset)
         message (or (get-in span [:status :description]) "")
-        events-json (json/write-str events) links-json (json/write-str links)
+        events-json (nested-json-string events) links-json (nested-json-string links)
         common (when-not compact?
                  {"Timestamp" time "TraceId" trace-id "SpanId" span-id
                   "ParentSpanId" parent-id "TraceState" trace-state
