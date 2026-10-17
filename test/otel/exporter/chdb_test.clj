@@ -11,6 +11,7 @@
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-keyword-attribute-names-test]
             [otel.exporter.chdb-scalar-attribute-test]
+            [otel.exporter.chdb-enum-string-test]
             [otel.exporter.chdb-timestamp-wire-test]
             [otel.exporter.chdb-status-code-lookup-test]
             [otel.exporter.chdb-untyped-encoder-test]
@@ -858,6 +859,9 @@
   (let [result (test/run-tests 'otel.exporter.chdb-scalar-attribute-test)]
     (check "scalar attribute regressions are nonempty" true (pos? (:test result)))
     (check "scalar attribute regressions pass" 0 (+ (:fail result) (:error result))))
+  (let [result (test/run-tests 'otel.exporter.chdb-enum-string-test)]
+    (check "enum string regressions are nonempty" true (pos? (:test result)))
+    (check "enum string regressions pass" 0 (+ (:fail result) (:error result))))
   (let [result (test/run-tests 'otel.exporter.chdb-keyword-attribute-names-test)]
     (check "keyword attribute name regressions are nonempty" true (pos? (:test result)))
     (check "keyword attribute name regressions pass" 0 (+ (:fail result) (:error result))))
