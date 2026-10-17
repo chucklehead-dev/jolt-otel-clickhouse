@@ -1,7 +1,9 @@
 (ns otel.exporter.chdb-scalar-attribute-test
   (:require [clojure.test :as test :refer [deftest is]]
             [clojure.data.json :as json]
+            [jolt.scheme :as scheme]
             [otel.any-value :as any]
+            [otel.exporter.chdb.attribute-map-shape :as attribute-map-shape]
             [otel.exporter.chdb :as exporter]))
 
 ;; Frozen normalization boundary from main2230d4f, independent of the shortcut.
@@ -107,6 +109,67 @@
                     {:value value})]
       (is (= {"a" "first" "changed-b" "second"}
              (#'exporter/attrs (array-map "a" "first" "b" "second")))))))
+
+(deftest rebuilding-order-boundaries-retain-exact-wire
+  (is (= (hash "Aa") (hash "BB")) "collision control must remain non-vacuous")
+  (is (instance? clojure.lang.PersistentHashMap (hash-map "a" "value")))
+  (let [padding (into {} (map (fn [index] [(str "padding-" index) "value"])) (range 50))]
+    (doseq [source [(assoc padding "Aa" "first" "BB" "second")
+                    (assoc padding "BB" "second" "Aa" "first")
+                    (apply array-map (mapcat (fn [index] [(str "field-" index) "value"]) (range 16)))
+                    (hash-map "a" "value")]]
+      (let [result (#'exporter/attrs source)]
+        (is (= (frozen-attrs source) result))
+        (is (not (identical? source result)))
+        (is (= (.getName (class (frozen-attrs source))) (.getName (class result))))
+        (is (= (vec (keys (frozen-attrs source))) (vec (keys result))))
+        (is (= (json/write-str (frozen-attrs source)) (json/write-str result)))))))
+
+(deftest builtin-map-mode-cohorts-retain-normalized-kind-order-and-wire
+  (doseq [size [0 1 7 8 9 16 32 50]
+          constructor [array-map hash-map]
+          collisions? [false true]
+          tagged? [false true]]
+    (let [entries (concat (map (fn [index] [(str "cohort-" index) "value"]) (range size))
+                          (when collisions? [["Aa" "first"] ["BB" "second"]]))
+          original (apply constructor (mapcat identity entries))
+          source (if tagged? (with-meta original {:source :cohort}) original)
+          expected (frozen-attrs source) actual (#'exporter/attrs source)]
+      (is (= expected actual))
+      (is (= (.getName (class expected)) (.getName (class actual))))
+      (is (= (vec (keys expected)) (vec (keys actual))))
+      (is (= (json/write-str expected) (json/write-str actual)))
+      (is (nil? (meta actual)))
+      (is (= (when tagged? {:source :cohort}) (meta source))))))
+
+(deftest unavailable-native-shape-check-retains-generic-normalization
+  (with-redefs [attribute-map-shape/native-shape-check (delay (constantly false))]
+    (let [source {"a" "value"} result (#'exporter/attrs source)]
+      (is (= source result))
+      (is (not (identical? source result))))))
+
+(deftest native-shape-qualification-exercises-late-bound-branches
+  (doseq [mode [:compile-failure :late-branch-failure]]
+    (let [attempts (atom 0) collision-probed? (atom false)
+          load (fn [_]
+                 (swap! attempts inc)
+                 (when (= mode :compile-failure)
+                   (throw (ex-info "unsupported native compiler" {})))
+                 (fn [m]
+                   (when (contains? m "Aa")
+                     (reset! collision-probed? true)
+                     (throw (ex-info "unsupported collision primitive" {})))
+                   (and (not (and (instance? clojure.lang.PersistentHashMap m)
+                                  (<= (count m) 8)))
+                        (every? string? (vals m)))))]
+      (with-redefs [scheme/eval-string load
+                    attribute-map-shape/native-shape-check
+                    (delay (#'attribute-map-shape/make-native-shape-check))]
+        (let [source {"a" "value"} result (#'exporter/attrs source)]
+          (is (= source result))
+          (is (not (identical? source result)))
+          (is (= 1 @attempts))
+          (is (= (= mode :late-branch-failure) @collision-probed?)))))))
 
 (deftest mixed-map-shapes-decline-before-sdk-value-admission
   (let [original @#'any/try-scalar-string seen (atom [])

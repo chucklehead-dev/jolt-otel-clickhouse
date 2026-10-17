@@ -9,6 +9,9 @@
   admission to avoid repeating normalization work on fallback.
   Qualify the scalar helper at its SDK definition boundary, including helpers
   replaced before exporter startup; never trial-invoke unknown helpers.
+  Decline hash collision buckets and map-mode changes whose rebuild changes
+  kind or entry order. An optional Chez shape walk avoids temporary entries;
+  unsupported hosts retain generic normalization and SDK bounds remain live.
 
 - Add experimental owned statement output for explicit native-byte compact
   Durable export. Qualify its snapshot ABI before opening storage; preserve

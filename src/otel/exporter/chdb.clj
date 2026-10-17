@@ -13,6 +13,7 @@
             [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
             [otel.context :as context]
+            [otel.exporter.chdb.attribute-map-shape :as attribute-map-shape]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.compact-format :as compact-format]
             [otel.exporter.chdb.schema :as schema]
@@ -65,20 +66,15 @@
   ;; Only built-in immutable maps: custom maps may have observable traversal.
   ;; The SDK helper fences live canonicalizer/limit changes and oversized
   ;; strings. Merely checking string? would silently bypass that policy.
-  (and (or (instance? clojure.lang.PersistentArrayMap m)
-           (instance? clojure.lang.PersistentHashMap m))
+  ;; This pure native predicate also owns the builtin-map type check; avoid
+  ;; repeating reflective class admission and SDK checks for mixed maps.
+  (and (attribute-map-shape/reusable-string-map-shape? m)
        (identical? key-string original-attribute-key-string)
        (identical? value-string original-attribute-value-string)
        ;; The SDK, not a consumer-load snapshot, owns the default identity.
        ;; A preinstalled replacement may return strings while changing later
        ;; converters, so it must reach the generic path without a trial call.
        (any/default-scalar-string?)
-       ;; Reject mixed maps before invoking the more expensive SDK admission
-       ;; helper. Otherwise a late numeric value validates preceding strings
-       ;; twice: once here and again in the generic normalization path.
-       (reduce-kv (fn [_ key value]
-                    (if (and (string? key) (string? value)) true (reduced false)))
-                  true m)
        (reduce-kv (fn [_ key value]
                     (if (identical? value (any/try-scalar-string value))
                       true
