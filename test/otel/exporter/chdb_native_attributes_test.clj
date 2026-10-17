@@ -14,6 +14,24 @@
 
 (defn native? [] (string? (System/getProperty "jolt.version")))
 
+(deftest native-factory-captures-vars-not-their-current-values
+  (when (native?)
+    (let [input (into {} (map (fn [i] [(str "key-" i) i]) (range 16)))
+          transform (native/load-transform! #'exporter/key-string #'exporter/value-string
+                                            @#'exporter/original-attribute-key-string)
+          effects (atom [])]
+      (is (ifn? transform))
+      (is (= (convert :configured input) (transform input)))
+      (with-redefs [exporter/key-string (fn [key] (swap! effects conj [:key key]) (str "changed-" key))
+                    exporter/value-string (fn [value] (swap! effects conj [:value value]) (str "v-" value))]
+        (let [result (transform input)]
+          (is (= 32 (count @effects)))
+          (is (= (vec (mapcat (fn [[k v]] [[:key k] [:value v]]) input)) @effects))
+          ;; Renamed keys may change final hash traversal order. Compare that
+          ;; order with the real configured converter, not source-key order.
+          (is (= (vec (convert :configured input)) (vec result)))))
+      (is (= (convert :configured input) (transform input))))))
+
 (deftest original-string-key-shortcut-removes-only-redundant-calls
   (when (native?)
     (doseq [enabled? [false true]]
@@ -392,9 +410,14 @@
                        (slurp (io/resource "otel/exporter/chdb/native_attribute_value_clone.ss"))
                        ") (generic "
                        (slurp (io/resource "otel/exporter/chdb/native_attributes.ss"))
-                       ")) (lambda (m key-var value-var) "
-                       "(or (clone m key-var value-var) (generic m key-var value-var))))")]
-      (is (ifn? (without-fold #(native/load-transform! #'exporter/key-string #'exporter/value-string)))))
+                       ")) (lambda (key-var value-var original-key) (lambda (m) "
+                       "(or (clone m key-var value-var original-key) (generic m key-var value-var)))))")]
+      (is (= [true {"a" "1"}]
+             (without-fold
+               #(let [transform (native/load-transform! #'exporter/key-string #'exporter/value-string)]
+                  ;; The mutant must return a callable, functioning small-map
+                  ;; converter, not merely a facade around a false result.
+                  [(ifn? transform) (transform {:a 1})])))))
     (let [transform (native/load-transform! #'exporter/key-string #'exporter/value-string)]
       (is (= {"a" "1"} (transform {:a 1}))))))
 
