@@ -10,9 +10,7 @@
               (and (if (hnode? child) (admitted-node? child)
                        (and (pair? child) (string? (car child))))
                    (loop (+ i 1))))))))
-  (lambda (m key-var value-var . original-key-arguments)
-    (let ((original-key (and (pair? original-key-arguments)
-                             (car original-key-arguments))))
+  (define (convert-map m key-var value-var original-key)
     (and (pmap? m) (> (pmap-cnt m) 8) (<= (pmap-cnt m) 128)
          (hnode? (pmap-root m)) (admitted-node? (pmap-root m))
       (let ((partial-root #f) (fallback #f))
@@ -63,4 +61,10 @@
             copy))
         (let ((root (walk (pmap-root m) #f 0)))
           (if fallback (jolt-persistent! fallback)
-              (make-pmap root (pmap-cnt m)))))))))
+              (make-pmap root (pmap-cnt m)))))))
+  ;; Preserve the legacy direct-kernel entry without allocating a rest list
+  ;; for the factory's ordinary four-argument calls.
+  (case-lambda
+    ((m key-var value-var) (convert-map m key-var value-var #f))
+    ((m key-var value-var original-key)
+     (convert-map m key-var value-var original-key))))
