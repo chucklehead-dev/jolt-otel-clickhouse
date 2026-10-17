@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Avoid redundant key-converter calls for primitive string keys in the explicit
+  native attribute-map path. Check the live converter before each entry so
+  mid-row replacements, value callbacks and normalized-key fallback remain live.
+
 - Avoid empty event/link vector folds when constructing span rows. Preserve
   named/compact layouts, JSON encoding calls and generic/lazy input traversal;
   nonempty events and links retain the existing conversion path.

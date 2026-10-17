@@ -14,6 +14,45 @@
 
 (defn native? [] (string? (System/getProperty "jolt.version")))
 
+(deftest original-string-key-shortcut-removes-only-redundant-calls
+  (when (native?)
+    (doseq [enabled? [false true]]
+      (let [source (slurp (io/resource "otel/exporter/chdb/native_attribute_value_clone.ss"))
+            observed (scheme/eval-string
+                       (str "(let ((calls 0) (invoke jolt-invoke1)) "
+                            "(let ((jolt-invoke1 (lambda (f x) "
+                            "(set! calls (+ calls 1)) (invoke f x)))) "
+                            "(let ((convert " source ")) "
+                            "(jolt-vector convert (lambda () calls)))))"))
+            input (into {} (map (fn [i] [(str "key-" i) i]) (range 16)))
+            output ((nth observed 0) input #'exporter/key-string #'exporter/value-string
+                    (if enabled? @#'exporter/original-attribute-key-string false))]
+        (is (= (convert :configured input) output))
+        (is (= (if enabled? 16 32) ((nth observed 1))))))))
+
+(deftest original-string-key-shortcut-observes-mid-row-replacement
+  (when (native?)
+    (doseq [n [16 40 128] fail? [false true]]
+      (let [input (into {} (map (fn [i] [(str "key-" i) i]) (range n)))
+            original-key @#'exporter/key-string original-value @#'exporter/value-string
+            run (fn [backend]
+                  (let [effects (atom []) count (atom 0)]
+                    (with-redefs [exporter/key-string original-key
+                                  exporter/value-string
+                                  (fn [value]
+                                    (swap! effects conj [:value value])
+                                    (when (= 1 (swap! count inc))
+                                      (alter-var-root #'exporter/key-string
+                                        (constantly (fn [key]
+                                                      (swap! effects conj [:changed-key key])
+                                                      "normalized")))
+                                      (when fail? (throw (ex-info "controlled" {:fixture true}))))
+                                    (original-value value))]
+                      [(try (let [out (convert backend input)] [(vec out) (json/write-str out)])
+                            (catch Throwable e (ex-data e))) @effects])))]
+        (is (= (run :configured) (run :native-guarded-byte-batch)))
+        (is (identical? original-key @#'exporter/key-string))))))
+
 (deftest hash-value-clone-positive-parity-and-input-ownership
   (when (native?)
     (let [clone (scheme/eval-string

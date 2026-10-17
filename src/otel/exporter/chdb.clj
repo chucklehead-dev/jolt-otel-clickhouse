@@ -88,7 +88,7 @@
     (try
       (require 'otel.exporter.chdb.native-attributes)
       ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
-       #'key-string #'value-string)
+       #'key-string #'value-string original-attribute-key-string)
       (catch Throwable _
         (throw (ex-info "Native attribute projection is unavailable"
                         {:type ::native-attributes-unavailable}))))))
