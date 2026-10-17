@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Repin the optional native byte-JSON backend to include local ASCII cursor
+  emission and safe reuse of never-exposed row writers. Preserve custom writer
+  behavior and ordinary JSON, SDK, driver, schema and persistence defaults.
+  Verify the actual resolved dependency; short allocation improvements do not
+  qualify sustained throughput or tail latency.
+
 - Update only the optional native byte-JSON dependency for lower per-row
   bridge allocation. Keep ordinary JSON, SDK, driver, encoding and persistence
   defaults unchanged. Check the alias's actual resolved source separately;
