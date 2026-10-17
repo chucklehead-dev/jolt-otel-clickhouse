@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- For explicitly selected native-byte compact typed spans, collect only
+  declared values without temporary map entries and build positional output
+  once. Keep every normalized duplicate and live converter call in source
+  order, with invocation-owned storage and fallback for unsupported maps.
+  The default portable projector, captured dictionaries and WAL are unchanged.
+
+- Avoid sorted-map comparisons for the built-in typed status codebook during
+  row projection. Keep its public sorted presentation and live replacement
+  behavior, including codebooks installed before the projector loads.
+
 - Add explicit experimental Durable `:datetime64-wire :raw-ticks` for chDB
   26.9.0. Keep numeric nanoseconds and include the fixed raw-tick setting in
   every generated INSERT/WAL statement, without changing session settings.
