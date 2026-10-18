@@ -7,13 +7,13 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/d93846e40b837dcecb546fb59f6cb05ca639f054/")
+  "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
 
 (def ^:private prior-otel-root
-  "https___github.com_casselc_otel.git/8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2/")
+  "https___github.com_casselc_otel.git/d93846e40b837dcecb546fb59f6cb05ca639f054/")
 
 (def ^:private prior-otel-coordinate
-  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2\" :exclusions [jolt-lang/jolt-crypto]}}}")
+  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"d93846e40b837dcecb546fb59f6cb05ca639f054\" :exclusions [jolt-lang/jolt-crypto]}}}")
 
 (def ^:private chdb-root
   "https___github.com_chucklehead-dev_jolt-chdb.git/3d766fa295b0e98c30f275d0a334db92e6dd998c/")
@@ -96,7 +96,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/d93846e40b837dcecb546fb59f6cb05ca639f054/"
+  (let [fixture-root "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -109,19 +109,23 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "d93846e40b837dcecb546fb59f6cb05ca639f054"
+                             "37c684a2c370fc82fde82331635973bce87a52b3"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
+    (check "SDK before batch-ready wakeup is rejected" false
+           (boolean (oracle (str/replace source
+                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "d93846e40b837dcecb546fb59f6cb05ca639f054"))))
     (check "SDK before per-reader policy is rejected" false
            (boolean (oracle (str/replace source
-                             "d93846e40b837dcecb546fb59f6cb05ca639f054"
+                             "37c684a2c370fc82fde82331635973bce87a52b3"
                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
     (check "SDK before definition-owned helper qualification is rejected" false
            (boolean (oracle (str/replace source
-                             "d93846e40b837dcecb546fb59f6cb05ca639f054"
+                             "37c684a2c370fc82fde82331635973bce87a52b3"
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"))))
     (check "SDK before bounded string admission is rejected" false
            (boolean (oracle (str/replace source
-                             "d93846e40b837dcecb546fb59f6cb05ca639f054"
+                             "37c684a2c370fc82fde82331635973bce87a52b3"
                              "14ffd741351373f07d96aa070b0f9853d7daf8ab"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))

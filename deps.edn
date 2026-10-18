@@ -5,9 +5,9 @@
          :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "d93846e40b837dcecb546fb59f6cb05ca639f054"
-         ;; OTel now names the canonical crypto provider at this same reviewed
-         ;; revision. Keep its subtree declaration excluded and select it
+         :git/sha "37c684a2c370fc82fde82331635973bce87a52b3"
+         ;; Includes ready-batch scheduling and batch<=queue validation.
+         ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
          ;; independent of dependency traversal order.
          :exclusions [jolt-lang/jolt-crypto]}

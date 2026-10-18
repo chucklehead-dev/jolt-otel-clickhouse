@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update the OTel SDK so full span batches export before the scheduled timer.
+  Custom batch sizes must not exceed queue capacity; the SDK rejects invalid
+  configurations before starting workers. Keep existing exporter, JSON, native
+  driver and crypto pins, payload limits and Durable acknowledgements unchanged.
+
 - Add an optional per-exporter `:max-insert-bytes` payload limit, from 1 byte
   through 64 MiB. Keep the 8 MiB default, newline-inclusive UTF-8 accounting,
   independent concurrent serialization, and confirmed Durable acknowledgements.

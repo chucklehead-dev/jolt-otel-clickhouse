@@ -83,6 +83,11 @@ Durable telemetry objects until cross-version replay is separately qualified.
                                 :logs? true}))
 ```
 
+Span batching exports when a full batch is ready or its scheduled timer is due.
+If you customize batching, `:max-export-batch-size` must not exceed
+`:max-queue-size`; invalid settings fail before a worker starts. Queue admission
+remains nonblocking and drops on overflow. Readiness is not a real-time deadline.
+
 An exporter-owned connection can keep telemetry isolated in a logical database
 on the application's one active physical chDB path:
 
