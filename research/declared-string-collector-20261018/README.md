@@ -13,3 +13,8 @@ silently substitute current branches or re-run terminal jobs from old handles.
 
 This research checkpoint is separate from the reviewed source branch so it does
 not invalidate its exact-head CI or enlarge the proposed production diff.
+
+Files named `declared-string-keys-*20261017*` are recovered historical context:
+candidate `8a8fe12` already explored binding plus a per-key normalizer shortcut,
+but retained per-key membership and did not establish a Durable gain. Those
+receipts are not current baselines or part of the Oct18 sample populations.

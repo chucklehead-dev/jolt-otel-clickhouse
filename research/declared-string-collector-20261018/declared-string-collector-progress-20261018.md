@@ -53,6 +53,16 @@ These scoped S3 jobs are not real AWS throughput. No other dispatch is needed.
 
 ## Performance evidence: allocation benefit, no throughput win established
 
+Recovery note: older related investigation8a8fe12e0507dbafb55f91c198a62a87ea629802
+was found while collecting receipts. It already bound stable native collector
+references and skipped the original string normalizer per entry, while still
+calling live membership per entry. Its normal-path ABBA was not a gain and it
+was not integrated into this base. Current work is not a newly invented binding
+technique or a blind resurrection of that fix: it adds a separately guarded
+pure normalizer+membership scan. The current prototype's five-argument cost
+was corrected using that established binding pattern. Prior Oct17 source and
+receipts are retained as historical context, not pooled with current results.
+
 Qualified1ae / JSON8d / SDK37 / driver3d / native26.9 / Chez10.4.1 unchanged.
 Component script declared-string-collector-screen-20261018.clj uses actual
 indexed projector, fixture5k/wide16,2fields,3warmups and24pairs/phase, exact
@@ -112,6 +122,8 @@ optional fast-mode product question remains unanswered, not a blocker.
 1. Final-head CI is green. No PR creation without resolving automatic approval
    gate and user review of branch/text; no bypass and no PR currently exists.
 2. Preserve small sources/scalars; copied review packet is cleaned.
+   Local evidence checkpoint research/declared-string-collector-evidence-20261018
+   is separate from the reviewed source branch; no generated native stores.
 3. Inspect stock0.8.23 relevancy before proposing upgrade/extractions. Live API
    confirms latest tag a0ac71c3f638fe55158bd01b4ecbb0dd3d7545e5, released
    2026-10-17T19:41:22Z. Unqualified local jolt resolves0.8.10; current gates use
