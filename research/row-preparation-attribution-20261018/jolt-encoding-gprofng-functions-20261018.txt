@@ -1,0 +1,15 @@
+Print limit set to 25
+Functions sorted by metric: Exclusive Total CPU Time
+
+Excl. Total   Incl. Total    Name
+CPU           CPU
+ sec.      %   sec.      %
+0.062 100.00  0.062 100.00   <Total>
+0.058  93.55  0.060  96.77   <Unknown>
+0.002   3.23  0.002   3.23   pthread_mutex_trylock
+0.002   3.23  0.002   3.23   sort_seginfo
+0.      0.    0.002   3.23   S_find_more_gc_room
+0.      0.    0.002   3.23   S_find_segments
+0.      0.    0.002   3.23   S_get_more_room
+0.      0.    0.002   3.23   S_get_more_room_help
+

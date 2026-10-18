@@ -1,0 +1,174 @@
+Experiment: /tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er
+No errors
+No warnings
+
+Target command (64-bit): '/usr/bin/env bash /home/chuck/ai-src/evidence/jolt-measured-1ae-20261015.sh -Srepro -A:native-json-byte-batch -Sdeps {:paths ["src" "test" "bench"]} /home/chuck/ai-src/evidence/jolt-encoding-gprofng-20261018.clj'
+Process pid 13, ppid 12, pgrp 12, sid 1
+Current working directory: /home/chuck/ai-src/worktrees/exporter-sorted-json-consumer-20261018
+Collector version: `2.42'; experiment version 12.4 (64-bit)
+Host `CHUCKTOP', OS `Linux 6.6.87.2-microsoft-standard-WSL2', page size 4096, architecture `x86_64'
+  8 CPUs, clock speed 2995 MHz.
+  Memory: 2010167 pages @  4096 = 7852 MB.
+Data collection parameters:
+  Clock-profiling, interval = 2000 microsecs.
+  Periodic sampling, 1 secs.
+  Follow descendant processes from: fork|exec|combo
+  Pause signal 12
+
+Experiment started Sun Oct 18 08:03:05 2026
+
+Pause: 0.000052569
+Starting execvp 0.000277383, exp .er, "bash /home/chuck/ai-src/evidence/jolt-measured-1ae-20261015.sh -Srepro -A:native-json-byte-batch -Sdeps {:paths ["src" "test" "bench"]} /home/chuck/ai-src/evidence/jolt-encoding-gprofng-20261018.clj"
+Experiment Ended: 0.000283494
+Data Collection Duration: 0.000052569
+----------------------------------------------------------------
+Experiment: /tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er/_x1_x1_x1_x3.er
+No errors
+*** Collector Warning: Collection interval timer period was changed (2000 -> 0); profile data may be unreliable
+No archive command run
+
+Target command (64-bit): '/home/chuck/ai-src/evidence/jolt-runtime-1ae-artifact-20261014.q3dLDHjB/jolt -Srepro -A:native-json-byte-batch -Sdeps {:paths ["src" "test" "bench"]} /home/chuck/ai-src/evidence/jolt-encoding-gprofng-20261018.clj'
+Process pid 13, ppid 12, pgrp 12, sid 1
+Current working directory: /home/chuck/ai-src/worktrees/exporter-sorted-json-consumer-20261018
+Collector version: `2.42'; experiment version 12.4 (64-bit)
+Host `CHUCKTOP', OS `Linux 6.6.87.2-microsoft-standard-WSL2', page size 4096, architecture `x86_64'
+  8 CPUs, clock speed 2995 MHz.
+  Memory: 2010167 pages @  4096 = 7852 MB.
+Data collection parameters:
+  Clock-profiling, interval = 2000 microsecs.
+  Periodic sampling, 1 secs.
+  Follow descendant processes from: fork|exec|combo
+  Pause signal 12
+
+Experiment started Sun Oct 18 08:03:05 2026
+
+Pause: 0.000049641
+Resume: 11.191318157
+Pause (API): 14.229051096
+Experiment Ended: 14.455740981
+Data Collection Duration: 3.037782580
+Experiment(s):
+
+Experiment      :/tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er (plus 1 more)
+  Target        : '/usr/bin/env bash /home/chuck/ai-src/evidence/jolt-measured-1ae-20261015.sh -Srepro -A:native-json-byte-batch -Sdeps {:paths ["src" "test" "bench"]} /home/chuck/ai-src/evidence/jolt-encoding-gprofng-20261018.clj'
+  Host          : CHUCKTOP (x86_64, Linux 6.6.87.2-microsoft-standard-WSL2)
+  Start Time    : Sun Oct 18 08:03:05 2026
+  Duration      : 14.579 Seconds
+
+Metrics:
+
+  Experiment Duration (Seconds): [14.579]
+  Clock Profiling
+    [X]Total CPU Time - totalcpu (Seconds): [*0.062]
+
+Notes: '*' indicates hot metrics, '[X]' indicates currently enabled metrics.
+       The metrics command can be used to change selections. The metric_list command lists all available metrics.
+<Sum across selected experiments>
+        Aggregated statistics for selected samples
+
+                                       Start Label: Total
+                                         End Label: Total
+                                 Start Time (sec.): N/A
+                                   End Time (sec.): N/A
+                                   Duration (sec.): 14.456
+                          Total Thread Time (sec.): 14.456
+                         Average number of Threads:  1.000
+
+                              Process Times (sec.):
+                                          User CPU: 14.171 ( 98.0%)
+                                        System CPU:  0.279 (  1.9%)
+                                          Trap CPU:  0.    (  0. %)
+                                         User Lock:  0.    (  0. %)
+                                   Data Page Fault:  0.    (  0. %)
+                                   Text Page Fault:  0.    (  0. %)
+                                 Kernel Page Fault:  0.    (  0. %)
+                                           Stopped:  0.    (  0. %)
+                                          Wait CPU:  0.    (  0. %)
+                                             Sleep:  0.006 (  0.0%)
+
+                                 Minor Page Faults: 113463
+                                 Major Page Faults:      2
+                                     Process swaps:      0
+                                      Input blocks:      0
+                                     Output blocks:     96
+                                     Messages sent:      0
+                                 Messages received:      0
+                                   Signals handled:      0
+                        Voluntary context switches:      1
+                      Involuntary context switches:     85
+                                      System calls:      0
+                                 Characters of I/O:      0
+
+
+Experiment: /tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er
+        Aggregated statistics for selected samples
+
+                                       Start Label: Total
+                                         End Label: Total
+                                 Start Time (sec.):  0.000
+                                   End Time (sec.):  0.000
+                                   Duration (sec.):  0.000
+                          Total Thread Time (sec.):  0.000
+                         Average number of Threads:  1.000
+
+                              Process Times (sec.):
+                                          User CPU:  0.    (  0. %)
+                                        System CPU:  0.000 ( 99.5%)
+                                          Trap CPU:  0.    (  0. %)
+                                         User Lock:  0.    (  0. %)
+                                   Data Page Fault:  0.    (  0. %)
+                                   Text Page Fault:  0.    (  0. %)
+                                 Kernel Page Fault:  0.    (  0. %)
+                                           Stopped:  0.    (  0. %)
+                                          Wait CPU:  0.    (  0. %)
+                                             Sleep:  0.000 (  0.5%)
+
+                                 Minor Page Faults:     22
+                                 Major Page Faults:      0
+                                     Process swaps:      0
+                                      Input blocks:      0
+                                     Output blocks:      8
+                                     Messages sent:      0
+                                 Messages received:      0
+                                   Signals handled:      0
+                        Voluntary context switches:      0
+                      Involuntary context switches:      0
+                                      System calls:      0
+                                 Characters of I/O:      0
+
+Experiment: /tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er/_x1_x1_x1_x3.er
+        Aggregated statistics for selected samples
+
+                                       Start Label: Total
+                                         End Label: Total
+                                 Start Time (sec.):  0.000
+                                   End Time (sec.): 14.456
+                                   Duration (sec.): 14.456
+                          Total Thread Time (sec.): 14.456
+                         Average number of Threads:  1.000
+
+                              Process Times (sec.):
+                                          User CPU: 14.171 ( 98.0%)
+                                        System CPU:  0.278 (  1.9%)
+                                          Trap CPU:  0.    (  0. %)
+                                         User Lock:  0.    (  0. %)
+                                   Data Page Fault:  0.    (  0. %)
+                                   Text Page Fault:  0.    (  0. %)
+                                 Kernel Page Fault:  0.    (  0. %)
+                                           Stopped:  0.    (  0. %)
+                                          Wait CPU:  0.    (  0. %)
+                                             Sleep:  0.006 (  0.0%)
+
+                                 Minor Page Faults: 113441
+                                 Major Page Faults:      2
+                                     Process swaps:      0
+                                      Input blocks:      0
+                                     Output blocks:     88
+                                     Messages sent:      0
+                                 Messages received:      0
+                                   Signals handled:      0
+                        Voluntary context switches:      1
+                      Involuntary context switches:     85
+                                      System calls:      0
+                                 Characters of I/O:      0
+

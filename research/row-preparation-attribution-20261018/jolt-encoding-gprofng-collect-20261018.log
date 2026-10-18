@@ -1,0 +1,3 @@
+Creating experiment directory /tmp/jolt-encoding-gprofng-20261018.nMpDzCNk/encoding.er (Process ID: 13) ...
+:profile-ready :rows 2000 :iterations 20
+:profile-complete :rows 40000 :byte-parity true
