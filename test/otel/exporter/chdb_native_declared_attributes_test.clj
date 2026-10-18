@@ -483,6 +483,43 @@
                        @#'p/original-key-string))]
     (is (false? result))))
 
+(deftest owned-string-collector-wanted-boundaries-and-bound-vars-remain-live
+  (let [factory (scheme/eval-string
+                  (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        original @#'p/original-key-string
+        fast (factory #'p/key-string #'clojure.core/contains? original)
+        input (into {} (map #(vector (str %) %) (range 16)))
+        eight (set (map str (range 8)))]
+    (is (= (portable-collect input eight) (fast input eight)))
+    (is (= (vec (portable-collect input eight)) (vec (fast input eight))))
+    (is (false? (fast input (conj eight "8"))))
+    (is (false? (fast input #{"0" :non-string})))
+    (with-redefs [p/key-string (fn [key] key)]
+      (is (false? (fast input eight))))
+    (is (= (portable-collect input eight) (fast input eight)))))
+
+(deftest owned-string-collector-post-scan-policy-change-declines-before-fallback
+  (let [source (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss"))
+        changed (atom 0) calls (atom []) original @#'p/original-key-string
+        mutation (fn [] (swap! changed inc)
+                   (alter-var-root #'p/key-string
+                     (constantly (fn [key] (swap! calls conj key) (original key)))))
+        injected (str "(lambda (change) (let ((fold pmap-fold-seq-order) (calls 0)) "
+                      "(let ((pmap-fold-seq-order (lambda (m f init) "
+                      "(let ((out (fold m f init))) (set! calls (+ calls 1)) "
+                      "(when (= calls 2) (jolt-invoke0 change)) out)))) " source ")))" )
+        fast-factory ((scheme/eval-string injected) mutation)
+        input (into {} (map #(vector (str %) %) (range 16))) wanted #{"7"}]
+    (with-redefs [p/key-string original]
+      (let [fast (fast-factory #'p/key-string #'clojure.core/contains? original)]
+        (is (false? (fast input wanted)))
+        (is (= 1 @changed)) (is (empty? @calls))
+        ;; The declined pure scan has not run a converter. Its normal fallback
+        ;; therefore runs the new converter exactly once for each input entry.
+        (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
+          (is (= {"7" [7]} (collect input wanted)))
+          (is (= (mapv first input) @calls)))))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'otel.exporter.chdb-native-declared-attributes-test)]
     (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1))))

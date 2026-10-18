@@ -14,7 +14,7 @@
               (vector-set! slots (+ used 1) (make-pvec (vector value)))
               (vector-set! context 2 (+ used 2))))))
     context)
-  (lambda (m wanted key-var contains-var original-key)
+  (define (collect m wanted key-var contains-var original-key)
     (and original-key (pmap? m) (<= (pmap-cnt m) 128)
          (pset? wanted) (<= (pset-count wanted) 8)
          (eq? (var-cell-deref key-var) original-key)
@@ -34,4 +34,12 @@
                 (let ((used (vector-ref context 2)))
                   (make-pmap (if (= used (vector-length slots)) slots
                                  (vec-copy-range slots 0 used))
-                             (quotient used 2))))))))
+                             (quotient used 2)))))))
+  ;; Capture stable Var references, NOT their values, once per factory. A
+  ;; five-argument Clojure call otherwise uses the variadic invocation bridge
+  ;; on the qualified runtime, creating a rest list for every attribute map.
+  (case-lambda
+    ((key-var contains-var original-key)
+     (lambda (m wanted) (collect m wanted key-var contains-var original-key)))
+    ((m wanted key-var contains-var original-key)
+     (collect m wanted key-var contains-var original-key))))

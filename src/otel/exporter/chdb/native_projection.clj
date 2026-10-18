@@ -25,9 +25,9 @@
   ([key-var contains-var] (load-declared-collector! key-var contains-var false))
   ([key-var contains-var original-key]
    (let [collect (scheme/eval-string declared)
-         fast (scheme/eval-string string-declared)]
+         fast ((scheme/eval-string string-declared) key-var contains-var original-key)]
      (fn [attributes wanted]
-       (or (when original-key (fast attributes wanted key-var contains-var original-key))
+       (or (when original-key (fast attributes wanted))
            (collect attributes wanted key-var contains-var))))))
 
 (defn load-positional-output!
