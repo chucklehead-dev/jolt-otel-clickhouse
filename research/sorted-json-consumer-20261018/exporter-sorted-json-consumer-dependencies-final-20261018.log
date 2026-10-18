@@ -1,0 +1,57 @@
+:passed SDK source provider is accepted
+:passed SDK src/resources share one checkout
+:passed SDK canonical aliases share one checkout
+:passed SDK old reviewed SHA is rejected
+:passed SDK before owned scalar-map capability is rejected
+:passed SDK before batch-ready wakeup is rejected
+:passed SDK before per-reader policy is rejected
+:passed SDK before definition-owned helper qualification is rejected
+:passed SDK before bounded string admission is rejected
+:passed SDK distinct checkout at same SHA is rejected
+:passed SDK repeated source provider is rejected
+:passed SDK unexpected checkout child is rejected
+:passed SDK missing provider is rejected
+:passed ordinary users retain child executable fallback
+:passed explicit absolute child executable is retained
+:passed relative or blank selected child executable is rejected
+:passed relative or blank selected child executable is rejected
+:passed relative or blank selected child executable is rejected
+:passed data.json source provider is accepted
+:passed data.json canonical source root is accepted
+:passed data.json old SHA is rejected
+:passed data.json distinct checkout at same SHA is rejected
+:passed data.json repeated source provider is rejected
+:passed data.json missing provider is rejected
+:passed chDB source provider is accepted
+:passed chDB source/resources share one checkout
+:passed chDB prior revision is rejected
+:passed chDB previous root pin is rejected
+:passed chDB duplicate source provider is rejected
+:passed chDB before prefixed encoder API is rejected
+:passed chDB distinct checkout at same SHA is rejected
+:passed chDB unexpected checkout child is rejected
+:passed chDB missing provider is rejected
+:passed native byte alias coordinate oracle accepts current source
+:passed native byte alias coordinate oracle rejects prior pin
+:passed native byte alias coordinate oracle still rejects older source
+:passed native byte alias resolution completes without warnings
+:passed native byte alias selects its sole concrete reviewed source
+clean jolt-crypto dependency resolution
+:passed dependency report completes
+:passed dependency report has no resolution warning
+:passed crypto resolves once from canonical upstream at the full SHA
+:passed OTel resolves once from casselc/otel at the reviewed full SHA
+:passed data.json resolves once from casselc/data.json at the reviewed full SHA
+:passed chDB resolves once from the reviewed full SHA
+:passed prior SDK dependency report completes
+:passed prior SDK mutation selects the real old checkout
+:passed current SDK oracle rejects the prior checkout
+:passed prior chDB dependency report completes
+:passed prior chDB mutation selects the real old checkout
+:passed current chDB oracle rejects the prior checkout
+:passed wrong-coordinate dependency report completes
+:passed mutation resolves exactly from the wrong repository and SHA
+:passed canonical oracle rejects the real wrong-coordinate resolution
+:passed wrong-SHA data.json dependency report completes
+:passed wrong-SHA mutation selects one old data.json checkout
+:passed current data.json oracle rejects the real wrong-SHA resolution

@@ -1,0 +1,13 @@
+No defect found under the stated assumptions, with one point worth flagging explicitly.
+
+**Order equivalence.** Stock `write-object` computes `out-key`, then `out-value`, then `nxt = (next x)`, and only afterward validates `(string? out-key)` and checks the omission sentinel before writing. `emit-seq-map!` reproduces this exactly: `name` (key conversion) → `child` (raw value, since the fast path requires `default-value?`, so no value-fn transform is needed) → `next` (forced via `observe`) → `emit-map-entry!` (which validates `name` is a string, checks the sentinel via `stock-slots[9]`, and only then writes comma/key/colon/child). The explicit comment confirms this is intentional parity.
+
+**Continuation condition.** Stock recurses only `(when (seq nxt) (recur nxt ...))`; the new loop mirrors this with `(unless (jolt-nil? (observe (lambda () (jolt-seq next)))) (loop next printed-next?))`, including the `observe` flush/sync wrapper so a custom `:ops` seq implementation on `next` is invoked, not bypassed — consistent with "sequence operations are invoked not bypassed."
+
+**Printed-flag threading.** When an entry is omitted, stock recurs with `have-printed-kv` unchanged; `emit-map-entry!` returns `printed?` unchanged on `omit?`, and the loop passes that through as `printed-next?`. Comma emission (`byte! 44`) only fires `when printed?` before a non-first included entry, matching `.append out \,` gated on `have-printed-kv`.
+
+**Double-seq pattern.** Both implementations call "seq" twice before first use (stock: `(seq m)` to bind `x`, then `(seq x)` as loop test; new code: `(observe (lambda () (jolt-seq x)))` to bind `xs`, then `(jolt-seq xs)` as loop test). This is present in both, not a divergence.
+
+**Flush boundaries.** Every point where stock would call `key-fn`/`value-fn`/`-write`/sequence ops is wrapped in `observe`, so flush/sync brackets callback-visible actions identically to how the untouched serial-factory machinery expects.
+
+No ordering, comma, exception-path, or writer-publication inconsistency found between `emit-seq-map!`/`emit-map-entry!` and stock `write-object` within the stated scope.

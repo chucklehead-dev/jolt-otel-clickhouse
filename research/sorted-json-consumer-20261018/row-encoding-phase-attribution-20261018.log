@@ -1,0 +1,6 @@
+Unhandled exception (ClassCastException): class clojure.lang.Delay cannot be cast to class clojure.lang.IFn
+  at ~/ai-src/evidence/row-encoding-phase-attribution-20261018.clj:15:1
+  trace:
+    clojure.data.json.jolt-native/load-payload-byte-buffer-writer! (~/.jolt/gitlibs/https___github.com_casselc_data.json.git/a18ae06c787e6e03709bd78f1b92911130a613f1/src/main/clojure/clojure/data/json/jolt_native.clj:177)
+    jfn$user/$1
+    jfn$user/$3
