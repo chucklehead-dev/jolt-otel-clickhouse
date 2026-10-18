@@ -1,0 +1,1 @@
+{:verified true, :lanes 1, :arrival "saturated", :recovered-rows 175000, :confirmed-rows-per-second 27897.066413523757, :actual-export-batches 32, :trace-affinity-and-callback-order true, :tail-qualified false}
