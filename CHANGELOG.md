@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Advance the optional native JSON dependency to use runtime-owned stock
+  sorted-map folding when present. Older runtimes and custom operations retain
+  sequence traversal; live JSON callbacks, typed source values, ordinary JSON
+  and Durable acknowledgement semantics are unchanged. Runtime artifact
+  adoption is qualified separately from this dependency update.
+
 - Use the SDK's optional sorted scalar-map normalization in the native backend
   while original converter policies remain installed. Decline custom operations
   and unsupported inputs before callbacks; keep the normal conversion with
