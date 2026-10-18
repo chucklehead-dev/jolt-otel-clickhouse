@@ -1,0 +1,5 @@
+Syntax error (IllegalArgumentException) compiling try at (otel/any_value_test.clj:92:22).
+Unable to resolve classname: :default
+
+Full report at:
+/tmp/clojure-3680614960652262074.edn

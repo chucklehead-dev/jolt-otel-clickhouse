@@ -1,0 +1,9 @@
+No tools used — this is a static read of the diff as provided.
+
+**Pin bump (deps.edn):** `io.github.casselc/otel` SHA moves cleanly from `37c684a2c3…` to `697f58bd5b…`; comment updated to mention the new scalar-map capability. New alias `:sdk-scalar-map-test` follows the existing alias shape (`extra-paths ["test"]`, single `-m` main-opt) — no malformed EDN, no missing bracket/paren.
+
+**CI wiring (tests.yml):** new step `-M:sdk-scalar-map-test` inserted between the existing `native-attributes-test` and `owned-output-test` invocations. Syntactically consistent with sibling lines; ordering has no functional dependency on neighbors, so placement is safe.
+
+**Dependency-provenance test:** all four occurrences of the old pin (`otel-root`, `prior-otel-coordinate`, and the `fixture-root` inside `run-oracle-controls!`) are consistently retargeted to the new SHA — no stale reference left behind. `prior-otel-root`/`prior-otel-coordinate` correctly shift to the *previous* pin (`37c684a2…`), preserving the one-step-back witness rather than silently dropping it. The new check, "SDK before owned scalar-map capability is rejected," correctly targets exactly that shifted prior SHA — matching "immediately prior" in your framing. The pre-existing negative checks (batch-ready wakeup, per-reader policy, helper qualification, bounded-string admission, distinct-checkout) are mechanically updated to swap only the base SHA, their older target SHAs untouched — no control was dropped or weakened.
+
+**No findings.** The delta is a self-consistent mechanical pin bump plus one correctly-scoped new negative test and one correctly-wired new CI step. No pin mismatch, no lost controls, no malformed alias/step, no behavior change beyond what's described.

@@ -1,0 +1,4 @@
+Unhandled exception (AssertionError): Assert failed: explicit gate requires the new SDK native capability
+(and sdk-var (some? ((clojure.core/deref sdk-var) (fixture 16))))
+  trace:
+    otel.exporter.chdb-sdk-scalar-map-test/-main (./test/otel/exporter/chdb_sdk_scalar_map_test.clj:67)

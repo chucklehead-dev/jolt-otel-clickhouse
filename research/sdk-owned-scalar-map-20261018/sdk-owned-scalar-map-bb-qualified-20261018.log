@@ -1,0 +1,67 @@
+
+Testing otel.any-value-test
+
+ERROR in (signed-int64-is-exact) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:18)
+expected: (= :int64-range (:error (any/canonicalize (dec any/min-int64))))
+  actual: java.lang.ArithmeticException: long overflow
+  clojure.core/dec            - clojure/core.clj:1156:1
+  otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:21:49
+  otel.any-value/canonicalize - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:192:1
+  otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:21:31
+  clojure.core/list           - clojure/core.clj:16:1
+
+ERROR in (signed-int64-is-exact) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:18)
+expected: (= :int64-range (:error (any/canonicalize (inc any/max-int64))))
+  actual: java.lang.ArithmeticException: long overflow
+  clojure.core/inc            - clojure/core.clj:924:1
+  otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:22:49
+  otel.any-value/canonicalize - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:192:1
+  otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:22:31
+  clojure.core/list           - clojure/core.clj:16:1
+
+ERROR in (malformed-wire-values-are-explicit-errors) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:137)
+expected: (= :invalid-int64 (get-in (wire/decode {:intValue "9223372036854775808"}) [:error :reason]))
+  actual: java.lang.ArithmeticException: long overflow
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:212:12
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:200:11
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:198:1
+  otel.any-value-test        - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:142:18
+  clojure.core/get-in        - clojure/core.clj:6209:1
+  otel.any-value-test        - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:142:10
+  clojure.core/list          - clojure/core.clj:16:1
+
+ERROR in (scalar-text-shortcut-retains-normalization-authority) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:155)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.lang.ArithmeticException: long overflow
+  clojure.core/dec    - clojure/core.clj:1156:1
+  otel.any-value-test - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:161:38
+  clojure.core/seq    - clojure/core.clj:128:1
+  otel.any-value-test - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:160:3
+
+ERROR in (default-root-scalars-match-generic-whole-results) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:32)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.lang.ArithmeticException: long overflow
+  clojure.core/dec    - clojure/core.clj:1156:1
+  otel.any-value-test - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:35:18
+  clojure.core/seq    - clojure/core.clj:128:1
+  otel.any-value-test - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:33:3
+
+ERROR in (wire-roundtrip-covers-every-any-value-arm) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:119)
+expected: (= value (:value (wire/decode (wire/encode value))))
+  actual: java.lang.ArithmeticException: long overflow
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:212:12
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:200:11
+  otel.otlp.any-value/decode - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:198:1
+  otel.any-value-test        - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:125:28
+  clojure.core/list          - clojure/core.clj:16:1
+
+FAIL in (wire-roundtrip-covers-every-any-value-arm) (/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:119)
+expected: (let [value (:value (wire/decode (wire/encode ##NaN)))] (not= value value))
+  actual: false
+
+Ran 17 tests containing 328 assertions.
+1 failures, 6 errors.
+
+1 failures, 6 errors

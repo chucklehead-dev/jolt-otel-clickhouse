@@ -1,0 +1,35 @@
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:41)
+expected: (= (json/write-str value) ((clojure.core/deref (var exporter/nested-json-string)) value))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:41)
+expected: (= (json/write-str value) ((clojure.core/deref (var exporter/nested-json-string)) value))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:41)
+expected: (= (json/write-str value) ((clojure.core/deref (var exporter/nested-json-string)) value))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:41)
+expected: (= (json/write-str value) ((clojure.core/deref (var exporter/nested-json-string)) value))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:43)
+expected: (= "replacement" ((clojure.core/deref (var exporter/nested-json-string)) []))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+ERROR in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:48)
+expected: (= "[9]" ((clojure.core/deref (var exporter/nested-json-string)) []))
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+FAIL in (real-nested-json-preserves-live-public-writer-and-collection-method) (chdb_native_attributes_test.clj:49)
+expected: (= 1 (clojure.core/deref calls))
+  actual: (not (= 1 0))
+
+ERROR in (available-library-adapter-root-remains-live-after-first-use) (:)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.io.FileNotFoundException: Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+
+Ran 21 tests. 597 assertions passed, 1 failures, 7 errors.

@@ -1,0 +1,1 @@
+{"conclusion":"success","headSha":"697f58bd5b4925f72339694bedbace97bdc869bb","jobs":[{"conclusion":"success","databaseId":117679554267,"name":"native-scalar-map","status":"completed"},{"conclusion":"success","databaseId":117679554659,"name":"test","status":"completed"}],"status":"completed","url":"https://github.com/casselc/otel/actions/runs/39128818354"}

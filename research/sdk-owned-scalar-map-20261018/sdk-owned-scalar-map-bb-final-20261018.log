@@ -1,0 +1,32 @@
+----- Error --------------------------------------------------------------------
+Type:     clojure.lang.ExceptionInfo
+Message:  Unable to resolve classname: :default
+Data:     {:type :sci/error, :line 84, :column 1, :file "/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj", :phase "analysis"}
+Location: /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:92:22
+Phase:    analysis
+
+----- Context ------------------------------------------------------------------
+88:     (is (= [0 1 254 255] (any/byte-values left)))
+89:     (is (vector? (any/byte-values right)))
+90:     (is (= :invalid-bytes
+91:            (:reason (ex-data
+92:                      (try (any/bytes [256])
+                         ^--- Unable to resolve classname: :default
+93:                           (catch :default error error))))))))
+94: 
+95: (deftest recursive-values-are-canonical-and-deterministic
+96:   (let [result (any/canonicalize
+97:                 {:z [1 "two" any/empty-value (any/bytes [3])]
+
+----- Stack trace --------------------------------------------------------------
+otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:92:22
+clojure.core/ex-data        - clojure/core.clj:4845:1
+otel.any-value-test/list    - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:91:21
+otel.any-value-test         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/any_value_test.clj:91:12
+clojure.core/list           - clojure/core.clj:16:1
+... (run with --debug to see elided elements)
+clojure.core/require        - clojure/core.clj:6070:1
+otel.test-runner/apply      - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:25
+otel.test-runner            - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:5
+clojure.core/apply          - clojure/core.clj:662:1
+user                        - NO_SOURCE_PATH:1:41

@@ -1,0 +1,15 @@
+**Review of a4d594a..697f58b**
+
+Nothing structurally wrong; this is a narrow, well-scoped followup. Two things worth confirming before calling it clean:
+
+1. **Pass-count assertion doesn't visibly reconcile.** `-main`'s floor bumps from `(>= test 4)(>= pass 60)` to `(>= test 5)(>= pass 66)` — one new deftest, +6 passes. The new deftest (`malformed-optional-native-code-declines-without-losing-the-fallback`) only shows 3 `is` forms in the diff. +1 test / +6 pass is plausible if `deftest`/`testing` assertions elsewhere also grew, but nothing else in the diff adds assertions. Worth a quick count check so the gate doesn't silently under- or over-shoot and mask a future regression.
+
+2. **Malformed-loader test may not exercise what it claims.** The test redefs `native/converter-source` to `"("`, then calls the *private function* directly via `@#'any/load-scalar-string-map-converter` to get a fresh "decline" fn and checks it's `nil`-safe and that plain scalar fallback (`try-scalar-string`) still works — that part is solid. But the closing assertion, `(is (some? (any/try-scalar-string-map (fixture 16))))`, runs *outside* the `with-redefs` and goes through the shared `delay`, not through the function it just exercised. If any earlier test in the same run already forced that delay (likely, given the admitted/declined test earlier in the file), this final check is validating pre-existing cached state, not recovery after corruption. It will pass either way and doesn't prove "without losing the fallback" under the redef — only that the normal path works when untouched. Not a production bug, just a test that may be weaker than its name implies.
+
+Everything else holds up on inspection:
+- The `any_value.clj` change is a pure refactor (inline `delay` body → named fn + `delay` calling it); behavior unchanged, and it's what makes the new malformed-loader test callable.
+- The fixnum fence in `any_value_native.clj` has the right polarity — it errors when the host's fixnum range is *wider* than Int64 (either bound exceeds), which is the failure mode that would silently truncate/misrepresent values.
+- CI additions (new pinned 0.8.23 job, toolchain.edn entry, workflow test asserting job/toolchain/run-line coupling with negative cases) are consistent and mutually enforced.
+- Comment-only additions in the `.ss` file and the `try-scalar-string-map` docstring correctly document policy ownership and the UTF8/codepoint equivalence claim; no code changes ride along with them.
+
+No concrete functional defect found in the delta. The two items above are confirmation/test-rigor notes, not bugs.

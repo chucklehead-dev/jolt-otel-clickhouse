@@ -1,0 +1,1 @@
+{:input-type "class clojure.lang.PersistentHashMap", :normalized-type "class clojure.lang.PersistentTreeMap", :input-builtin-hamt true, :normalized-builtin-hamt false, :input-sdk-bulk-selected true, :normalized-sdk-bulk-selected false, :values-equal true, :attribute-count 16}

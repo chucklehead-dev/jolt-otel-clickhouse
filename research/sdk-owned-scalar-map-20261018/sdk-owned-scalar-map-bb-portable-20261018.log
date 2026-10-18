@@ -1,0 +1,32 @@
+----- Error --------------------------------------------------------------------
+Type:     clojure.lang.ExceptionInfo
+Message:  Unable to resolve classname: :default
+Data:     {:type :sci/error, :line 198, :column 1, :file "/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj", :phase "analysis"}
+Location: /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:203:6
+Phase:    analysis
+
+----- Context ------------------------------------------------------------------
+199:   "Decode one OTLP/JSON AnyValue without throwing for malformed wire data."
+200:   ([wire] (decode wire any/default-limits))
+201:   ([wire options]
+202:    (let [options (any/limits options)]
+203:      (try
+          ^--- Unable to resolve classname: :default
+204:        (let [value (decode* wire [] options 0 (atom 0))
+205:              normalized (any/canonicalize value options)]
+206:          (if-let [reason (:error normalized)]
+207:            {:error {:path [] :reason reason :details (:details normalized)}}
+208:            {:value (:value normalized)}))
+
+----- Stack trace --------------------------------------------------------------
+otel.otlp.any-value/let     - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:203:6
+otel.otlp.any-value         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:202:4
+clojure.core/let            - clojure/core.clj:4527:1
+otel.otlp.any-value/fn      - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/otlp/any_value.clj:202:4
+clojure.core/fn             - clojure/core.clj:4564:1
+... (run with --debug to see elided elements)
+clojure.core/require        - clojure/core.clj:6070:1
+otel.test-runner/apply      - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:25
+otel.test-runner            - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:5
+clojure.core/apply          - clojure/core.clj:662:1
+user                        - NO_SOURCE_PATH:1:41

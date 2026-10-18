@@ -1,0 +1,32 @@
+----- Error --------------------------------------------------------------------
+Type:     clojure.lang.ExceptionInfo
+Message:  Unable to resolve classname: :default
+Data:     {:type :sci/error, :line 192, :column 1, :file "/home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj", :phase "analysis"}
+Location: /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:205:6
+Phase:    analysis
+
+----- Context ------------------------------------------------------------------
+201:          (default-scalar-result value))
+202:        (canonicalize value default-limits)))
+203:   ([value options]
+204:    (let [options (limits options)]
+205:      (try
+          ^--- Unable to resolve classname: :default
+206:        (let [[value state]
+207:              (canonicalize* value options 0
+208:                             {:nodes 0 :bytes 0 :truncated? false})]
+209:          (assoc state :value value))
+210:        (catch :default error
+
+----- Stack trace --------------------------------------------------------------
+otel.any-value/let     - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:205:6
+otel.any-value         - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:204:4
+clojure.core/let       - clojure/core.clj:4527:1
+otel.any-value/fn      - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/src/otel/any_value.clj:204:4
+clojure.core/fn        - clojure/core.clj:4564:1
+... (run with --debug to see elided elements)
+clojure.core/require   - clojure/core.clj:6070:1
+otel.test-runner/apply - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:25
+otel.test-runner       - /home/chuck/ai-src/worktrees/otel-sdk-owned-scalar-map-20261018/test/otel/test_runner.clj:64:5
+clojure.core/apply     - clojure/core.clj:662:1
+user                   - NO_SOURCE_PATH:1:41

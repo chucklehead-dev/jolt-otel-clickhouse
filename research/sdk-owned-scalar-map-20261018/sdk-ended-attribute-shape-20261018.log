@@ -1,0 +1,5 @@
+{:scope :actual-sdk-ended-span-not-throughput, :locations {:span {:type "class clojure.lang.PersistentHashMap", :count 16, :values-equal true, :builtin-hamt true, :native-selected true}, :resource {:type "class clojure.lang.PersistentTreeMap", :count 16, :values-equal true, :builtin-hamt false, :native-selected false}, :scope {:type "class clojure.lang.PersistentTreeMap", :count 16, :values-equal true, :builtin-hamt false, :native-selected false}, :event {:type "class clojure.lang.PersistentTreeMap", :count 16, :values-equal true, :builtin-hamt false, :native-selected false}}}
+Unhandled exception (IllegalArgumentException): No such var: lifecycle/shutdown!
+  at ~/ai-src/evidence/sdk-ended-attribute-shape-20261018.clj:5:1
+  trace:
+    otel.any-value/load-scalar-string-map-converter (./src/otel/any_value.clj:274)
