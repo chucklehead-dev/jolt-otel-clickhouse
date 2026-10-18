@@ -217,6 +217,9 @@
     (check "native byte alias coordinate oracle rejects prior pin" false
            (oracle (str/replace source "a18ae06c787e6e03709bd78f1b92911130a613f1"
                                 "8d557cc18eb9526ed29ae5613089c3793d5973fa")))
+    (check "native byte alias coordinate oracle still rejects older source" false
+           (oracle (str/replace source "a18ae06c787e6e03709bd78f1b92911130a613f1"
+                                "a0172a0f1418632c760af98ef5280dd234d21e85")))
     (check "native byte alias resolution completes without warnings" true
            (and (map? result) (zero? (:exit result))
                 (str/blank? (str (:err result)))))
