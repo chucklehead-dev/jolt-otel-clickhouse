@@ -115,7 +115,7 @@ owned-statement exporter adoption.
 
 Each payload owns its encoder, so concurrent SDK signals never share mutable
 serialization buffers. Row order, custom-writer effects, the newline-inclusive
-8 MiB payload limit and confirmed Durable ACK contract remain unchanged.
+payload limit (8 MiB by default) and confirmed Durable ACK contract remain unchanged.
 Unavailable explicit selections fail before acquiring a connection or running
 schema DDL, rather than silently choosing another backend.
 
@@ -327,12 +327,23 @@ success trace against the exporter boundaries.
 The exporter implements span, log, and metric exporter protocols. Metrics use
 ClickStack's `otel_metrics_gauge`, `otel_metrics_sum`, and
 `otel_metrics_histogram` table names. It sends each SDK-bounded batch through
-chDB's ordinary query API with `FORMAT JSONEachRow` and an 8 MiB safety limit.
+chDB's ordinary query API with `FORMAT JSONEachRow` and an 8 MiB default safety limit.
 libchdb 26.7's streaming-insert API corrupts ClickHouse `ThreadStatus` nesting
 for this multi-signal exporter. Export returns `false` instead of throwing into
 observed application code and exposes `last-error` for diagnostics. Pass an existing
 `:connection` when the application UI also queries the database; that keeps
 connection ownership with the application.
+
+For larger batches, set `:max-insert-bytes` on that exporter, for example
+`(* 32 1024 1024)` for 32 MiB. It accepts positive integers up to 64 MiB;
+omitted or `nil` keeps 8 MiB. This bounds each encoded physical insert payload,
+including row newlines but excluding its SQL prefix. Limits are independent
+between exporters and concurrent signals. Larger limits increase memory use;
+this is not a queue or heap budget, and driver/Durable whole-statement limits
+still apply. A metric export can issue multiple inserts; the limit does not
+make those inserts atomic or bound their combined size. Overflow returns
+`false` and records the numeric limit in `last-error`, without executing that
+oversized insert. Confirmed Durable acknowledgement behavior is unchanged.
 
 When the exporter owns its connection and logs are enabled, declare all active
 signals: `{:signals #{:spans :metrics :logs}}`. Shutdown is tracked per signal,

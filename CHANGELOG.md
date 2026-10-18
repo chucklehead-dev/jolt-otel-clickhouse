@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add an optional per-exporter `:max-insert-bytes` payload limit, from 1 byte
+  through 64 MiB. Keep the 8 MiB default, newline-inclusive UTF-8 accounting,
+  independent concurrent serialization, and confirmed Durable acknowledgements.
+  Reject invalid limits before acquiring a connection or changing schema.
+
 - Compile per-location declared-key selections for portable typed projectors.
   Keep normalization order and duplicate detection while avoiding temporary
   maps and value vectors for unrelated attributes. Captured telemetry and
