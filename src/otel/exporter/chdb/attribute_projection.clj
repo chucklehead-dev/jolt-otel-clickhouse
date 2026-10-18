@@ -126,17 +126,31 @@
     :span-attributes (:attributes span)
     nil))
 
-(defn- values-by-key [attributes]
+(defn- location-plan [fields]
+  (mapv (fn [location]
+          [location (set (map :key (filter #(= location (:location %)) fields)))])
+        (distinct (map :location fields))))
+
+(defn- values-by-key [attributes wanted]
   (reduce (fn [values [key value]]
-            (update values (key-string key) (fnil conj []) value))
+            ;; Normalize every entry in the same order, including undeclared
+            ;; keys. Retain every occurrence of a declared key: duplicates must
+            ;; still be classified as invalid, not collapsed to last-wins.
+            (let [normalized (key-string key)]
+              ;; A replaced normalizer can produce a non-string key with
+              ;; observable hashing/equality. Keep its original accumulation
+              ;; path rather than introducing a membership test or skipping it.
+              (if (or (not (string? normalized)) (contains? wanted normalized))
+                (update values normalized (fnil conj []) value)
+                values)))
           {}
           (or attributes {})))
 
-(defn- project-fields [fields attributes-for]
+(defn- project-fields [fields locations attributes-for]
   (let [location-values
-        (into {} (map (fn [location]
-                        [location (values-by-key (attributes-for location))]))
-              (distinct (map :location fields)))]
+        (into {} (map (fn [[location wanted]]
+                        [location (values-by-key (attributes-for location) wanted)]))
+              locations)]
     (reduce
      (fn [row {:keys [key location physical type]}]
        (let [values (get-in location-values [location key] [])
@@ -152,9 +166,10 @@
   Resource, instrumentation-scope, and span maps are selected by each field's
   declared location. Equal keys at different locations remain independent."
   [descriptor-set target]
-  (let [fields (confirmed-span-fields descriptor-set target)]
+  (let [fields (confirmed-span-fields descriptor-set target)
+        locations (location-plan fields)]
     (fn [span]
-      (project-fields fields #(attributes-at span %)))))
+      (project-fields fields locations #(attributes-at span %)))))
 
 (def ^:private small-declared-collector
   (delay
@@ -178,6 +193,9 @@
                       wanted-keys (nth wanted i)
                       collected
                       (or (@small-declared-collector attributes wanted-keys)
+                          ;; Retain the native path's existing fallback and
+                          ;; live membership behavior; portable filtering must
+                          ;; not silently broaden this optimization's contract.
                           (reduce (fn [out [key value]]
                                     (let [normalized (key-string key)]
                                       (if (contains? wanted-keys normalized)
@@ -197,17 +215,19 @@
   ([descriptor-set target native-maps?]
   (let [fields (confirmed-span-fields descriptor-set target)
         locations (vec (distinct (map :location fields)))
+        wanted (mapv second (location-plan fields))
         indices (zipmap locations (range))
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
     (if native-maps?
       (indexed-vector-projector
        locations
-       (mapv (fn [location]
-               (set (map :key (filter #(= location (:location %)) fields)))) locations)
+       wanted
        plan)
     (fn [span]
-      (let [values (mapv #(values-by-key (attributes-at span %)) locations)]
+      (let [values (mapv (fn [location keys]
+                           (values-by-key (attributes-at span location) keys))
+                         locations wanted)]
         (reduce (fn [out [index key type]]
                   (let [[value status] (projected-value type (get (nth values index) key []))]
                     (conj out value status)))
@@ -216,9 +236,10 @@
 (defn log-projector
   "Compile one confirmed log-attribute capability into a log-row projector."
   [descriptor-set target]
-  (let [fields (confirmed-log-fields descriptor-set target)]
+  (let [fields (confirmed-log-fields descriptor-set target)
+        locations (location-plan fields)]
     (fn [record]
-      (project-fields fields #(when (= :log-attributes %) (:attributes record))))))
+      (project-fields fields locations #(when (= :log-attributes %) (:attributes record))))))
 
 (defn- metric-context [value]
   ;; The public projector is also useful in pure tests. Preserve its previous
@@ -230,16 +251,17 @@
     {:point value}))
 
 (defn- metric-projector [fields]
-  (fn [value]
-    (let [{:keys [resource scope point]} (metric-context value)]
-      (project-fields
-       fields
-       (fn [location]
-         (case location
-           :resource-attributes (:attributes resource)
-           :scope-attributes (:attributes scope)
-           :metric-attributes (:attributes point)
-           nil))))))
+  (let [locations (location-plan fields)]
+    (fn [value]
+      (let [{:keys [resource scope point]} (metric-context value)]
+        (project-fields
+         fields locations
+         (fn [location]
+           (case location
+             :resource-attributes (:attributes resource)
+             :scope-attributes (:attributes scope)
+             :metric-attributes (:attributes point)
+             nil)))))))
 
 (defn gauge-projector
   "Compile one confirmed gauge capability into a full metric row projector."
@@ -266,9 +288,10 @@
   capabilities must use `trace-projector` so resource and scope values cannot
   be mistaken for span values."
   [descriptor-set target]
-  (let [fields (confirmed-span-fields descriptor-set target)]
+  (let [fields (confirmed-span-fields descriptor-set target)
+        locations (location-plan fields)]
     (when-not (every? #(= :span-attributes (:location %)) fields)
       (fail! "legacy span projector cannot consume a mixed trace capability"
              ::location-required {}))
     (fn [attributes]
-      (project-fields fields #(when (= :span-attributes %) attributes)))))
+      (project-fields fields locations #(when (= :span-attributes %) attributes)))))

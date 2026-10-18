@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Compile per-location declared-key selections for portable typed projectors.
+  Keep normalization order and duplicate detection while avoiding temporary
+  maps and value vectors for unrelated attributes. Captured telemetry and
+  typed value/status semantics are unchanged.
+
 - Advance the optional native byte-JSON backend to emit short clean ASCII
   without fragment-cache lookup, retaining cached Unicode and longer strings.
   Check the actual resolved source and reject the previous pin. Ordinary JSON,
