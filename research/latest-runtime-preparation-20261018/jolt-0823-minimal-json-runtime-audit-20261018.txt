@@ -1,0 +1,20 @@
+Note: the Write tool is disabled in this session, so I can't save the plan file — delivering the audit directly below instead.
+
+**Prerequisite helper list**
+
+- JSON `jolt_native.clj` writer path (`jolt_native.ss`) needs exactly one seam: `pmap-fold-seq-order`, guarded via `(scheme/proc "pmap-fold-seq-order")`. **Missing-functional on stock v0.8.23** — it does not exist in `host/chez/collections.ss` on `18dce94a` (only `pmap-fold`/`pmap-fold-fwd` are defined there; it's referenced solely in a comment at `host-table.ss:217`). It *is* defined at `collections.ss:1371` on the qualified worktree `7098a8d6`, documented in `docs/map-seq-order-fold.md`, which explicitly instructs callers to capability-check via `jolt.scheme/proc` and keep a portable fallback on older runtimes — exactly what JSON96f's guard does. So the writer will cleanly decline (not crash) on stock, but can't actually activate without porting this helper.
+- SDK `any_value_native.clj` (`scalar_string_map.ss`, `sorted_scalar_string_map.ss`) is **existing-performance-only**: every helper its macro-embedded guard checks is already present unchanged in stock — `jolt-ref-get` (`host-table.ss:47`), `pvec-count` (`collections.ss:233`), `pvec-nth!` (`collections.ss:249`), `pmap-array?` (`collections.ss:1142`), `var-cell-deref` (`dyn-binding.ss:422`), `jolt-fixnum->string` (`values.ss:48`), `jolt-transient-new` (`transients.ss:53`), `tmap-put!` (`transients.ss:133`), `jolt-persistent!` (`transients.ss:172`). Record layouts `chez-htable-v2`/`chez-pmap-v6`/`chez-hnode-v1` also match stock unchanged. SDK7878 already runs on stock v0.8.23 as-is.
+
+**Direct-linking of row construction (loaded-code)**
+
+`host-contract.ss`'s direct-linking (`hc-compiler-direct-linking?`, `hc-form-direct-link`, `jolt-direct-link-emit` at `compile-eval.ss:523`) is a *compiler* pass inlining Jolt **var** call-sites under `jolt build --opt`/`{:direct-linking true}`. Both `.ss` payloads here load via `scheme/eval-string` of raw Scheme text embedded at macro-expansion time — they never pass through that compiler pass, and their row construction already calls concrete Scheme procedures/record accessors directly, bypassing Jolt var indirection and protocol dispatch entirely (no `protocols.ss` method-site involvement in this path, and no `java/host-static-classes.ss` callback registration). Conclusion: there's no applicable direct-link opt-in lever here — these converters already sit at the call-site cost direct-linking exists to approximate for ordinary Jolt code.
+
+**Narrow port plan**
+
+Port only `pmap-fold-seq-order` (qualified `collections.ss:1371`, ~20 lines) and its doc into stock's `collections.ss`, reusing the existing capability-check pattern already present for sorted-map guards (`host-table.ss:217-229`). No change to `host-contract.ss`, `protocols.ss`, or any compiler/direct-link pass is implied.
+
+**Tests needed**
+
+Port `test/chez/map-seq-fold-test.ss` from the qualified tree unchanged (existing `mapseqfold` gate: seq-order vs. `(seq m)`, collision-bucket order, exception-prefix order) via the pinned Chez wrapper. Add one JSON-side regression confirming `backend-info`/`load-writer!` decline (not throw) when the helper is absent, preserving the observable-boundary/coherent-policy contract.
+
+This confirms the task's framing: preparation (the missing core helper) dominates — SDK's row-construction path needs nothing, JSON's needs one small, already-specified core helper, and direct-linking is a non-issue for both since they bypass the Jolt var/protocol layer entirely. Any actual port must be done and tested on `main`, not here.

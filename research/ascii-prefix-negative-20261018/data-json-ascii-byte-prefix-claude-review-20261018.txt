@@ -1,0 +1,16 @@
+No write access available in this session, so here is the review directly.
+
+## Review: `djn-byte-prefix-string` (a3799fb)
+
+**Finding 1 — Non-ASCII fallback is unreachable at its only real call site.** `flush-buffer!` is the sole caller, passing `buf`/`used`. Everything written into `buf` goes through `byte!`, `ascii!`, `u16!`, or `append-range!`, and every writer path reaching those (`raw-string!`, `integer!`, the string-cache replay in `string!`) escapes non-ASCII code points to `\uXXXX` or emits plain ASCII digits. So `buf` provably never holds a byte > 127 in production use — the `utf8->string` fallback can only be exercised by calling the private function directly with synthetic bytes, as the test file does. `utf8-prefix-falls-back-with-the-same-used-boundary` proves the fallback is correct in isolation, not that it's integration-tested at the real used boundary. The CHANGELOG/comment framing ("non-ASCII prefix retains the old decoder") overstates how reachable this path actually is.
+
+**Finding 2 — No defense for truncated/malformed UTF-8 at the `end` cut.** The fallback assumes `bytes[0,end)` is well-formed UTF-8 once any byte > 127 appears, then hands the full slice to `utf8->string` unvalidated. Given finding 1 this is currently harmless, but if a future writer change ever places raw UTF-8 into `buf`, a multi-byte sequence split across the flush boundary would hit whatever `utf8->string` does with malformed/truncated input (replacement chars or an exception), with no test covering that case.
+
+**Assessed clean:**
+- *Used-boundary safety*: only `bytes[0,end)` is read in both branches; the `end <= 65536` caller invariant is respected; no scan past `end`.
+- *Retained-string independence*: the ASCII path builds `out` char-by-char via `string-set!`, never aliasing `bytes`; the fallback always returns a fresh `utf8->string` allocation over a freshly copied bytevector. The alias-mutation test (mutating `bytes[0]` post-decode) correctly exercises this for the ASCII path.
+- *Publication boundary*: `out` is fully built before return; `djn-sb-install-or-append!` is called only after, matching prior behavior — no callback/custom-writer can observe a partial string.
+- *Mechanism negative control*: `direct-ascii-publication-kills-a-generic-decoder-mutant` is credible — it swaps in the old always-decode implementation and shows the `utf8->string` call count goes 0→nonzero for identical output, a real differential for the ASCII fast path specifically (separate from finding 1's concern, which is about the *non-ASCII* fallback's integration coverage, not the ASCII path).
+- `deps.edn`/`CHANGELOG.md` changes are documentation/alias-only, no issues.
+
+No performance claim is made in this commit, so none assessed.

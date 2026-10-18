@@ -1,0 +1,4 @@
+index=0 arm=open terminal0 output=/home/chuck/ai-src/evidence/stock-0823-row-preparation-linkage-0-open-20261018.edn
+index=1 arm=direct terminal0 output=/home/chuck/ai-src/evidence/stock-0823-row-preparation-linkage-1-direct-20261018.edn
+index=2 arm=direct terminal0 output=/home/chuck/ai-src/evidence/stock-0823-row-preparation-linkage-2-direct-20261018.edn
+index=3 arm=open terminal0 output=/home/chuck/ai-src/evidence/stock-0823-row-preparation-linkage-3-open-20261018.edn

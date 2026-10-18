@@ -1,0 +1,7 @@
+
+ERROR in (direct-ascii-publication-kills-a-generic-decoder-mutant) (:)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.lang.RuntimeException: variable #{djn-register-byte-writer-sink-proof! *top*:djn-register-byte-writer-sink-proof!} is not bound
+
+Ran 3 tests. 27 assertions passed, 0 failures, 1 errors.
