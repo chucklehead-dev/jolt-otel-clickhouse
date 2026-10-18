@@ -16,6 +16,7 @@
             [otel.exporter.chdb-timestamp-wire-test]
             [otel.exporter.chdb-status-code-lookup-test]
             [otel.exporter.chdb-untyped-encoder-test]
+            [otel.exporter.chdb-live-link-writer-test]
             [otel.exporter.chdb-untyped-encoder-native-test :as untyped-native]
             [otel.exporter.chdb-ordinary-rows-test :as ordinary-rows-test]
             [otel.exporter.chdb-ordinary-transport-diagnostics-test]
@@ -446,7 +447,8 @@
   ;; The pure encoder contract is release-compiler compatible. Its native
   ;; writer/reader parity runs later in CI under the root-qualified Durable
   ;; compiler, not under this ordinary aggregate's v0.8.6 executable.
-  (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test)]
+  (let [result (test/run-tests 'otel.exporter.chdb-untyped-encoder-test
+                               'otel.exporter.chdb-live-link-writer-test)]
     (check "untyped schema encoder contracts" true
            (zero? (+ (:fail result) (:error result))))))
 
