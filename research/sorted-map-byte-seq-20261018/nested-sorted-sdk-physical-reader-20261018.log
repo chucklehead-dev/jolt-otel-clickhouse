@@ -1,0 +1,7 @@
+error[read/invalid-syntax]: Unsupported escape character: \`
+  --> /home/chuck/ai-src/evidence/nested-sorted-sdk-physical-reader-20261018.clj:37:86
+    |
+ 35 |     (let [query (str "SELECT " (str/join ", " (map (fn [column]
+ 36 |                                           (if (= column "Events.Timestamp")
+ 37 |                                             "arrayMap(x -> toUnixTimestamp64Nano(x), \`Events.Timestamp\`) AS \`Events.Timestamp\`"
+    |                                                                                      ^

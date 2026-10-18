@@ -1,0 +1,6 @@
+{:expected-groups 5000, :actual-groups 5000, :mismatch-fields [{:field :events.timestamp, :expected "[1700000000123456789]", :actual "[\"2023-11-14 14:13:20.123456789\"]"}]}
+Unhandled exception: Trace-affinity recovery failed
+  ex-data: {:label :full-physical-row-and-multiplicity}
+  at ~/ai-src/evidence/nested-sorted-sdk-reader-diagnostic-20261018.clj:11:1
+  trace:
+    user/ensure! (~/ai-src/evidence/nested-sorted-sdk-reader-diagnostic-20261018.clj:9)

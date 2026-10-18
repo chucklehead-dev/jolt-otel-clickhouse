@@ -1,0 +1,7 @@
+I can't read any source in this environment right now — plan mode blocks my only code-inspection tools (chiasmus/wavescope), and no Read/Grep/Bash tool is exposed in this session at all. I only have the pasted snippets in your message to go on, which are explicitly partial (missing the earlier factory guard, full djn-write!/pmap-fold definitions, and the full test file).
+
+Given that, I can either:
+1. Do a best-effort review using only the code you pasted inline above (explicitly caveating what I can't verify — e.g. djn-write!'s own option handling, pmap-fold's full semantics, and the parts of the earlier review I can't see), or
+2. Wait until you can grant tool access outside plan mode, or paste the remaining relevant source so I can ground the review in actual code rather than inference.
+
+Which would you like? If (1), I'll note upfront in the write-up exactly what's inferred vs. verified from the pasted text.

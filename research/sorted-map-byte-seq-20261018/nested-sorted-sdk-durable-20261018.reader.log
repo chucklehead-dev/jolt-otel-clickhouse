@@ -1,0 +1,5 @@
+Unhandled exception: Trace-affinity recovery failed
+  ex-data: {:label :full-physical-row-and-multiplicity}
+  at ~/ai-src/evidence/sdk-trace-affinity-reader-20261018.clj:11:1
+  trace:
+    user/ensure! (~/ai-src/evidence/sdk-trace-affinity-reader-20261018.clj:9)
