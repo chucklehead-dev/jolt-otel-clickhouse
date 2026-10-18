@@ -291,6 +291,17 @@
   (if typed-projector "insert into otel_logs" log-insert-query))
 
 (def ^:private max-insert-bytes (* 8 1024 1024))
+(def ^:private max-configured-insert-bytes (* 64 1024 1024))
+(def ^:dynamic ^:private *insert-byte-limit* nil)
+
+(defn- insert-byte-limit []
+  (or *insert-byte-limit* max-insert-bytes))
+
+(defn- insert-limit-exception [limit]
+  (ex-info (if (= limit (* 8 1024 1024))
+             "chDB telemetry export batch exceeds 8 MiB"
+             "chDB telemetry export batch exceeds its configured byte limit")
+           {:limit limit}))
 
 (def ^:private untyped-span-shape
   {:name "shape" :start-time-unix-nano 0 :end-time-unix-nano 0
@@ -447,7 +458,7 @@
             (json/write-str (span-row span typed-projector)))))))))
 
 (defn- untyped-span-payload
-  ([encoder spans] (untyped-span-payload encoder spans max-insert-bytes))
+  ([encoder spans] (untyped-span-payload encoder spans (insert-byte-limit)))
   ([encoder spans limit]
    ;; Do not use mapv/map here: even chunked map can evaluate later rows before
    ;; the current row's limit check. Only request next after acceptance.
@@ -457,7 +468,7 @@
          (let [encoded (encoder (first rows))
                size (inc (alength (.getBytes encoded "UTF-8")))]
            (when (> size remaining)
-             (throw (ex-info "chDB telemetry export batch exceeds 8 MiB" {:limit limit})))
+             (throw (insert-limit-exception limit)))
            (.append out encoded) (.append out "\n")
            (recur (- remaining size) (next rows) out))
          (.toString out))))))
@@ -483,17 +494,16 @@
   and neither a reusable buffer nor a changed JSON option set is safe at this
   boundary. It retains data.json's per-row string encoding, but eliminates the
   intermediate sequence and final apply/str pass. Each full row is checked
-  before it can be appended past the 8 MiB payload bound."
+  before it can be appended past the configured payload bound."
   [rows]
-  (loop [remaining max-insert-bytes
+  (loop [remaining (insert-byte-limit)
          rows (seq rows)
          out (StringBuilder.)]
     (if-let [row (first rows)]
       (let [encoded (json/write-str row)
             bytes (inc (alength (.getBytes encoded "UTF-8")))]
         (when (> bytes remaining)
-          (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                          {:limit max-insert-bytes})))
+          (throw (insert-limit-exception (insert-byte-limit))))
         (.append out encoded)
         (.append out "\n")
         (recur (- remaining bytes) (next rows) out))
@@ -512,14 +522,13 @@
                    {:parallelism 1 :json-backend *json-backend*})]
       (try
         (if (nil? prefix)
-          (row-encoder/encode-limited-text! encoder rows max-insert-bytes)
+          (row-encoder/encode-limited-text! encoder rows (insert-byte-limit))
           (if owned-output?
-            (row-encoder/encode-limited-prefixed-statement! encoder prefix rows max-insert-bytes)
-            (row-encoder/encode-limited-prefixed-text! encoder prefix rows max-insert-bytes)))
+            (row-encoder/encode-limited-prefixed-statement! encoder prefix rows (insert-byte-limit))
+            (row-encoder/encode-limited-prefixed-text! encoder prefix rows (insert-byte-limit))))
         (catch clojure.lang.ExceptionInfo e
           (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
-            (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                            {:limit max-insert-bytes}))
+            (throw (insert-limit-exception (insert-byte-limit)))
             (throw e)))
         (finally (row-encoder/close! encoder)))))))
 
@@ -946,13 +955,12 @@
                           ;; builder is request-local and has not reached a
                           ;; JDBC/Durable/WAL boundary at this point.
                           (when (> bytes remaining)
-                            (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                                            {:limit limit})))
+                            (throw (insert-limit-exception limit)))
                           (.append out \}) (.append out "\n")
                           (recur (- remaining bytes) (next records) out))))))
                 (.toString out))))]
           (fn
-            ([records] (emit records max-insert-bytes))
+            ([records] (emit records (insert-byte-limit)))
             ([records limit] (emit records limit))))))))
 
 (def ^:private untyped-log-batch-encoder (delay (compile-untyped-log-batch-encoder)))
@@ -972,7 +980,7 @@
   ;; direct/private caller cannot accidentally change JVM or BB behavior.
   (binding [*untyped-log-attribute-wire-cache*
             (when (jolt-runtime?) (untyped-log-attribute-cache))]
-    (loop [remaining max-insert-bytes records (seq records) out (StringBuilder.)]
+    (loop [remaining (insert-byte-limit) records (seq records) out (StringBuilder.)]
       ;; Test sequence presence, not the record: raw SDK callers can supply a
       ;; falsey record, which must retain the ordinary `log-row` fallback rather
       ;; than terminating this batch and dropping subsequent records.
@@ -983,8 +991,7 @@
             (let [encoded (encoder record)
                   bytes (inc (alength (.getBytes encoded "UTF-8")))]
               (when (> bytes remaining)
-                (throw (ex-info "chDB telemetry export batch exceeds 8 MiB"
-                                {:limit max-insert-bytes})))
+                (throw (insert-limit-exception (insert-byte-limit))))
               (.append out encoded) (.append out "\n")
               (recur (- remaining bytes) (next records) out))))
         (.toString out)))))
@@ -1006,7 +1013,7 @@
        connection
        (if (= :native-guarded-byte-batch *json-backend*)
          ;; The qualified byte collector can materialize the SQL once. Its
-         ;; row-local writer view and 8 MiB budget exclude the SQL prefix.
+         ;; Row-local writer view and payload budget exclude the SQL prefix.
          (insert-payload format columns rows
                          (str query " FORMAT " (insert-format-name format) "\n"))
          (str query " FORMAT " (insert-format-name format) "\n"
@@ -1547,7 +1554,8 @@
     (if-not (admit-signal! owned? expected-signals state :spans)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)
+        (binding [*insert-byte-limit* (:max-insert-bytes @state)
+                  *json-backend* (:json-backend @state :configured)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [receipts
               (when (seq spans)
@@ -1620,7 +1628,8 @@
     (if-not (admit-signal! owned? expected-signals state :metrics)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)
+        (binding [*insert-byte-limit* (:max-insert-bytes @state)
+                  *json-backend* (:json-backend @state :configured)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [snapshot @state
               direct? (direct-metric-layout? snapshot)
@@ -1643,7 +1652,8 @@
     (if-not (admit-signal! owned? expected-signals state :logs)
       false
       (try
-        (binding [*json-backend* (:json-backend @state :configured)
+        (binding [*insert-byte-limit* (:max-insert-bytes @state)
+                  *json-backend* (:json-backend @state :configured)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (when (seq records)
           (insert-untyped-log-records! connection state records))
@@ -1683,7 +1693,7 @@
   attributes on `otel_metrics_sum`; histogram descriptors cover the same three
   locations on `otel_metrics_histogram`. :json-backend defaults to :configured;
   :native-guarded opts only the general JSONEachRow fallback into the qualified
-  source-run native writer. It preserves the 8 MiB bound and persistence
+  source-run native writer. It preserves the configured byte bound and persistence
   acknowledgement; specialized codecs are unchanged. An unavailable native
   backend fails before database acquisition, without silent fallback.
   :native-guarded-string-cache and :native-guarded-byte-batch select the
@@ -1693,6 +1703,11 @@
   schema-ordered arrays and explicit columns with the same serial UTF-8 bound
   and persistence acknowledgement. It rejects missing/extra physical fields;
   custom JSONWriter methods see arrays instead of the former row maps.
+  :max-insert-bytes optionally selects a positive integer byte bound up to
+  64 MiB per encoded physical insert payload, including row newlines but not
+  the SQL prefix. Omitted/nil retains the 8 MiB default.
+  Larger limits allow larger batches but consume more memory; they are not
+  heap/queue budgets. Other driver/protocol limits still apply independently.
   :owned-statement-output? defaults false. Experimental true requires explicit
   native-byte compact Durable export and the qualified owned snapshot runtime.
   Direct compact routes can avoid whole-SQL String construction; unsupported
@@ -1707,9 +1722,16 @@
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire]
+     limit-override :max-insert-bytes
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
           insert-format :json-each-row owned-statement-output? false}}]
+   (when-not (or (nil? limit-override)
+                 (and (integer? limit-override) (pos? limit-override)
+                      (<= limit-override max-configured-insert-bytes)))
+     (throw (ex-info "Invalid telemetry insert byte limit"
+                     {:type ::invalid-insert-byte-limit
+                      :minimum 1 :maximum max-configured-insert-bytes})))
    (when-not (and (boolean? owned-statement-output?)
                   (or (not owned-statement-output?)
                       (and durable? (= :native-guarded-byte-batch json-backend)
@@ -1891,6 +1913,7 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :max-insert-bytes limit-override
                               :timestamp-wire timestamp-wire
                               :owned-statement-output? owned-statement-output?
                               :insert-format insert-format
