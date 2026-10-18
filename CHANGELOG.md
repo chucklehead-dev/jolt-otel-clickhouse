@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Update the optional native JSON backend to compare its known default omission
+  marker by identity. This avoids rebuilding nested sorted attributes merely to
+  reject a function marker. Custom value functions retain their equality and
+  fallback behavior; ordinary JSON, SDK/driver pins, typed values, output limits
+  and Durable acknowledgement semantics are unchanged.
+
 - Advance the optional native JSON dependency to use runtime-owned stock
   sorted-map folding when present. Older runtimes and custom operations retain
   sequence traversal; live JSON callbacks, typed source values, ordinary JSON
