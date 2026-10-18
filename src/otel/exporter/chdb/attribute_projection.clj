@@ -16,6 +16,10 @@
         (keyword? key) (subs (str key) 1)
         :else (str key)))
 
+;; The defining namespace, not a consumer's load-time snapshot, owns the
+;; primitive-string identity rule used by the optional native collector.
+(def ^:private original-key-string key-string)
+
 (defn- confirmed-fields [descriptor-set actual-target]
   (let [{:keys [record] :as evidence}
         (installer/descriptor-set-data descriptor-set)
@@ -175,7 +179,7 @@
   (delay
     (require 'otel.exporter.chdb.native-projection)
     ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
-     #'key-string #'clojure.core/contains?)))
+     #'key-string #'clojure.core/contains? original-key-string)))
 
 (def ^:private owned-plan-output
   (delay

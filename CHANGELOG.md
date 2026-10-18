@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Avoid redundant normalization and membership calls while projecting declared
+  attributes from built-in string-key maps under the original policies. Keep
+  custom converters, non-string aliases, duplicate values, field statuses and
+  callback order on the existing path; schema and Durable semantics are unchanged.
+
 - Honor the current String and Collection JSON writers for empty link fields
   in the legacy compiled span plan, rather than retaining construction-time
   bytes. Include changed output in the existing per-row byte limit. Attribute

@@ -11,14 +11,24 @@
   (source "otel/exporter/chdb/native_declared_attributes.ss"))
 (def ^:private projected
   (source "otel/exporter/chdb/native_projected_values.ss"))
+(def ^:private string-declared
+  (source "otel/exporter/chdb/native_declared_strings.ss"))
 
 (defn load-declared-collector!
   "Return a bounded built-in-map collector, declining unsupported layouts.
   Resolve converter and membership Vars per key in source sequence order.
-  Preserve every declared duplicate; mutable storage is invocation-owned."
-  [key-var contains-var]
-  (let [collect (scheme/eval-string declared)]
-    (fn [attributes wanted] (collect attributes wanted key-var contains-var))))
+  Preserve every declared duplicate; mutable storage is invocation-owned.
+  The internal third argument must be the defining namespace's original
+  string-identity normalizer, not a consumer snapshot. While that normalizer
+  and stock membership are live, pure string-key maps can be collected without
+  redundant callbacks. All other cases retain the ordered generic path."
+  ([key-var contains-var] (load-declared-collector! key-var contains-var false))
+  ([key-var contains-var original-key]
+   (let [collect (scheme/eval-string declared)
+         fast (scheme/eval-string string-declared)]
+     (fn [attributes wanted]
+       (or (when original-key (fast attributes wanted key-var contains-var original-key))
+           (collect attributes wanted key-var contains-var))))))
 
 (defn load-positional-output!
   "Build private positional output once; resolve the live projector per field.
