@@ -9,6 +9,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb.attribute-manifest :as manifest]
             [otel.exporter.chdb.attribute-projection :as projection]
+            [otel.exporter.chdb-portable-projection-filter-test :as portable-filter]
             [otel.exporter.chdb.attribute-registry :as registry]
             [otel.exporter.chdb.attribute-registry-installer :as installer]
             [otel.exporter.chdb.attribute-registry-store :as store]
@@ -97,6 +98,7 @@
     (json/read-str (second (str/split @statement #"FORMAT JSONEachRow\n" 2)))))
 
 (defn run [check]
+  (portable-filter/run-checks!)
   (println "confirmed typed span projection")
   (with-open [target (support/connection)]
   (let [installation (installed target)
