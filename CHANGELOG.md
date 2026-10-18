@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Advance the optional native JSON pin to retain byte emission for sorted
+  event attributes while honoring live map sequence operations and JSONWriter
+  callbacks. Add actual SDK-ended span/event coverage for named and compact
+  rows, Unicode, Boolean values and exact payload limits. Ordinary JSON,
+  schema/driver/SDK pins and Durable acknowledgement semantics are unchanged.
+
 - Use the SDK's optional bounded scalar-map conversion for native attribute
   shaping while original exporter converters remain installed. Older SDKs,
   unsupported values and changed policies retain the existing conversion;

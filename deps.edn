@@ -19,7 +19,10 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:sdk-scalar-map-test
+ :aliases {:sorted-event-encoding-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sorted-event-encoding-test"]}
+           :sdk-scalar-map-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-sdk-scalar-map-test"]}
            :native-attributes-test
@@ -58,7 +61,7 @@
            :native-json-byte-batch
            {:extra-deps {org.clojure/data.json
                          {:git/url "https://github.com/casselc/data.json.git"
-                          :git/sha "8d557cc18eb9526ed29ae5613089c3793d5973fa"}}}
+                          :git/sha "a18ae06c787e6e03709bd78f1b92911130a613f1"}}}
            :benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test
