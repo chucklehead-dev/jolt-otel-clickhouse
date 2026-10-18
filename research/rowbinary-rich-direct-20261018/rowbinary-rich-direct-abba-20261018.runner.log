@@ -1,0 +1,9 @@
+index=0 arm=json owned_store=/tmp/rowbinary-rich-direct-abba-20261018.URc6H4kD
+index=0 arm=json writer_reader_terminal0 owned_store=/tmp/rowbinary-rich-direct-abba-20261018.URc6H4kD
+index=1 arm=rowbinary owned_store=/tmp/rowbinary-rich-direct-abba-20261018.o7P1cQBD
+index=1 arm=rowbinary writer_reader_terminal0 owned_store=/tmp/rowbinary-rich-direct-abba-20261018.o7P1cQBD
+index=2 arm=rowbinary owned_store=/tmp/rowbinary-rich-direct-abba-20261018.8hMLdRt6
+index=2 arm=rowbinary writer_reader_terminal0 owned_store=/tmp/rowbinary-rich-direct-abba-20261018.8hMLdRt6
+index=3 arm=json owned_store=/tmp/rowbinary-rich-direct-abba-20261018.VjexaJrM
+index=3 arm=json writer_reader_terminal0 owned_store=/tmp/rowbinary-rich-direct-abba-20261018.VjexaJrM
+all_four_format_arms_terminal0

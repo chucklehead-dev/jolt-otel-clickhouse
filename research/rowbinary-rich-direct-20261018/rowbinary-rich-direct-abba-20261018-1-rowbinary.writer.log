@@ -1,0 +1,37 @@
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return
+:rich-format-sample :ordinal 0 :arm :rowbinary :nanos 1040842859
+:rich-format-sample :ordinal 1 :arm :rowbinary :nanos 984522059
+:rich-format-sample :ordinal 2 :arm :rowbinary :nanos 1098787548
+:rich-format-sample :ordinal 3 :arm :rowbinary :nanos 1095472759
+:rich-format-sample :ordinal 4 :arm :rowbinary :nanos 993825624
+:rich-format-sample :ordinal 5 :arm :rowbinary :nanos 968084305
+:rich-format-sample :ordinal 6 :arm :rowbinary :nanos 1314316796
+:rich-format-sample :ordinal 7 :arm :rowbinary :nanos 1105541816
+:rich-format-sample :ordinal 8 :arm :rowbinary :nanos 998803952
+:rich-format-sample :ordinal 9 :arm :rowbinary :nanos 995252133
+:rich-format-sample :ordinal 10 :arm :rowbinary :nanos 1172259104
+:rich-format-sample :ordinal 11 :arm :rowbinary :nanos 1105476218
+:rich-format-sample :ordinal 12 :arm :rowbinary :nanos 1308641180
+:rich-format-sample :ordinal 13 :arm :rowbinary :nanos 1121467136
+:rich-format-sample :ordinal 14 :arm :rowbinary :nanos 1108633581
+:rich-format-sample :ordinal 15 :arm :rowbinary :nanos 1165648521
+:rich-format-sample :ordinal 16 :arm :rowbinary :nanos 1329780100
+:rich-format-sample :ordinal 17 :arm :rowbinary :nanos 1074564060
+:rich-format-sample :ordinal 18 :arm :rowbinary :nanos 1025533950
+:rich-format-sample :ordinal 19 :arm :rowbinary :nanos 994740694
+:rich-format-sample :ordinal 20 :arm :rowbinary :nanos 961935805
+:rich-format-sample :ordinal 21 :arm :rowbinary :nanos 980634577
+:rich-format-sample :ordinal 22 :arm :rowbinary :nanos 962856809
+:rich-format-sample :ordinal 23 :arm :rowbinary :nanos 984601863
+:rich-format-sample :ordinal 24 :arm :rowbinary :nanos 959546223
+:rich-format-sample :ordinal 25 :arm :rowbinary :nanos 994289683
+:rich-format-sample :ordinal 26 :arm :rowbinary :nanos 1185514341
+:rich-format-sample :ordinal 27 :arm :rowbinary :nanos 1150906397
+:rich-format-sample :ordinal 28 :arm :rowbinary :nanos 979189772
+:rich-format-sample :ordinal 29 :arm :rowbinary :nanos 961158941
+:rich-format-sample :ordinal 30 :arm :rowbinary :nanos 1052474936
+:rich-format-sample :ordinal 31 :arm :rowbinary :nanos 950642083
+:rich-format-writer :passed

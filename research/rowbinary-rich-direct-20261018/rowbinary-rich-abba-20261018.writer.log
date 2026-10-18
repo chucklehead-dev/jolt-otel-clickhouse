@@ -1,0 +1,6 @@
+Unhandled exception: owned streaming requires default native operations
+  ex-data: {:type :jdbc.chdb.durable/invalid-options}
+  at ~/ai-src/evidence/rowbinary-rich-abba-writer-20261018.clj:28:1
+  trace:
+    jdbc.core/connection (~/.jolt/gitlibs/https___github.com_yogthos_clojure.jdbc.git/9fc25d66492164ce204960d6d7b1531e194e2193/src/jdbc/core.clj:75)
+    jfn$user/$11

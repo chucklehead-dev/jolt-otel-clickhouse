@@ -1,0 +1,37 @@
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return
+:rich-format-sample :ordinal 0 :arm :json :nanos 565219093
+:rich-format-sample :ordinal 1 :arm :json :nanos 549786117
+:rich-format-sample :ordinal 2 :arm :json :nanos 570007083
+:rich-format-sample :ordinal 3 :arm :json :nanos 529805933
+:rich-format-sample :ordinal 4 :arm :json :nanos 519615769
+:rich-format-sample :ordinal 5 :arm :json :nanos 536530384
+:rich-format-sample :ordinal 6 :arm :json :nanos 684877711
+:rich-format-sample :ordinal 7 :arm :json :nanos 714561507
+:rich-format-sample :ordinal 8 :arm :json :nanos 590702661
+:rich-format-sample :ordinal 9 :arm :json :nanos 548066632
+:rich-format-sample :ordinal 10 :arm :json :nanos 564520418
+:rich-format-sample :ordinal 11 :arm :json :nanos 514053056
+:rich-format-sample :ordinal 12 :arm :json :nanos 602115123
+:rich-format-sample :ordinal 13 :arm :json :nanos 596120520
+:rich-format-sample :ordinal 14 :arm :json :nanos 602304159
+:rich-format-sample :ordinal 15 :arm :json :nanos 640548017
+:rich-format-sample :ordinal 16 :arm :json :nanos 705665040
+:rich-format-sample :ordinal 17 :arm :json :nanos 735338055
+:rich-format-sample :ordinal 18 :arm :json :nanos 717817348
+:rich-format-sample :ordinal 19 :arm :json :nanos 531085058
+:rich-format-sample :ordinal 20 :arm :json :nanos 616511136
+:rich-format-sample :ordinal 21 :arm :json :nanos 592134186
+:rich-format-sample :ordinal 22 :arm :json :nanos 579276025
+:rich-format-sample :ordinal 23 :arm :json :nanos 591867491
+:rich-format-sample :ordinal 24 :arm :json :nanos 528621454
+:rich-format-sample :ordinal 25 :arm :json :nanos 532845477
+:rich-format-sample :ordinal 26 :arm :json :nanos 745997972
+:rich-format-sample :ordinal 27 :arm :json :nanos 676242129
+:rich-format-sample :ordinal 28 :arm :json :nanos 618246274
+:rich-format-sample :ordinal 29 :arm :json :nanos 714257274
+:rich-format-sample :ordinal 30 :arm :json :nanos 656589146
+:rich-format-sample :ordinal 31 :arm :json :nanos 569968879
+:rich-format-writer :passed
