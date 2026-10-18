@@ -1,0 +1,32 @@
+## Finding: stock-ops identity is pinned to namespace-load-time policy, not to "current" policy
+
+`scalar-sorted-map-prototype` (any_value.clj) is an **eager top-level `def`**, not behind the `delay`:
+
+```clj
+(def ^:private scalar-sorted-map-prototype
+  (sorted-map "$scalar-probe-a" 7 "$scalar-probe-b" "probe-text" "$scalar-probe-c" false))
+```
+
+This runs once, at namespace load, using whatever SDK sorted-map policy/ops-table is installed *at that instant*. The native `.ss` loader then derives `stock-ops` from this one frozen prototype:
+
+```scheme
+(let ((stock-ops (jolt-ref-get prototype ops-key))) ...)
+```
+
+and every later call gates admission on `(eq? (jolt-ref-get m ops-key) stock-ops)` — identity equality against that single frozen table, forever (the `delay` wrapping `load-sorted-scalar-string-map-converter!` also only runs once, independently).
+
+**Counterexample.** If the SDK supports installing a different default `:ops` table for sorted maps (the "policy" the task description repeatedly refers to), and that policy change happens *after* `otel.any-value` is loaded but *before* `try-sorted-scalar-string-map` is first called — e.g. an app does `(reset-sorted-map-policy! new-ops)` during startup, then begins creating and emitting ordinary sorted maps under the new (now equally "stock") policy — then:
+
+- `scalar-sorted-map-prototype` still carries the *old* ops table (captured at load time).
+- `stock-ops` captured by the loader is therefore the *old* table's identity.
+- Every real sorted map the application subsequently constructs carries the *new* table's identity.
+- `(eq? (jolt-ref-get m ops-key) stock-ops)` is false for all of them, forever.
+- `try-sorted-scalar-string-map` silently and permanently returns `nil` for every call for the remaining life of the process — not a transient decline, a process-lifetime one, with no way to re-trigger admission since both the eager `def` and the `delay` fire exactly once.
+
+This directly contradicts the stated design goal in the resource comment: *"Qualify geometry/order independently of live policy-root admission: a temporary policy replacement must not permanently disable loading."* The code only protects against a policy swap happening **during the delay's forcing window** (the test `preinstalled-result` exercises exactly that narrow window, with `with-redefs` on `try-scalar-string`/etc., and correctly shows a transient decline there). It does **not** protect against a policy swap that happens **before** first use — because the thing meant to be policy-independent (`scalar-sorted-map-prototype`) is itself captured from the live, mutable policy at a single, uncontrolled point in load order, with no re-check or refresh mechanism. The record-type-uid/field-name checks in `any_value_native.clj` validate that `pmap`/`htable` are the expected Chez record shapes — but that is a structural/layout guarantee only; it says nothing about whether the *specific ops-table value* captured once is still the "current" stock table, which is the actual compatibility assumption doing the work here.
+
+**Impact given the stated scope:** this is not a security issue (declining is safe — it just falls back to the unchanged HAMT/map-kind path) but it is a correctness/availability defect relative to the feature's own stated goal: a one-time, load-order-dependent policy snapshot can permanently and silently disable the entire optimization, with no observable error, no retry, and no way to distinguish "genuinely unsupported host" from "policy changed after load" from the outside.
+
+**Suggested fix direction (not required by the review, just for completeness):** move `scalar-sorted-map-prototype` construction inside the same `delay` that builds the converter (or otherwise ensure it's read lazily, no earlier than first use of `try-sorted-scalar-string-map`), so "current policy at first real use" is what gets frozen, matching the comment's stated intent.
+
+No other defects found within the stated trust boundaries (ordinary core behavior, private SDK/runtime roots, no cross-thread redefinition guarantees). Specifically checked and found sound: `admitted-tree?`'s bound/count accounting is traversal-order-independent so it isn't fooled by the left/right swap that *does* legitimately break `copy-tree!`'s output order (caught by the included mutant test); in-order traversal order always matches a sorted map's own `seq` order (including custom/reversed comparators), so native output order and `(into {} ...)` order should coincide for any correct sorted map, including small (<=8 entry) array-map-preserving cases; the Int64/fixnum guard correctly rejects values at `Long/MAX_VALUE` that exceed Chez's native fixnum range rather than silently truncating.

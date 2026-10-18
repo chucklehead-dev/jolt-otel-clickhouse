@@ -1,0 +1,59 @@
+
+ERROR in (lazy-byte-row-production-uses-its-owned-companion-not-standalone-fallback) (json_native_string_output_test.clj:87)
+expected: (= (apply str (repeat 3 "{\"events\":\"[]\",\"links\":\"[]\"}\n")) (native/write-prefixed-batch-text! "" rows 1000))
+  actual: java.lang.RuntimeException: invalid syntax
+
+FAIL in (lazy-byte-row-production-uses-its-owned-companion-not-standalone-fallback) (json_native_string_output_test.clj:91)
+expected: (= 6 (count-calls))
+  actual: (not (= 6 0))
+
+ERROR in (changed-hooks-inside-lazy-production-still-decline-the-owned-companion) (json_native_string_output_test.clj:102)
+expected: (= "{\"nested\":\"override\"}\n{\"nested\":\"override\"}\n" (native/write-batch-text! rows 1000))
+  actual: java.lang.RuntimeException: invalid syntax
+
+FAIL in (changed-hooks-inside-lazy-production-still-decline-the-owned-companion) (json_native_string_output_test.clj:104)
+expected: (= 2 (clojure.core/deref calls))
+  actual: (not (= 2 0))
+
+ERROR in (companion-preserves-active-prefix-reentry-and-retained-custom-sink) (:)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.lang.RuntimeException: invalid syntax
+
+ERROR in (stock-empty-result-does-not-end-the-enclosing-writer-borrow) (json_native_string_output_test.clj:146)
+expected: (= "{\"nested\":[] }\n" (native/write-batch-text! [{"nested" callback}] 1000))
+  actual: java.lang.RuntimeException: invalid syntax
+
+ERROR in (stock-empty-result-does-not-end-the-enclosing-writer-borrow) (json_native_string_output_test.clj:148)
+expected: (= "{\"nested\":[] }\n" (.toString (clojure.core/deref outer)))
+  actual: java.lang.NullPointerException: Cannot invoke "toString" because the target is null
+
+ERROR in (dropping-borrow-restoration-demonstrably-loses-later-callback-output) (:)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: java.lang.RuntimeException: invalid syntax
+
+FAIL in (companion-custom-error-keeps-prefix-and-does-not-poison-next-batch) (json_native_string_output_test.clj:185)
+expected: (identical? failure (clojure.core/deref caught))
+  actual: (not (identical? #error {
+ :cause "synthetic companion error"
+ :data {}
+ :via [ {:type clojure.lang.ExceptionInfo :message "synthetic companion error" :data {} :at nil}]
+ :trace []} #error {
+ :cause "invalid syntax"
+ :via [ {:type java.lang.RuntimeException :message "invalid syntax" :at nil}]
+ :trace []}))
+
+FAIL in (companion-custom-error-keeps-prefix-and-does-not-poison-next-batch) (json_native_string_output_test.clj:186)
+expected: (= 1 (clojure.core/deref calls))
+  actual: (not (= 1 0))
+
+ERROR in (companion-custom-error-keeps-prefix-and-does-not-poison-next-batch) (json_native_string_output_test.clj:187)
+expected: (= "{\"nested\": " (.toString (clojure.core/deref outer)))
+  actual: java.lang.NullPointerException: Cannot invoke "toString" because the target is null
+
+ERROR in (companion-custom-error-keeps-prefix-and-does-not-poison-next-batch) (json_native_string_output_test.clj:189)
+expected: (= "{\"ok\":\"[]\"}\n" (native/write-batch-text! (map (fn [_] {"ok" (native/write-str [])}) [0]) 1000))
+  actual: java.lang.RuntimeException: invalid syntax
+
+Ran 38 tests. 595 assertions passed, 4 failures, 8 errors.
