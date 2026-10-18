@@ -1,0 +1,2 @@
+{:arm :control, :p50-ms 2.130049, :p90-ms 2.766536, :p95-ms 3.404604, :p99-ms 3.404604, :allocated-B-per-row 818.032}
+{:arm :candidate, :p50-ms 1.542373, :p90-ms 2.741569, :p95-ms 2.825812, :p99-ms 2.825812, :allocated-B-per-row 434.032}

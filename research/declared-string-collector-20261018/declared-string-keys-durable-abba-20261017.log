@@ -1,0 +1,8 @@
+block=A1 head=1e513bdfa8f654cbe0b321fea63bdd87aff2b358 scratch=/tmp/declared-string-keys-durable-abba-20261017.OoUBmHHK
+{:block "A1", :verified-physical-rows 55000, :rows-per-second 29660.30176512623, :latency-ms {:p50 162.39296, :p90 190.884863, :p95 190.884863, :p99 190.884863}, :allocated-B-per-row 7240.8792, :tail-qualified? false}
+block=B1 head=8a8fe12e0507dbafb55f91c198a62a87ea629802 scratch=/tmp/declared-string-keys-durable-abba-20261017.9Qn1IbuS
+{:block "B1", :verified-physical-rows 55000, :rows-per-second 28082.629996317868, :latency-ms {:p50 171.321132, :p90 197.701162, :p95 197.701162, :p99 197.701162}, :allocated-B-per-row 7258.3312, :tail-qualified? false}
+block=B2 head=8a8fe12e0507dbafb55f91c198a62a87ea629802 scratch=/tmp/declared-string-keys-durable-abba-20261017.JFX580Wr
+{:block "B2", :verified-physical-rows 55000, :rows-per-second 23939.578046718907, :latency-ms {:p50 190.773165, :p90 262.598682, :p95 262.598682, :p99 262.598682}, :allocated-B-per-row 7256.1532, :tail-qualified? false}
+block=A2 head=1e513bdfa8f654cbe0b321fea63bdd87aff2b358 scratch=/tmp/declared-string-keys-durable-abba-20261017.jtJP3lTO
+{:block "A2", :verified-physical-rows 55000, :rows-per-second 24804.18895772362, :latency-ms {:p50 194.288109, :p90 283.295047, :p95 283.295047, :p99 283.295047}, :allocated-B-per-row 7240.4588, :tail-qualified? false}

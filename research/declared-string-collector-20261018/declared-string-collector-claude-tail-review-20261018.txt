@@ -1,0 +1,18 @@
+Audit of the files specified (native_declared_strings.ss in full — 37 lines; attribute_projection.clj's `key-string`/`original-key-string` definitions and the `small-declared-collector` initializer; native_projection.clj's `load-declared-collector!`; and the five `owned-string-collector-*` tests at the end of chdb_native_declared_attributes_test.clj). No other files, commands, edits, or delegation were used.
+
+**No concrete correctness defects found.**
+
+Verified invariants:
+
+- Guard order in native_declared_strings.ss:18-23 checks size bounds (`pmap-cnt m ≤ 128`, `pset-count wanted ≤ 8`), var identity (`key-var`, `contains-var`, `string-var` all `eq?` to their trusted stock/original implementations), and that every `wanted` element is a string (`pmap-fold-seq-order (pset-m wanted) string-entry? #t`, line 23) — all before the main collection fold (line 26) ever touches `m`. No user-redefinable converter/membership/hash/equality callback runs before these checks pass.
+- `collect-entry!` (lines 6-16) is gated on every call by `(vector-ref context 3)`. Once a non-string key is seen anywhere in `m`'s fold order, the flag flips false and every later entry becomes a no-op — the fold still runs to completion since `pmap-fold-seq-order` has no short-circuit, but produces no further effects. `pset-contains?` (line 9) is the native set-membership primitive, not the redefinable `contains?`-var, so invoking it on string keys preceding a later disqualifying key is not an "observable" callback under the stated contract.
+- Because `m` is a pmap (unique keys) and `wanted` is a pset (unique elements), each wanted key can match at most once during the fold, so `slots`, sized `2 * pset-count(wanted)` (line 24), can never overflow — matches are bounded by `min(|wanted|,|m|) ≤ |wanted|`.
+- The post-fold re-check of `key-var`/`contains-var`/`string-var` (lines 31-33) guards against something changing between entry and fold completion; per the file's own comment it is explicitly not a lock.
+- Skipping `key-string` entirely for string keys is sound only because `key-string`'s definition for strings is the identity function (attribute_projection.clj:15, `(string? key) key`), and the `eq?` check against `original-key-string` (snapshot taken at defining-namespace load time, attribute_projection.clj:21) is what licenses the skip. A live redefinition — even a behaviorally identical wrapper, as exercised by `owned-string-collector-actually-selects-fast-path-and-keeps-fallback` (line 473, `(fn [key] key)`) — fails the identity check and falls back to the generic path.
+- Fast-vs-generic selection in `load-declared-collector!` (native_projection.clj:29-31) is a plain `or`: the fast scan only runs when `original-key` is truthy, and any non-`#f` result from it is used; `#f` always falls through to the generic collector. No ordering hazard.
+
+**Test gaps** (unexercised, not shown wrong):
+
+1. No test gives `wanted` a non-string element, so the guard at line 23 (`pmap-fold-seq-order (pset-m wanted) string-entry? #t`) never actually declines in a test — all tested `wanted` sets are pure strings.
+2. No test exercises the `pset-count wanted ≤ 8` boundary at or above 8; the largest tested `wanted` is `#{"0" "7" "Aa" "BB"}` (4 elements), so decline-at-9 is unverified.
+3. No test demonstrates the post-fold re-check (lines 31-33) catching a redefinition injected *during* the fold itself — every redefinition test patches `key-string`/`contains?`/`string?` before construction or invocation, not mid-scan. That branch is likely unreachable (collect-entry! has no reentrancy point back into user code), but that's an assumption, not a proven test result.

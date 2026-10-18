@@ -1,0 +1,17 @@
+No findings — the design holds up.
+
+## Answer: Yes
+
+Binding stable Var references once in the native factory and exposing a 2-arg `(attributes, wanted)` hot path retains live-root semantics. No concrete defects in the three inspected locations.
+
+**`native_declared_strings.ss` (new bottom case-lambda, lines 38-45):** the outer `let` captures `string-var` once via `jolt-var`. The new 3-arg branch — `(key-var contains-var original-key) → (lambda (m wanted) (collect m wanted key-var contains-var original-key))` — closes over the Var *objects*, not their values. The retained 5-arg branch — `(m wanted key-var contains-var original-key) → (collect ...)` — is untouched and used directly by tests. Critically, `collect` calls `var-cell-deref` fresh on every invocation: once as a precondition (lines 20-22) and again as a post-scan re-check (lines 31-33) *after* the entry fold completes. Binding the Var once at factory time never freezes its value — a live-root change at any point before or during a scan still forces a decline, never a stale accept.
+
+**`native_projection.clj` `load-declared-collector!` (lines 17-31):** builds `fast` once per factory call via the 3-arg branch, then returns `(fn [attributes wanted] (or (when original-key (fast attributes wanted)) (collect attributes wanted key-var contains-var)))` — matching the factory-3-arg → hot-2-arg shape. `fast` closes only over the Var objects; `original-key` is a plain value (not a live root), so closing over it once is correct per the docstring. The direct 5-arg entry is unused by this function but preserved in source for tests.
+
+**Last two tests, traced against the above:**
+- `owned-string-collector-wanted-boundaries-and-bound-vars-remain-live`: confirms exact 8-key boundary acceptance (positive control), 9-key and non-string-key decline, and that a `with-redefs` root change on an already-built `fast` closure is detected (and recovers after the redef scope ends) — consistent with per-call re-deref, not a factory-time snapshot.
+- `owned-string-collector-post-scan-policy-change-declines-before-fallback`: injects a fold wrapper that mutates `p/key-string`'s root *after* the entry fold completes but *before* `collect`'s post-scan re-check — exactly the race window that re-check guards. The fast path declines with zero converter calls (it never invokes a converter), and the real `load-declared-collector!` fallback then runs the generic path's converter exactly once per key — matching both assertions.
+
+No cross-thread-lock or sealed-primitive claims appear in this code, and none were needed to explain the behavior. The prior 9-key decline was already present; it's reconfirmed alongside the new positive-8, non-string-wanted, and post-scan controls, not independently re-derived.
+
+(Note: the plan-file/write tools for this session are unavailable, so this review is delivered as this message rather than a written plan artifact.)

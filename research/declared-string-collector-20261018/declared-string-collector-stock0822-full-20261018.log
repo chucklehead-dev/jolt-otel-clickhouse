@@ -1,0 +1,1265 @@
+
+Ran 13 tests. 553 assertions passed, 0 failures, 0 errors.
+  ok   scalar attribute regressions are nonempty
+  ok   scalar attribute regressions pass
+
+Ran 4 tests. 145 assertions passed, 0 failures, 0 errors.
+  ok   enum string regressions are nonempty
+  ok   enum string regressions pass
+
+Ran 3 tests. 22 assertions passed, 0 failures, 0 errors.
+  ok   keyword attribute name regressions are nonempty
+  ok   keyword attribute name regressions pass
+  ok   ordinary transport diagnostics exact six-test inventory
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return
+  ok   ordinary transport diagnostics strict summary
+
+Ran 3 tests. 48 assertions passed, 0 failures, 0 errors.
+  ok   status code lookup regressions are nonempty
+  ok   status code lookup regressions pass
+
+Ran 2 tests. 43 assertions passed, 0 failures, 0 errors.
+  ok   timestamp wire regressions are nonempty
+  ok   timestamp wire regressions pass
+  ok   streaming JSONEachRow matches reference OTel span/log/metric bytes
+  ok   streaming JSONEachRow generated corpus width 0
+  ok   streaming JSONEachRow generated corpus width 1
+  ok   streaming JSONEachRow generated corpus width 2
+  ok   streaming JSONEachRow generated corpus width 7
+  ok   streaming JSONEachRow generated corpus width 32
+  ok   streaming JSONEachRow generated corpus width 64
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   qualified package constructor succeeds
+  ok   timestamp wire belongs to this exporter
+  ok   driver check and version probe precede schema/checkpoint
+  ok   successful constructor retains connection ownership
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   unqualified package error fixed and original despite secondary close
+  ok   unqualified package performs zero DDL/checkpoint
+  ok   rejected owned closes once; shared remains application-owned
+  ok   wrong ordinary/Durable driver identity rejects
+  ok   wrong driver rejection makes zero native probes or schema writes
+  ok   wrong ordinary/Durable driver identity rejects
+  ok   wrong driver rejection makes zero native probes or schema writes
+  ok   DateTime64 exact integer nanos retained
+  ok   DateTime64 exact integer nanos retained
+  ok   DateTime64 exact integer nanos retained
+  ok   DateTime64 exact integer nanos retained
+  ok   DateTime64 exact integer nanos retained
+  ok   shared timestamp formatter rejects unsupported physical domain
+  ok   ordinary Timestamp reinforces physical domain
+  ok   shared timestamp formatter rejects unsupported physical domain
+  ok   ordinary Timestamp reinforces physical domain
+  ok   shared timestamp formatter rejects unsupported physical domain
+  ok   ordinary Timestamp reinforces physical domain
+  ok   shared timestamp formatter rejects unsupported physical domain
+  ok   ordinary Timestamp reinforces physical domain
+  ok   shared timestamp formatter rejects unsupported physical domain
+  ok   ordinary Timestamp reinforces physical domain
+  ok   event timestamp array uses exact integer nanos
+  ok   log observed fallback uses exact integer nanos without new column
+  ok   nonzero log event timestamp still wins over observed fallback
+  ok   later invalid event timestamp rejects before ordinary API
+  ok   later invalid event timestamp has zero driver effects
+  ok   Durable timestamp failure precedes atomic materialized SQL execution
+  ok   Durable timestamp failure has zero atomic execution effects
+  ok   owned startup guard preserves original error even if close fails
+  ok   owned startup guard attempts connection close exactly once
+  ok   owned startup guard performs zero schema writes
+  ok   owned startup guard preserves original error even if close fails
+  ok   owned startup guard attempts connection close exactly once
+  ok   owned startup guard performs zero schema writes
+  ok   real shim rejects unmarked Durable context at startup
+  ok   ordinary context rejection precedes every schema/data mutation
+  ok   startup rejection does not close application-owned connection
+  ok   first metric type is independently valid
+  ok   later invalid metric type rejects the logical batch
+  ok   later invalid metric type performs zero native queries
+  ok   physical UInt64 count and buckets preserve their full domain
+  ok   out-of-domain UInt64 rejects
+  ok   out-of-domain UInt64 rejects
+  ok   ordinary API receives table and ordered schema
+  ok   maintained JSON preserves question marks, Unicode, false and zero
+  ok   same-cardinality wrong key later row rejects
+  ok   same-cardinality wrong key rejects before driver entry
+  ok   missing key later row rejects
+  ok   missing key rejects before driver entry
+  ok   unexpected key later row rejects
+  ok   unexpected key rejects before driver entry
+  ok   NaN later row rejects
+  ok   NaN rejects before driver entry
+  ok   infinity later row rejects
+  ok   infinity rejects before driver entry
+  ok   negative infinity later row rejects
+  ok   negative infinity rejects before driver entry
+  ok   oversized integer later row rejects
+  ok   oversized integer rejects before driver entry
+  ok   ratio later row rejects
+  ok   ratio rejects before driver entry
+  ok   Durable retains exact materialized SQL
+  ok   exact UTF8 boundary includes row punctuation and newline
+  ok   multibyte UTF8 overflow rejects
+  ok   ordinary overflow rejects at bounded builder
+  ok   ordinary overflow never starts later row construction
+  ok   Durable overflow rejects at bounded builder
+  ok   Durable overflow performs zero JDBC execution
+  ok   Durable overflow never starts later row construction
+
+Ran 8 tests. 56 assertions passed, 0 failures, 0 errors.
+  ok   insert byte-budget tests are nonempty
+  ok   insert byte-budget tests pass
+  ok   :spans real minted authority is active
+  ok   :spans accepted false/zero and absent rows
+  ok   :spans one batch entry
+  ok   :spans actual target identity
+  ok   :spans explicit table
+  ok   :spans authority ordered physical columns
+  ok   :spans all rows exact key identity
+  ok   :spans typed false/zero valid statuses
+  ok   :spans absent typed defaults/status
+  ok   :spans generic readable maps unchanged
+  ok   :spans historical status code remains reserved
+  ok   :spans foreign capability target rejects
+  ok   :spans foreign target has no driver effects
+  ok   :spans stale acquisition rejects
+  ok   :spans stale observation/reread nonvacuous
+  ok   :spans stale acquisition has no insert effects
+  ok   :logs real minted authority is active
+  ok   :logs accepted false/zero and absent rows
+  ok   :logs one batch entry
+  ok   :logs actual target identity
+  ok   :logs explicit table
+  ok   :logs authority ordered physical columns
+  ok   :logs all rows exact key identity
+  ok   :logs typed false/zero valid statuses
+  ok   :logs absent typed defaults/status
+  ok   :logs generic readable maps unchanged
+  ok   :logs historical status code remains reserved
+  ok   :logs foreign capability target rejects
+  ok   :logs foreign target has no driver effects
+  ok   :logs stale acquisition rejects
+  ok   :logs stale observation/reread nonvacuous
+  ok   :logs stale acquisition has no insert effects
+  ok   SDK source provider is accepted
+  ok   SDK src/resources share one checkout
+  ok   SDK canonical aliases share one checkout
+  ok   SDK old reviewed SHA is rejected
+  ok   SDK before batch-ready wakeup is rejected
+  ok   SDK before per-reader policy is rejected
+  ok   SDK before definition-owned helper qualification is rejected
+  ok   SDK before bounded string admission is rejected
+  ok   SDK distinct checkout at same SHA is rejected
+  ok   SDK repeated source provider is rejected
+  ok   SDK unexpected checkout child is rejected
+  ok   SDK missing provider is rejected
+  ok   ordinary users retain child executable fallback
+  ok   explicit absolute child executable is retained
+  ok   relative or blank selected child executable is rejected
+  ok   relative or blank selected child executable is rejected
+  ok   relative or blank selected child executable is rejected
+  ok   data.json source provider is accepted
+  ok   data.json canonical source root is accepted
+  ok   data.json old SHA is rejected
+  ok   data.json distinct checkout at same SHA is rejected
+  ok   data.json repeated source provider is rejected
+  ok   data.json missing provider is rejected
+  ok   chDB source provider is accepted
+  ok   chDB source/resources share one checkout
+  ok   chDB prior revision is rejected
+  ok   chDB previous root pin is rejected
+  ok   chDB duplicate source provider is rejected
+  ok   chDB before prefixed encoder API is rejected
+  ok   chDB distinct checkout at same SHA is rejected
+  ok   chDB unexpected checkout child is rejected
+  ok   chDB missing provider is rejected
+  ok   native byte alias coordinate oracle accepts current source
+  ok   native byte alias coordinate oracle rejects prior pin
+  ok   native byte alias resolution completes without warnings
+  ok   native byte alias selects its sole concrete reviewed source
+clean jolt-crypto dependency resolution
+  ok   dependency report completes
+  ok   dependency report has no resolution warning
+  ok   crypto resolves once from canonical upstream at the full SHA
+  ok   OTel resolves once from casselc/otel at the reviewed full SHA
+  ok   data.json resolves once from casselc/data.json at the reviewed full SHA
+  ok   chDB resolves once from the reviewed full SHA
+  ok   prior SDK dependency report completes
+  ok   prior SDK mutation selects the real old checkout
+  ok   current SDK oracle rejects the prior checkout
+  ok   prior chDB dependency report completes
+  ok   prior chDB mutation selects the real old checkout
+  ok   current chDB oracle rejects the prior checkout
+  ok   wrong-coordinate dependency report completes
+  ok   mutation resolves exactly from the wrong repository and SHA
+  ok   canonical oracle rejects the real wrong-coordinate resolution
+  ok   wrong-SHA data.json dependency report completes
+  ok   wrong-SHA mutation selects one old data.json checkout
+  ok   current data.json oracle rejects the real wrong-SHA resolution
+deterministic typed attribute manifests
+  ok   fragment and entry order cannot change the manifest
+  ok   canonical rendering is byte-identical
+  ok   compiled output uses the closed manifest schema
+  ok   checksum is lowercase SHA-256
+  ok   known manifest checksum is stable
+  ok   all initial promoted types use the closed ClickHouse map
+  ok   compiler vocabularies are closed
+  ok   integer and Boolean literals remain typed
+  ok   signed Int64 boundaries are promotable
+  ok   identical declarations merge ordered provenance
+  ok   sanitization collisions retain distinct digest suffixes
+  ok   physical identifiers are bounded
+  ok   manifest has no ambient path, clock, or schema URL
+  ok   trusted deployment binding changes physical identity
+  ok   trace, log, and metric resource/scope identities are disjoint
+  ok   equal trace keys at three locations have stable disjoint wire identities
+  ok   same location/key on distinct signals does not type-conflict
+  ok   gauge, sum, and histogram identities are disjoint
+  ok   metric table codes remain visible in physical columns
+  ok   physical identifier mutation fails validation
+  ok   cross-signal table mutation fails before checksum acceptance
+  ok   legacy compiled manifests require explicit migration
+  ok   bundle compiler emits the distinct closed v3 manifest
+  ok   shuffled discovery input yields byte-identical bundle manifests
+  ok   compact provenance retains all identities without the merged schema
+  ok   safe bundle evidence promotes only the supported scalar fields
+  ok   unknown dynamic invalid conflicting and unsupported evidence stays diagnostic
+  ok   optional reviewed declarations remain an explicit operator input
+  ok   tampered bundle fails through the upstream validator before a manifest exists
+  ok   render-time semantic-convention tampering cannot enter a manifest
+  ok   bundle input cannot inject a registry lifecycle state
+  ok   artifact-identity-only bundle drift changes the manifest checksum
+  ok   identity-stripping mutant defeats the checksum distinction
+  ok   unsafe inference never promotes a field
+  ok   unknown invalid conflict unsupported and dynamic stay explicit
+  ok   int64 and double conflict is not widened
+  ok   target ambiguity does not mask stronger inference diagnostics
+  ok   reviewed type conflict fails closed
+  ok   conflict diagnostics are traversal-order independent
+  ok   untrusted ClickHouse types are rejected
+  ok   absolute provenance paths are rejected
+  ok   telemetry schema URLs cannot enter trusted binding
+  ok   legacy reviewed fragments are not guessed into a v2 target
+  ok   a signal cannot authorize another signal's physical table
+  ok   malformed dataset identity is rejected
+  ok   malformed application identity is rejected
+  ok   malformed lineage identity is rejected
+  ok   zero manifest version is rejected
+  ok   negative manifest version is rejected
+  ok   overflowing manifest version is rejected
+  ok   attribute keys longer than 256 characters are rejected
+  ok   more than 4096 fragments are rejected before consumption
+  ok   exactly 4096 fragments compile
+  ok   more than 65536 total entries are rejected before compilation
+  ok   exactly 65536 total entries compile
+  ok   maximum valid binding version and key boundaries compile
+  ok   checksum mutation fails validation
+
+Ran 6 tests. 22 assertions passed, 0 failures, 0 errors.
+confirmed typed span projection
+  ok   exact scalar values populate typed columns with valid status
+  ok   absent values use typed defaults with absent status
+  ok   empty strings and invalid typed values remain distinguishable
+  ok   duplicate normalized keys fail row-local projection closed
+  ok   export adds typed values while retaining the generic map fallback
+  ok   legacy export without a capability remains generic-map only
+  ok   bare descriptors cannot substitute for installer confirmation
+  ok   ordinary public constructor use cannot forge the private issuer
+  ok   an immutable capability reuses its mint-time validation
+  ok   query-time field access does not revalidate the captured record
+  ok   an honest capability cannot cross exporter connection identity
+  ok   typed capability cannot use a newly owned db-spec connection
+  ok   confirmed trace projection always emits the fixed value/status key set
+  ok   all absent trace locations retain companion status and typed default
+  ok   one capability projects equal keys independently at all trace locations
+  ok   mixed trace capability cannot enter the legacy span-only projector
+typed attribute registry lifecycle
+  ok   prepare creates the closed persisted lifecycle record
+  ok   public Malli record schema describes the prepared envelope
+  ok   public observed schema requires table-qualified closed evidence
+  ok   span fields reserve value and status columns
+  ok   missing columns produce sorted closed data operations
+  ok   column plans contain no caller SQL
+  ok   every planned operation satisfies the public closed Malli schema
+  ok   a partial physical schema plans only missing columns
+  ok   preparing stays stable while the same work remains
+  ok   exact physical presence activates once
+  ok   active reconciliation is idempotent
+  ok   idempotent restart recovers the persisted active record
+  ok   duplicate persisted revisions fail before planning
+  ok   wrong existing type fails closed without operations
+  ok   wrong status-column type also fails closed without operations
+  ok   persisted failures cannot forge an unknown projected column
+  ok   a corrected failed install retries through preparing
+  ok   a retried install activates only after exact observation
+  ok   schema observation order cannot change a failed transition
+  ok   pure reconciliation is exact for otel_logs
+  ok   pure reconciliation is exact for otel_metrics_gauge
+  ok   pure reconciliation is exact for otel_metrics_histogram
+  ok   pure reconciliation is exact for otel_metrics_sum
+  ok   pure reconciliation is exact for otel_traces
+  ok   same-name evidence from all five tables remains table-qualified
+  ok   missing target table fails closed before planning
+  ok   duplicate target table fails closed before planning
+  ok   unknown observed table fails closed before planning
+  ok   cross-signal observed table fails closed before planning
+  ok   wrong-table evidence fails closed before planning
+  ok   stale generation cannot transition registry state
+  ok   retirement is generation-checked and idempotent
+  ok   retired descriptors cannot become active again
+  ok   one application revision cannot change its manifest
+  ok   a new version receives a prospective physical projection
+  ok   bundle identity drift cannot rewrite one registry revision
+  ok   bundle promotion at a new version remains prospective
+  ok   applications sharing a dataset receive disjoint projections
+  ok   catalog-wide physical ownership rejects a forced digest collision
+  ok   record rendering is deterministic and clock-free
+  ok   status meanings remain closed and stable
+  ok   trace resource-attributes receives a location-qualified owned projection
+  ok   trace scope-attributes receives a location-qualified owned projection
+  ok   telemetry cannot inject a registry lifecycle state
+typed attribute registry CAS store
+  ok   a crash after create is reconciled from canonical persisted bytes
+  ok   restart before DDL recovers preparing and does not rewrite it
+  ok   restart after DDL but before state persistence converges active
+  ok   opaque ETag CAS rejects a stale competing catalog generation
+  ok   an apparently unchanged stale snapshot cannot bypass the CAS fence
+  ok   a crash before create is not guessed committed and retry is safe
+  ok   a crash after replace reconciles the intended next generation
+  ok   new records cannot skip their initial generation
+  ok   an oversized outbound catalog fails before object publication
+  ok   canonical wire rendering is stable across input map order
+  ok   mixed v2 and bundle-v3 records round-trip canonically in registry v1
+  ok   persisted legacy manifest records fail closed at catalog validation
+  ok   loading persisted v1 data reports the migration boundary
+typed attribute DDL installer
+  ok   authorized install persists active before publishing descriptors
+  ok   DDL is additive, idempotent, and contains only owned columns
+  ok   descriptor publication follows fresh observation and active CAS
+  ok   schema trace evidence carries the record-owned signal and table
+  ok   tampered catalog evidence cannot mint or publish a capability
+  ok   merely loading active never publishes without fresh observation
+  ok   active drift persists a new preparing generation before repair DDL
+  ok   failed retry persists preparing before corrective DDL
+  ok   stale repair-transition CAS fails before any DDL
+  ok   crash/retry converges before DDL
+  ok   crash/retry converges after DDL
+  ok   crash/retry converges before final CAS
+  ok   crash/retry converges after final CAS
+  ok   exact existing type conflict persists failed without DDL or publish
+  ok   wrong-table mutant preserves the formerly sufficient column map
+  ok   wrong-table evidence fails before DDL or descriptor publication
+  ok   stale final catalog CAS cannot publish an unpersisted active state
+  ok   renderer rejects caller-controlled identifier or SQL text
+  ok   bundle or telemetry metadata cannot authorize installer DDL
+  ok   installer runtime requires an explicit non-nil target identity
+  ok   restart reader acquires a freshly confirmed active capability
+  ok   read-only acquisition rejects a DDL effect before any effect
+  ok   operator selector is closed and must name a persisted record
+  ok   persisted non-active state is rejected before physical access
+  ok   physical drift cannot reacquire persisted active descriptors
+  ok   wrong-table evidence cannot reacquire descriptors
+  ok   generation change during observation fences descriptor acquisition
+  ok   unrelated catalog change during observation fences publication
+capability-bound typed span queries
+  ok   one trace-table install owns all location-qualified columns
+  ok   mixed-location reinstall and read-only acquisition preserve one active authority
+  ok   mixed-location restart preserves the exact confirmed descriptor data
+  ok   qualified value discovery keeps equal keys at three locations distinct
+  ok   fallback SQL follows ClickStack's two actual trace maps
+  ok   locationless equal-key value selection fails before SQL
+  ok   locationless equal-key filters fail before SQL
+  ok   ambiguous locationless requests execute no SQL
+  ok   qualified coverage returns the complete saved binding
+  ok   resource coverage binds only its logical map key and window
+  ok   deleting location from a non-span binding fails closed
+  ok   explorer publishes the closed typed Int64 aggregate vocabulary
+  ok   explorer publishes closed Boolean, Int64, and string filter operators
+  ok   standalone coverage preserves exact Boolean, string, and Int64 bindings
+  ok   standalone coverage executes exactly one coverage-only query per field
+  ok   an unambiguous legacy span binding canonicalizes its location
+  ok   standalone and filtered operations share six-way coverage
+  ok   acquire-only restart preserves schema identity and coverage
+  ok   aggregate plus coverage executes no discarded trace retrieval
+  ok   approved keys query typed and generic-fallback distributions
+  ok   typed query runs once per requested key under suppression
+  ok   logical key and every caller scalar remain JDBC parameters
+  ok   typed query uses only fixed table and library-owned columns
+  ok   logical key and every caller scalar remain JDBC parameters
+  ok   typed query uses only fixed table and library-owned columns
+  ok   approved Int64 range aggregates preserve field version evidence
+  ok   typed Int64 query binds its range window and result limit
+  ok   typed Int64 query is capability-owned bounded and map-free
+  ok   false and present-empty string remain typed filter values
+  ok   coverage distinguishes every stored availability class
+  ok   each filter runs one coverage and one match query under suppression
+  ok   coverage binds the logical key and exact time window
+  ok   false and empty string are bound predicate values
+  ok   filter SQL is capability-owned, bounded, and fallback-free
+  ok   hostile string key and values remain parameters
+  ok   contains and prefix come from library grammar, never caller SQL
+  ok   typed Int64 filters preserve values above double precision
+  ok   typed Int64 filters retain honest availability coverage
+  ok   typed Int64 filters expose only the closed numeric grammar
+  ok   typed Int64 predicate and caller scalars remain parameters
+  ok   typed Int64 filter SQL is status-valid, bounded, and map-free
+  ok   typed Int64 equality and upper bounds stay bound
+  ok   historical Int64 fallback cannot become a typed match
+  ok   non-integral Int64 results fail closed
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid type/value/operator/bound filters fail before JDBC
+  ok   invalid typed filters execute no query
+  ok   bare descriptor vectors have no typed filter authority
+  ok   typed filter capability cannot cross connection identity
+  ok   unknown physical statuses fail closed
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid coverage key, binding, option, signal, or window fails before JDBC
+  ok   invalid typed coverage requests execute no query
+  ok   stale schema diagnostics identify fields without echoing caller bindings
+  ok   nil typed coverage connection fails before JDBC
+  ok   nil typed coverage connection executes no query
+  ok   bare descriptor vectors have no typed coverage authority
+  ok   typed coverage capability cannot cross connection identity
+  ok   unsupported promoted coverage types fail before JDBC
+  ok   physical identifier injection fails before JDBC
+  ok   invalid type and physical identifiers execute no query
+  ok   missing coverage row fails closed
+  ok   non-map coverage row fails closed
+  ok   duplicate coverage rows fail closed
+  ok   malformed coverage shape fails closed
+  ok   unknown coverage result category fails closed
+  ok   negative coverage count fails closed
+  ok   non-conserving coverage total fails closed
+  ok   unknown physical status fails closed
+  ok   unknown, duplicate, wrong-signal, and table input fail closed
+  ok   unknown, duplicate, wrong-signal, and table input fail closed
+  ok   unknown, duplicate, wrong-signal, and table input fail closed
+  ok   unknown, duplicate, wrong-signal, and table input fail closed
+  ok   invalid typed selections execute no query
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregate requests fail closed
+  ok   invalid typed Int64 aggregates execute no query
+  ok   bare descriptors have no numeric aggregate authority
+  ok   typed numeric capability cannot cross connection identity
+  ok   non-finite typed aggregate results fail closed
+  ok   bare descriptor vectors have no query authority
+  ok   typed query capability cannot cross connection identity
+  ok   unknown persisted status fails instead of becoming fallback
+  ok   legacy generic explorer fields remain available without capability
+confirmed typed log-record projection
+  ok   log and enabled metric tables retain table-qualified physical support
+  ok   log values retain scalar types and valid status
+  ok   log absence uses safe typed defaults
+  ok   empty and invalid log values remain distinguishable
+  ok   duplicate normalized log keys are row-local invalid
+  ok   typed log insert names additive JSONEachRow fields
+  ok   typed export preserves LogAttributes fallback
+  ok   legacy log export retains its fixed compatibility insert
+  ok   a log capability cannot enter trace projection
+  ok   a log capability cannot enter histogram projection
+  ok   bare log descriptors cannot substitute for confirmation
+  ok   a confirmed log capability cannot cross connections
+  ok   typed log capability requires its explicit connection
+  ok   wrong-table evidence fails before typed log DDL
+confirmed typed gauge projection
+  ok   all enabled metric tables have table-qualified physical support
+  ok   gauge typed point resource and scope values preserve their locations
+  ok   gauge absent and invalid status remain explicit
+  ok   typed gauge export targets only the gauge table
+  ok   typed gauge insert uses only the gauge schema plus owned columns
+  ok   export-metrics projects resource scope and point fields while retaining generic maps
+  ok   gauge capability cannot enter trace projection
+  ok   gauge capability cannot enter histogram projection
+  ok   gauge capability cannot cross connections
+confirmed typed sum projection
+  ok   sum values preserve resource scope false and exact Int64
+  ok   sum absent and invalid status remain explicit
+  ok   typed sum export targets only the sum table
+  ok   typed sum insert names additive columns
+  ok   typed sum export retains generic maps and projects all locations
+  ok   sum capability cannot enter gauge projection
+  ok   sum resource and scope targets are physically supported
+  ok   histogram targets are physically supported for their own capability
+  ok   histogram capability cannot enter sum projection
+schema-bound typed log explorer
+  ok   capability names every promoted scalar type
+  ok   exact schema identity and six-way coverage survive
+  ok   logical key/value are parameters, never SQL identifiers
+  ok   changed schema version is stale before query
+  ok   capability cannot cross connections
+  ok   wrong signal cannot select the log target
+schema-bound typed gauge explorer
+  ok   gauge capability publishes one closed filter vocabulary
+  ok   discovery returns schema-bound gauge fields without physical names
+  ok   exact gauge identity and six-way coverage survive
+  ok   logical key/value remain JDBC parameters and never SQL identifiers
+  ok   resource coverage selects its fixed compatibility map
+  ok   scope coverage selects its fixed compatibility map
+  ok   changed schema version is stale before query
+  ok   gauge capability cannot cross connections
+  ok   invalid typed gauge requests execute no query
+  ok   sum capability publishes the same closed filter vocabulary
+  ok   sum discovery returns only sum schema bindings
+  ok   sum result identifies the sum table and six-way coverage
+  ok   gauge operation rejects a sum capability before query
+  ok   histogram capability is a closed table-bound filter surface
+  ok   histogram discovery returns only histogram schema bindings
+  ok   histogram readback uses Count and its fixed table
+  ok   sum operation rejects a histogram capability before query
+native capability-bound typed span round trip
+  ok   real DDL, JSON inserts, Map lookup, and typed query round trip
+  ok   status-1 absent rows are not published
+  ok   native Boolean false and present-empty string filters are typed
+  ok   native coverage separates invalid, absent, and historical rows
+  ok   native Int64 equality remains exact above double precision
+  ok   native Int64 lower bound excludes smaller valid and fallback rows
+  ok   native Int64 upper bound retains the signed minimum
+  ok   native Int64 filter coverage remains honest
+  ok   standalone native Boolean, string, and Int64 coverage equals filtered coverage
+  ok   standalone native coverage returns each exact schema binding
+  ok   acquire-only native coverage preserves identity and counts
+  ok   status-3 guard excludes numeric fallback and invalid defaults
+  ok   typed Int64 range remains exact above double precision
+  ok   one-sided predicate retains the signed Int64 maximum
+  ok   one-sided predicate retains the signed Int64 minimum
+  ok   empty typed numeric range returns no synthetic aggregate row
+  ok   removing the status guard admits non-valid physical defaults
+  ok   direct typed export succeeds before receiver ingestion
+  ok   real OTLP JSON reaches the receiver without partial success
+  ok   direct and receiver paths persist identical full physical rows
+  ok   equivalent rows retain large-int and present-empty statuses
+  ok   equal keys at all trace locations retain independent typed values
+  ok   generic attribute compatibility survives both ingestion paths
+  ok   resource compatibility remains separate from the typed locations
+  ok   causal nested values begin and remain free of synthetic zero counts
+typed log attributes over a real OTLP socket
+  ok   direct typed log export succeeds
+  ok   canonical log crosses the real loopback OTLP socket
+  ok   direct and socket paths store byte/data-equivalent rows
+  ok   native readback retains exact Int64 status and fallback
+  ok   typed insert payload is captured while delegating native execution
+  ok   captured source row really persists through the ordinary API
+  ok   legacy fixed-column mutation cannot persist typed status
+  ok   accepted fixed-column mutant persists exactly one row
+  ok   accepted fixed-column mutant has all historical statuses
+  ok   accepted fixed-column mutant preserves generic attributes
+  ok   control log without the capability still exports
+  ok   removing the capability causally leaves typed status historical
+  ok   native typed log filter and coverage: job.name
+  ok   native typed log filter and coverage: job.complete
+  ok   native typed log filter and coverage: job.attempt
+  ok   wrong typed log schema binding fails before SQL
+all typed log socket/native checks passed
+  ok   otel.exporter.chdb owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.attribute-manifest owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.attribute-projection owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.attribute-registry owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.attribute-registry-installer owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.attribute-registry-store owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.schema owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.explorer owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.typed-log-explorer owns clean-process db.jdbc bootstrap
+  ok   otel.exporter.chdb.typed-metric-explorer owns clean-process db.jdbc bootstrap
+  ok   bounded backend benchmark reconciles every table
+
+Ran 16 tests. 71 assertions passed, 0 failures, 0 errors.
+  ok   untyped schema encoder contracts
+versioned chDB schema migrations
+  ok   fresh database records migrations v1 through v4
+  ok   migration names are durable
+  ok   migration checksums are SHA-256
+  ok   persistent migrations qualify in a separate native process
+  ok   post-native record effect writer qualifies
+  ok   record-effect readback qualifies in a separate native process
+  ok   v1 migration injection guard ran
+  ok   failed migration identifies statement phase
+  ok   failed migration identifies version
+  ok   failed migration remains unrecorded
+  ok   retry records all migrations exactly once
+  ok   retry completed the interrupted table
+  ok   v2 migration injection guard ran
+  ok   partial v2 failure identifies version
+  ok   partial v2 leaves only v1 recorded
+  ok   partial v2 retry records remaining migrations once
+  ok   all official ClickStack trace insert columns exist
+  ok   normalized ClickStack trace insert types are compatible
+  ok   v3 migration injection guard ran
+  ok   partial v3 failure identifies version
+  ok   partial v3 leaves v1/v2 recorded
+  ok   partial v3 retry records remaining migrations once
+  ok   all official ClickStack log insert columns exist
+  ok   ClickStack log insert types match the pinned collector
+  ok   v3 preserves rows from the v1 physical schema
+  ok   all official ClickStack log insert columns exist
+  ok   ClickStack log insert types match the pinned collector
+  ok   v4 migration injection guard ran
+  ok   partial v4 failure identifies version
+  ok   partial v4 leaves v1-v3 recorded
+  ok   partial v4 retry records v4 once
+  ok   all official ClickStack gauge insert columns exist
+  ok   ClickStack gauge insert types match documented contract
+  ok   all official ClickStack sum insert columns exist
+  ok   ClickStack sum insert types match documented contract
+  ok   all official ClickStack histogram insert columns exist
+  ok   ClickStack histogram insert types match documented contract
+  ok   checksum drift fails closed
+  ok   checksum drift identifies version
+logical database namespace
+  ok   exporter-owned dbspec selects logical OTel database
+  ok   OTel migration history lives in selected database
+  ok   OTel tables live in selected database
+  ok   same-named project trace table remains isolated
+  ok   same-named project history table remains isolated
+  ok   application-owned connection keeps its selected database
+  ok   application-owned migration history uses selected database
+  ok   application connection remains usable after exporter shutdown
+  ok   default dbspec behavior remains compatible
+  ok   default database still receives migration history
+telemetry database self-observation suppression
+  ok   suppression probe reaches the actual ordinary connection
+  ok   span export succeeds under suppression
+  ok   exporter suppresses its own database instrumentation
+  ok   schema migration suppresses every database operation
+  ok   each migration record is one replayable statement
+  ok   migration records use deterministic JSONEachRow
+  ok   migration record WAL contains no clock expression
+durable export acknowledgement boundary
+  ok   Durable startup preflights before schema checkpoint
+  ok   non-empty Durable span batch succeeds
+  ok   batch success is one atomic Durable writer request
+  ok   force flush reaches the same persistence barrier
+  ok   force flush completes after the barrier
+  ok   custom generic barrier remains post-batch
+  ok   custom generic barrier preserves insert then barrier order
+  ok   non-empty batch rejects an unconfirmed atomic Durable result
+  ok   unconfirmed Durable publication is diagnosable
+  ok   Durable reader is rejected with a precise type
+  ok   reader rejection happens before schema mutation
+  ok   invalid persistence barrier is rejected precisely
+  ok   invalid barrier is rejected before connection open
+embedded chDB OTel exporter
+  ok   all official ClickStack trace insert columns exist
+  ok   normalized ClickStack trace insert types are compatible
+  ok   all official ClickStack log insert columns exist
+  ok   ClickStack log insert types match the pinned collector
+  ok   all official ClickStack gauge insert columns exist
+  ok   ClickStack gauge insert types match documented contract
+  ok   all official ClickStack sum insert columns exist
+  ok   ClickStack sum insert types match documented contract
+  ok   all official ClickStack histogram insert columns exist
+  ok   ClickStack histogram insert types match documented contract
+  ok   metric export call succeeds
+  ok   canonical ClickStack log export succeeds
+  ok   parent and child spans persisted
+  ok   ClickStack service column
+  ok   child points at parent span
+  ok   log body persisted
+  ok   log/span trace correlation
+  ok   severity uses ClickStack column
+  ok   zero event timestamp falls back to observed timestamp
+  ok   log correlation IDs round-trip
+  ok   collector uint8 conversion semantics round-trip
+  ok   structured body uses pdata-compatible JSON text
+  ok   resource metadata round-trips
+  ok   scope metadata round-trips
+  ok   log attributes and EventName round-trip
+  ok   nested event name round-trips
+  ok   nested event attributes round-trip
+  ok   nested link trace ID round-trips
+  ok   nested link trace state uses W3C raw form
+  ok   nested link attributes round-trip
+  ok   legacy viewer event JSON remains populated
+  ok   legacy viewer link JSON remains populated
+  ok   trace-ID lookup materialized view receives trace
+  ok   trace-ID lookup range is ordered
+  ok   exporter reopen does not duplicate migration history
+  ok   ClickStack gauge table
+  ok   ClickStack sum table
+  ok   ClickStack histogram table
+  ok   canonical metric resource/scope metadata round-trips
+  ok   gauge canonical defaults and descriptor round-trip
+  ok   sum canonical fields round-trip
+  ok   histogram canonical fields round-trip
+  ok   undeclared signal export is rejected
+  ok   undeclared signal failure is diagnosable
+  ok   declared signal still owns shutdown
+  ok   Hegel failed but non-flaky result remains a runner failure
+  ok   Hegel flaky result remains a runner failure
+  ok   Hegel error result remains a runner failure
+  ok   Hegel run exception reaches the outer failing entrypoint
+  hegel per-signal lifecycle swarm seed 1610885681231660852
+  ok   Hegel per-signal lifecycle swarm
+  ok   Hegel per-signal lifecycle swarm is deterministic
+  hegel durable acknowledgement history seed 1668532433644755
+  ok   Hegel durable acknowledgement history
+  ok   Hegel durable acknowledgement history is deterministic
+  hegel Quint Durable success ITF replay seed 6156553712336242814
+  ok   Hegel Quint Durable success ITF replay
+  ok   Hegel Quint Durable success ITF replay is deterministic
+  hegel concurrent close history seed 4841632504792555936
+  ok   Hegel concurrent close history
+  ok   Hegel concurrent close history is deterministic
+  hegel terminal close failure history seed 7208686888369508075
+  ok   Hegel terminal close failure history
+  ok   Hegel terminal close failure history is deterministic
+  hegel direct structured log body seed 3475322221654391942
+  ok   Hegel direct structured log body
+  ok   Hegel direct structured log body is deterministic
+  hegel JSON safety and correlation seed 1659327943284989494
+  ok   Hegel JSON safety and correlation
+  ok   Hegel JSON safety and correlation is deterministic
+  hegel canonical metric wire rows seed 8722159744304185893
+  ok   Hegel canonical metric wire rows
+  ok   Hegel canonical metric wire rows is deterministic
+  hegel bounded metric series query grammar seed 9136153128119069434
+  ok   Hegel bounded metric series query grammar
+  ok   Hegel bounded metric series query grammar is deterministic
+  hegel reset-aware cumulative counter series seed 7392717075594154139
+  ok   Hegel reset-aware cumulative counter series
+  ok   Hegel reset-aware cumulative counter series is deterministic
+  hegel reset-aware cumulative explicit histogram model seed 5572918179880503773
+  ok   Hegel reset-aware cumulative explicit histogram model
+  ok   Hegel reset-aware cumulative explicit histogram model is deterministic
+  hegel cumulative histogram exact rank above 2^53 seed 6496700694731200654
+  ok   Hegel cumulative histogram exact rank above 2^53
+  ok   Hegel cumulative histogram exact rank above 2^53 is deterministic
+  ok   explorer publishes a closed span field allowlist
+  ok   explorer publishes closed metric series choices
+  ok   explorer publishes explicit cumulative counter provenance
+  ok   explorer publishes explicit cumulative histogram provenance
+  ok   explorer returns host-neutral rows tagged with signal and field
+  ok   explorer suppresses its own database instrumentation
+  ok   explorer binds every caller-controlled scalar
+  ok   explorer asks the driver for no more than the requested rows
+  ok   span SQL uses only the fixed table and service expression
+  ok   semantic attribute SQL uses its fixed map key
+  ok   each field gets identical bounded parameters
+  ok   metric series normalizes bounded server aliases
+  ok   metric series suppresses its own database instrumentation
+  ok   metric series binds every caller-controlled scalar
+  ok   metric series asks the driver for no more than its result cap
+  ok   metric series SQL uses only closed gauge expressions
+  ok   invalid metric series request executes no SQL {:metric-kind :summary, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "", :group-by [:service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by (:service-name), :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name :service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:attribute-value], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :30s, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:avg :avg], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:rate], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :histogram, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 101}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000000000000000, :limit 10}
+  ok   invalid metric series request executes no SQL {:metric-kind :gauge, :metric-name "queue.depth", :group-by [:service-name], :bucket :1m, :aggregates [:count :avg :p95], :start-unix-nano 1700000000000000000, :end-unix-nano 1700000300000000000, :limit 10, :sql "SELECT *"}
+  ok   invalid metric series requests execute no SQL
+  ok   counter series derives reset-aware increase and observed rate
+  ok   counter source query filters exact stored provenance
+  ok   counter source query binds data and enforces the source cap
+  ok   counter source fetch is bounded before host differencing
+  ok   counter source query suppresses its own instrumentation
+  ok   invalid counter provenance executes no SQL
+  ok   invalid counter provenance executes no SQL
+  ok   invalid counter provenance executes no SQL
+  ok   invalid counter provenance executes no SQL
+  ok   invalid counter provenance executes no SQL
+  ok   all invalid counter provenance failed before query execution
+  ok   counter series rejects duplicate timestamp
+  ok   counter failure evidence omits raw data duplicate timestamp
+  ok   counter series rejects unproven decrease
+  ok   counter failure evidence omits raw data unproven decrease
+  ok   counter series rejects collapsed streams
+  ok   counter failure evidence omits raw data collapsed streams
+  ok   counter series rejects bucket crossing
+  ok   counter failure evidence omits raw data bucket crossing
+  ok   histogram series reconstructs reset-aware interval totals
+  ok   finite quantile exposes interpolation and bucket error
+  ok   implicit positive-infinity bucket has no invented estimate
+  ok   histogram source query pins provenance, schema, and hard limits
+  ok   histogram query binds data and caps source rows
+  ok   histogram fetch and instrumentation are bounded
+  ok   invalid histogram provenance/recipe executes no SQL
+  ok   invalid histogram provenance/recipe executes no SQL
+  ok   invalid histogram provenance/recipe executes no SQL
+  ok   invalid histogram provenance/recipe executes no SQL
+  ok   invalid histogram provenance/recipe executes no SQL
+  ok   all invalid histogram requests fail before query execution
+  ok   invalid histogram metric name reports structural evidence
+  ok   invalid histogram request evidence scrubs credential-like name
+  ok   private invalid histogram request executes no SQL
+  ok   empty histogram has explicit null average and quantiles
+  ok   p50 bucket selection remains exact above double integer precision
+  ok   histogram series rejects boundary change
+  ok   histogram failure evidence omits raw telemetry boundary change
+  ok   histogram series rejects unproven bucket decrease
+  ok   histogram failure evidence omits raw telemetry unproven bucket decrease
+  ok   histogram series rejects duplicate timestamp
+  ok   histogram failure evidence omits raw telemetry duplicate timestamp
+  ok   histogram series rejects collapsed streams
+  ok   histogram failure evidence omits raw telemetry collapsed streams
+  ok   histogram series rejects bucket crossing
+  ok   histogram failure evidence omits raw telemetry bucket crossing
+  ok   histogram series rejects schema drift
+  ok   histogram failure evidence omits raw telemetry schema drift
+  ok   histogram series rejects non-finite data
+  ok   histogram failure evidence omits raw telemetry non-finite data
+  ok   metrics explorer uses the three fixed metric tables
+  ok   explorer rejects unknown signal
+  ok   explorer marks unknown signal as its own error
+  ok   explorer rejects caller-supplied identifier
+  ok   explorer marks caller-supplied identifier as its own error
+  ok   explorer rejects non-vector field sequence
+  ok   explorer marks non-vector field sequence as its own error
+  ok   explorer rejects empty fields
+  ok   explorer marks empty fields as its own error
+  ok   explorer rejects too many fields
+  ok   explorer marks too many fields as its own error
+  ok   explorer rejects duplicate fields
+  ok   explorer marks duplicate fields as its own error
+  ok   explorer rejects missing start
+  ok   explorer marks missing start as its own error
+  ok   explorer rejects empty time range
+  ok   explorer marks empty time range as its own error
+  ok   explorer rejects oversized time range
+  ok   explorer marks oversized time range as its own error
+  ok   explorer rejects zero limit
+  ok   explorer marks zero limit as its own error
+  ok   explorer rejects oversized limit
+  ok   explorer marks oversized limit as its own error
+  ok   explorer rejects oversized text
+  ok   explorer marks oversized text as its own error
+  ok   invalid explorer requests execute no SQL
+  ok   native empty ungrouped metric series returns no row [:count]
+  ok   native empty ungrouped metric series returns no row [:avg]
+  ok   native empty ungrouped metric series returns no row [:p95]
+  ok   native explorer groups and orders bounded distributions
+  ok   native explorer enforces the per-field limit
+  ok   native metrics union is valid on the migrated empty tables
+  ok   native scalar metric series groups and aggregates
+  ok   native scalar percentiles remain inside observed bounds
+  ok   native histogram series aggregates delta count and sum
+  ok   native histogram series excludes cumulative snapshots
+  ok   native chDB cumulative counter differencing is reset-aware
+  ok   native chDB cumulative histogram reconstruction is reset-aware
+  ok   native chDB finite histogram quantile remains explicitly bounded
+  ok   native chDB infinite-tail quantile has no fabricated estimate
+all checks passed
