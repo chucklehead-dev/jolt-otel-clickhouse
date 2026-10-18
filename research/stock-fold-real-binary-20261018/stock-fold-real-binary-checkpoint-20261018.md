@@ -80,3 +80,48 @@ states the failed gate and remaining full-CI/benchmark/standalone gates.
 Small logs/scripts/reviews/receipts are preserved in the research worktree's
 `research/stock-fold-real-binary-20261018`; no binary, dataset or build scratch
 is copied there. No local build, benchmark or review process remains active.
+
+## Subsequent matched real-binary comparison (complete)
+
+Runner93262 completed exit0, four fresh sequential processes in ABBA order:
+baseline1ae, candidate6319, candidate6319, baseline1ae. Exactly the same exporter
+4d48871/SDK7878/nativeJSON96f Git pins, native26.9 library,5k nested SDK fixture,
+single serial SDK worker and owned compact stream. Each arm has3 warmups and32
+measured callbacks. No helper or factory overlay, native predicate existence
+asserted present/absent before workload. Four independent old-stack recoveries
+verified175000 rows each;700000 physical rows total. Both runner sources retained
+their pre-launch checksums; final output is
+`stock-fold-real-binary-abba-20261018.summary.edn`.
+
+Pooled descriptive results (two process repetitions/64 batches per arm):
+
+| Measurement | Baseline | Native fold |
+| --- | ---: | ---: |
+| Confirmed-window rows/s | 8155.4 | 9159.5 |
+| Callback p50 ms | 568.4 | 521.8 |
+| Callback p90 ms | 753.8 | 598.4 |
+| Callback p95 ms | 822.3 | 659.5 |
+| Callback p99 ms | 892.4 | 703.9 |
+| Estimated allocated bytes/row | 39117.8 | 31932.8 |
+
+Observed throughput+12.3%, estimated allocation-18.4%. Candidate runs9197/9122
+rows/s versus baseline8460/7872; do not imply a statistical confidence interval,
+stationary service p99 or rate-target qualification from two process repeats.
+Allocation is the existing delta(live-heap+GC-bytes) estimate, not a new exact
+allocation profiler. Some reused per-arm validators retain their old
+candidate-only scope label even on baseline: the new aggregate explicitly
+labels both arms correctly, checks all recovery receipts and does not promote
+either binary to hosted/full-gate qualification.
+
+After the exact runner was terminal0 and each copied writer/reader receipt
+matched its store, deleted only these task-created reproducible stores:
+rlFmLhPy728MiB,3gByamly746MiB,NzrrWsbX729MiB,SanxC6VA744MiB, each under
+`/tmp/stock-fold-real-binary-abba-20261018.`. Absence verified; small scalars,
+logs and runner retained. About2.9GiB retired; no VHD trim/compaction performed.
+
+Final custody: artifact39151375518 remains in_progress in full behavioral CI;
+latest-release source tests39151345065 also in_progress. Poll those same runs.
+No local benchmark/build/review process remains live. Research checkpoint1819c83
+contains the earlier real-binary evidence; the subsequent checkpoint adds ABBA
+receipts. Next performance work should target larger encoding/projection/WAL
+costs or a matched RowBinary arm, not claim this12% closes the overall gap.

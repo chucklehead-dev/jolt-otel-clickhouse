@@ -1,0 +1,9 @@
+index=0 arm=baseline owned_store=/tmp/stock-fold-real-binary-abba-20261018.rlFmLhPy
+index=0 arm=baseline writer_reader_validator_terminal0 owned_store=/tmp/stock-fold-real-binary-abba-20261018.rlFmLhPy
+index=1 arm=candidate owned_store=/tmp/stock-fold-real-binary-abba-20261018.3gByamly
+index=1 arm=candidate writer_reader_validator_terminal0 owned_store=/tmp/stock-fold-real-binary-abba-20261018.3gByamly
+index=2 arm=candidate owned_store=/tmp/stock-fold-real-binary-abba-20261018.NzrrWsbX
+index=2 arm=candidate writer_reader_validator_terminal0 owned_store=/tmp/stock-fold-real-binary-abba-20261018.NzrrWsbX
+index=3 arm=baseline owned_store=/tmp/stock-fold-real-binary-abba-20261018.SanxC6VA
+index=3 arm=baseline writer_reader_validator_terminal0 owned_store=/tmp/stock-fold-real-binary-abba-20261018.SanxC6VA
+all_four_arms_terminal0

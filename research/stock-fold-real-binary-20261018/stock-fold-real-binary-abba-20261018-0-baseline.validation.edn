@@ -1,0 +1,1 @@
+{:samples 32, :callback-ms {:p50 551.643711, :p90 693.580504, :p95 834.912368, :p99 884.250659}, :confirmed-window-rows-per-second 8460.105123805843, :source-overlay false, :tail-qualified false, :scope :real-local-binary-sdk-queue-candidate-only, :hosted-artifact-qualified false, :recovered-rows 175000, :old-stack-independent-reader true, :verified true}
