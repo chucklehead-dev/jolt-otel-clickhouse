@@ -1,0 +1,1 @@
+{:rows 2000, :encoded-bytes 3394021, :summary {:baseline {:samples 16, :ms {:p50 213.829177, :p90 294.888558, :p95 332.499616, :p99 332.499616}, :managed-B-per-row 68859.678}, :direct-sorted {:samples 16, :ms {:p50 139.963195, :p90 180.873411, :p95 191.957587, :p99 191.957587}, :managed-B-per-row 39625.376}}}
