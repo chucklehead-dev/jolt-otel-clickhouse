@@ -1,0 +1,6 @@
+:stock-fold-real-binary :entered
+Unhandled exception (FileNotFoundException): Could not locate clojure/data/json_stock_sorted_fold_test.jolt (or .clj/.cljc) on the source roots
+  at ~/ai-src/evidence/qualify-stock-fold-real-binary-20261018.clj:7:1
+  trace:
+    for-each
+    ns-require+use

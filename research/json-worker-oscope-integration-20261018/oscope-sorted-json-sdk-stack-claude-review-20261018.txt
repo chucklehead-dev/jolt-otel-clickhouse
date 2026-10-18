@@ -1,0 +1,22 @@
+## Review: `deps.edn`, `test/oscope/dependency_resolution_test.clj`, `CHANGELOG.md`
+
+**Finding — coordinate mismatch in the shared red-control table (dependency_resolution_test.clj:198-215, row 3)**
+
+In `prior-sorted-stack-coordinates-are-causal-red-controls`, each row pins an old SHA via `-Sdeps` and then asserts the forced-old resolution does **not** exactly match the dependency's *current* root. For the `otel` row and the `jolt-otel-clickhouse` row, `current-root` is correctly built from the new pins (`otel-root`, and a path keyed off `exporter-sha`). For the `data.json` row, however, `current-root` is hardcoded to the **byte-batch native-JSON sha** (`96f3e47d...`), not the ordinary current pin (`0f51b991...`) that this test run (no `-A:native-json-byte-batch`) actually resolves:
+
+```clojure
+["org.clojure/data.json" "https://github.com/casselc/data.json.git"
+ "8d557cc18eb9526ed29ae5613089c3793d5973fa" "data.json"
+ "https___github.com_casselc_data.json.git/96f3e47dba5970728866dacb5ac41a25135a2df5/"]
+```
+
+Since the row never activates the native-JSON alias, the real "current" root for an un-overridden `org.clojure/data.json` resolution is the ordinary sha, not the byte sha. Comparing against the byte sha instead makes the negative assertion vacuous with respect to the actual regression it's meant to guard: it passes trivially regardless of whether the ordinary pin was correctly bumped, because an explicitly-forced old SHA will never equal an unrelated alias's pin either way. This differs from the other two rows in the same table, which do compare against the dependency's real active root, so the row silently covers less than it appears to (and less than its siblings in the same `doseq`). It should instead reference the ordinary current root, e.g. a `data-json-root` constant built from `0f51b99101bc5e840f957c073f87b6f877309a25`, matching the pattern already used at line 341-342 in `current-json-root-is-exact-and-pre-receipt-sdk-is-rejected`.
+
+**Everything else checked out:**
+- The three pin bumps in `deps.edn` match the constants in the test file exactly (root `otel` → `7878a2eb...`, `jolt-otel-clickhouse` exporter → `4d48871c...`, native-JSON alias sha → `96f3e47d...`); ordinary `data.json` (`0f...`), `jolt-chdb` (`3d...`), and all other pins are untouched, consistent with the changelog's claim.
+- `exact-exporter-resolution?` correctly accounts for both the `io.github...`-qualified and raw-URL cache-path forms, and rejects multi-root or wrong-owner matches.
+- `ordinary-and-byte-json-roots-are-qualified-independently` properly confirms the exporter pin applies under both the default and `:native-json-byte-batch` alias, which is the one place the three changed pins' interaction is actually exercised together.
+- The CHANGELOG entry correctly scopes the change (SDK/exporter/optional native JSON only), disclaims throughput claims, and explicitly notes the minimal embedded profile is untouched — this matches the actual diff; no embedded-profile deps exist in `deps.edn` to contradict it.
+- No fallback/default-selection accidents spotted: each red-control row's positive (`includes-coordinate?`) check on the forced old SHA is sound even where the negative check above is weak.
+
+Scope note: this review only covers the three files in the diff per the task boundary; it does not re-verify the exporter/runtime CI results or re-run `-Spath`, which are owned elsewhere.

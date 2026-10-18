@@ -1,0 +1,13 @@
+:exporter-stock-fold-pin :entered
+
+Ran 4 tests. 20 assertions passed, 0 failures, 0 errors.
+
+Ran 5 tests. 21 assertions passed, 0 failures, 0 errors.
+
+Ran 21 tests. 607 assertions passed, 0 failures, 0 errors.
+
+Ran 24 tests. 321 assertions passed, 0 failures, 0 errors.
+
+Ran 2 tests. 12 assertions passed, 0 failures, 0 errors.
+clean jolt-crypto dependency resolution
+{:gate :exporter-stock-fold-pin, :complete true, :passed true, :source-overlay false, :dependency-checks 58, :tests 56}

@@ -1,0 +1,5 @@
+Unhandled exception (AssertionError): Assert failed: (nil? (get-in options [:operations :writer-phase!]))
+  at ~/ai-src/evidence/rowbinary-rich-direct-writer-20261018.clj:30:1
+  trace:
+    jdbc.core/connection (~/.jolt/gitlibs/https___github.com_yogthos_clojure.jdbc.git/9fc25d66492164ce204960d6d7b1531e194e2193/src/jdbc/core.clj:75)
+    jfn$user/$20

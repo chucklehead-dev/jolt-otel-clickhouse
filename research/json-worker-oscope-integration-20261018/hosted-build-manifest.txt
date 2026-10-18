@@ -1,0 +1,39 @@
+schema=1
+repository=casselc/jolt
+compiler_source=7098a8d6fbd1665215e3a24d5ac4bf9a53859101
+compiler_tree=571f8df965464e37298a5dce83e16d92127f4c76
+upstream_source=5b46858a171f30949f5b09eb484bc6c5ff93c6ea
+upstream_tree=a6e73f0343dae1cc8ae311612f2ecd9ca0a7b8c5
+workflow_source=54a3719204ab19f96a297188508968b1bb8182d3
+workflow_path=.github/workflows/durable-runtime-artifact.yml
+run_id=39151375518
+run_attempt=1
+runner_os=Linux
+runner_arch=X64
+image_os=ubuntu24
+image_version=20261012.334.1
+chez_version=10.4.1
+chez_sha256=c6e894863ce19a9f827dbd7798f1c893c7014a21358e0ed158edd7950a4092e3
+cc_version=cc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0
+cc_sha256=1b99826121ae6682a634e5efe09bd3e3df58ce58e0b28f849114ab5b89139c26
+build_command=make CHEZ=/opt/chez/bin/chez -j4 -Oline ci
+chez_configure=--installprefix=/opt/chez --threads --disable-x11 CFLAGS+=-fPIC
+chez_origin=source-build
+clojure_cli_version=1.12.6.1673
+clojure_installer_sha256=5ae63b082ed33bf4c29bf1a8317c5c15249d1bc753676b2f5177fb3804ad6f77
+require_buildlib=1
+binary_version=jolt v0.8.21-60-g7098a8d6
+binary_sha256=75c47a6d30cc8f00e53230123383c078222bdfeda790c2660dbecfd399e08798
+gate=pass
+ranged_append_ascii=98
+runtime_kind=plain
+stock_sorted_map_fold=pass
+submodules_begin
+ 14f07644080070246974942415a104228d9a6b04 vendor/cli (v0.12.91)
+ 489b6743e8421687ef96cec557830acf258d1886 vendor/clojure-test-suite (489b674)
+ 5b273b8a943a622593fbc85fca6761c5a39d6d66 vendor/fs (v0.5.34-3-g5b273b8)
+ 688e0ed6618582eccc8c8b745243ceac92835e03 vendor/grenadine (v0.1.15)
+ c948a704fc732914a243c1643bfe359913d11c7b vendor/irregex (0.9.12-2-gc948a70)
+ 43bdd65e189f2ccacc56662c53a21f5470ff1500 vendor/process (v0.6.25-1-g43bdd65)
+ 32d62a5136ad3dc148588752f5bcc4cc30b14752 vendor/sci (v0.2.4-1022-g32d62a51)
+submodules_end
