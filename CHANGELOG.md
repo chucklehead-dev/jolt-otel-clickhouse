@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Honor the current String and Collection JSON writers for empty link fields
+  in the legacy compiled span plan, rather than retaining construction-time
+  bytes. Include changed output in the existing per-row byte limit. Attribute
+  cache and field-key policy gaps in #134 remain separate; no codec contract,
+  native compact byte path or Durable acknowledgement semantics change.
+
 - Update the OTel SDK so full span batches export before the scheduled timer.
   Custom batch sizes must not exceed queue capacity; the SDK rejects invalid
   configurations before starting workers. Keep existing exporter, JSON, native

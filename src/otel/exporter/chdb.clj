@@ -415,21 +415,14 @@
         typed-shape (when typed-projector (typed-projector untyped-span-shape))]
     (when (and (= (set order) (into base-columns (keys typed-shape)))
                (empty? (filter base-columns (keys typed-shape))))
-      (let [empty-links-wire
-            {"LinksJSON" (json/write-str (json/write-str []))
-             "Links.TraceId" (json/write-str [])
-             "Links.SpanId" (json/write-str [])
-             "Links.TraceState" (json/write-str [])
-             "Links.Attributes" (json/write-str [])}
-            slots (mapv (fn [index column]
+      ;; Empty links are still values with live JSONWriter dispatch. Do not
+      ;; freeze their bytes when the plan is compiled: later String/Collection
+      ;; writers must apply, including to the nested LinksJSON representation.
+      (let [slots (mapv (fn [index column]
                           (let [value-at (get untyped-span-accessors column)
                                 attribute-at (get untyped-span-attribute-accessors column)
                                 write-value
                                 (cond
-                                  (contains? empty-links-wire column)
-                                  (let [wire (get empty-links-wire column)]
-                                    (fn [out _ _] (.write out wire)))
-
                                   attribute-at
                                   (fn [out span _]
                                     (.write out (cached-untyped-attrs-wire (attribute-at span))))
