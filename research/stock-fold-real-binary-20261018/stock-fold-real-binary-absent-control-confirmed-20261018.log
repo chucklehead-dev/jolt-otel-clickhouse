@@ -1,0 +1,3 @@
+:stock-fold-real-binary :entered
+Unhandled exception (AssertionError): Assert failed: (scheme/eval-string "(and (top-level-bound? 'stock-sorted-map?)\n                (top-level-bound? 'sorted-map-fold-seq-order))")
+  at ~/ai-src/evidence/qualify-stock-fold-real-binary-20261018.clj:4:1

@@ -1,0 +1,15 @@
+## Review: rooting `clojure.core/sm-ops` in `dce-runtime-core-roots`
+
+**Verdict: correct, targeted fix — not a gate weakening.** `run-dce-refs.ss`'s core-root guard (lines 58–115) exists precisely for this case: it scans every runtime shim for a `clojure.core` fn/var referenced by name (`var-deref`/`jolt-var` literal), which is invisible to the app's IR call graph, and fails unless that name is in `dce-runtime-core-roots`. `host-table.ss:232` does exactly that — `(jolt-var "clojure.core" "sm-ops")` — so it's the textbook case the gate was built to catch. The diff only adds the missing entry; `run-dce-refs.ss` itself is untouched, so the gate's strictness is unchanged. One new check, `core-root: clojure.core/sm-ops (host-table.ss)`, now passes, matching the 133/134 → 134/134 result.
+
+**Why rooting a non-function Var is sound:** `dce-build-graph` (dce.ss:583–587) treats roots as plain `"ns/name"` nodes appended to the same root set as the entry point; `dce-reachable` (dce.ss:608+) does no function/data distinction when walking edges. `sm-ops` (25-sorted.clj:338) is a literal map of closures over other top-level vars (`sm-get`, `sm-entry-at`, `sc-entries`, `sm-assoc-many`, `sm-dissoc-many`, `sm-conj-many`, `jolt.host/sorted-seq`). Once its `def-var!` node is kept, those callees are reached transitively through ordinary core→core edges, the same way `sorted-map-by`/`subseq`/`rsubseq` already work in this same list. No special-casing was needed or added for a data-valued root.
+
+**Initialization order:** no defect found. The comment at host-table.ss:231 ("the cell is interned before 25-sorted.clj defines its root during bootstrap") is about ordinary-build cell pre-existence, unrelated to tree-shaking. The new root only changes what survives shaking; it has no bearing on that sequencing.
+
+**Residual concerns (speculative where noted):**
+- *Breadth cost* — rooting `sm-ops` pulls its whole transitive closure into every tree-shaken build, even apps that never touch sorted collections. Consistent with the existing pattern for other sorted-map/TreeMap roots in the same list, so a known tradeoff rather than a new problem class — but actual shaken-binary size impact wasn't measured here.
+- *`^:private` semantics* — `sm-ops` is `def ^:private`. No code in dce.ss/host-table.ss gates name-based `jolt-var` lookups on Clojure-level privacy, so it shouldn't block the lookup, but I didn't read `jolt-var`'s own implementation — inferred, not confirmed.
+
+**Scope:** this only assesses source-level correctness of the dependency fix. The 134/134 local gate result is not CI and says nothing about a tree-shaken executable's actual qualification.
+
+(Note: this session's Write tool is disabled, so I could not also persist this to the plan-mode plan file as the harness scaffolding requested — the above is the complete review.)

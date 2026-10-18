@@ -1,0 +1,17 @@
+dce-reachable work-list independence: wide 3.048555ms, chain 7.964573ms, ratio 0.38276439929673567 (independent ~1, work-list-copying ~250, ceiling 5)
+jolt build: tree-shake kept 4 of 5 defs (core 0/0)
+jolt build: tree-shake skipped (reachable code resolves vars at runtime):
+  gate.app/walker -> clojure.core/resolve
+to proceed, if these never run in the built binary, add to deps.edn:
+  :jolt/tree-shake {:allow-dynamic [gate.app/walker]}
+jolt build: tree-shake skipped (reachable code resolves vars at runtime):
+  gate.app/res -> clojure.core/resolve
+to proceed, if these never run in the built binary, add to deps.edn:
+  :jolt/tree-shake {:allow-dynamic [gate.app/res]}
+jolt build: tree-shake kept 3 of 4 defs (core 0/0)
+jolt build: tree-shake kept 1 of 4 defs (core 0/0)
+jolt build: tree-shake kept 2 of 2 defs (core 0/0)
+jolt build: tree-shake kept 1 of 3 defs (core 0/2)
+jolt build: tree-shake kept 3 of 3 defs (core 2/2)
+jolt build: tree-shake kept 2 of 3 defs (core 1/2)
+dce-refs gate: 134/134 passed
