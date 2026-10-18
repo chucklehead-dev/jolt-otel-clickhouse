@@ -1,0 +1,7 @@
+Unhandled exception (IOException): read: unexpected end-of-file reading list at char 150 of #<input port string>
+  at 26:8
+  trace:
+    rd-paren-tail (x2)
+    rd-help
+    rd-top-level
+    jfn$user/candidate-transform$0

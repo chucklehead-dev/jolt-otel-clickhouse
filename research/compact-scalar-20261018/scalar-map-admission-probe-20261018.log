@@ -1,0 +1,2 @@
+{:shape "#object[:object]", :maximum 262144, :sdk-default true, :key-original true, :value-original true}
+{:actual-fast-path-witness true}

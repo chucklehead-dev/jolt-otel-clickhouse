@@ -1,0 +1,6 @@
+[jolt.deps] Specified aliases are undeclared and are not being used: [:byte-batch]
+Unhandled exception (FileNotFoundException): Could not locate clojure/data/json/jolt_native.jolt (or .clj/.cljc) on the source roots
+  at ~/ai-src/evidence/compact-live-row-screen-20261018.clj:1:1
+  trace:
+    for-each
+    ns-require+use
