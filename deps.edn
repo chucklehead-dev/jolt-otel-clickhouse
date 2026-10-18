@@ -5,8 +5,8 @@
          :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "697f58bd5b4925f72339694bedbace97bdc869bb"
-         ;; Includes SDK-owned scalar-map conversion, ready-batch scheduling
+         :git/sha "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+         ;; Includes SDK-owned HAMT/sorted scalar conversion, ready-batch scheduling
          ;; and batch<=queue validation.
          ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
@@ -19,7 +19,10 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:sorted-event-encoding-test
+ :aliases {:sdk-sorted-scalar-map-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sdk-sorted-scalar-map-test"]}
+           :sorted-event-encoding-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-sorted-event-encoding-test"]}
            :sdk-scalar-map-test

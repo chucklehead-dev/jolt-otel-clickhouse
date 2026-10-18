@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Use the SDK's optional sorted scalar-map normalization in the native backend
+  while original converter policies remain installed. Decline custom operations
+  and unsupported inputs before callbacks; keep the normal conversion with
+  older SDKs or changed policies. Typed source values, JSON dispatch and Durable
+  acknowledgements remain unchanged.
+
 - Advance the optional native JSON pin to retain byte emission for sorted
   event attributes while honoring live map sequence operations and JSONWriter
   callbacks. Add actual SDK-ended span/event coverage for named and compact

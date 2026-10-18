@@ -50,6 +50,7 @@ jobs:
           "$task_bin" -Srepro -M:native-json-byte-batch:native-attributes-test --require-string-output
           "$task_bin" -Srepro -M:sdk-scalar-map-test
           "$task_bin" -Srepro -M:native-json-byte-batch:sorted-event-encoding-test
+          "$task_bin" -Srepro -M:native-json-byte-batch:sdk-sorted-scalar-map-test
           "$task_bin" -Srepro -M:native-json-byte-batch:owned-output-test
 
   scoped-s3-sdk:

@@ -110,10 +110,13 @@
   ;; retain the existing native/generic conversion without a dependency floor.
   (delay (ns-resolve 'otel.any-value 'try-scalar-string-map)))
 
-(defn- sdk-scalar-attrs [m]
+(def ^:private sdk-sorted-scalar-map-converter
+  (delay (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)))
+
+(defn- try-sdk-scalar-attrs [m converter]
   (when (and (identical? key-string original-attribute-key-string)
              (identical? value-string original-attribute-value-string))
-    (when-let [convert-var @sdk-scalar-map-converter]
+    (when-let [convert-var @converter]
       (let [convert @convert-var
             result (convert m)]
         ;; A replaced SDK helper can change exporter policy before returning.
@@ -121,6 +124,10 @@
         (when (and (identical? key-string original-attribute-key-string)
                    (identical? value-string original-attribute-value-string))
           result)))))
+
+(defn- sdk-scalar-attrs [m]
+  (or (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
+      (try-sdk-scalar-attrs m sdk-scalar-map-converter)))
 
 (defn- attrs [m]
   (if (reusable-string-attrs? m)
