@@ -1,0 +1,1 @@
+{:rows 2000, :summary {:baseline {:samples 24, :ms {:p50 131.636086, :p90 154.868594, :p95 158.154827, :p99 168.908136}, :managed-B-per-row 30305.270666666667, :cpu-nanos 3244257554}, :candidate {:samples 24, :ms {:p50 108.247797, :p90 124.562125, :p95 130.547002, :p99 132.351231}, :managed-B-per-row 23056.759, :cpu-nanos 2685516178}}}

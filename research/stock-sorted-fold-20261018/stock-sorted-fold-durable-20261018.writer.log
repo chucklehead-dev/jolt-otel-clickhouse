@@ -1,0 +1,5 @@
+Unhandled exception (IllegalStateException): Alias native already exists in namespace user, aliasing clojure.data.json.jolt-native
+  at ~/ai-src/evidence/sdk-trace-affinity-screen-20261018.clj:3:1
+  trace:
+    for-each
+    ns-require+use

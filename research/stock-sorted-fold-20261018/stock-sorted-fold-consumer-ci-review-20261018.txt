@@ -1,0 +1,14 @@
+Reviewed `.github/workflows/jolt.yml` (native-writer job, lines 52–72) and `deps.edn`.
+
+**60-test byte/sorted/segmented command (lines 52–57)**
+Syntactically sound: the `-e` payload's embedded `"` are correctly escaped for the surrounding bash double-quoted string, and the single quotes used for Clojure's reader-quote (`'clojure.data...`) are literal inside that bash string, so no premature termination or injection. Logic is fail-closed — `assert (= 60 (:test r))` throws before `System/exit` is reached if the count drifts, so a coverage regression (e.g., a new `deftest` silently added without updating the gate) surfaces as a hard failure rather than a silent pass. No `:complete` marker is printed here, unlike the overlay step — cosmetic inconsistency only, not a defect.
+
+**Pinned `casselc/jolt@fc6d0678` checkout (lines 58–64)**
+Checkout action is pinned by the same reviewed SHA as the first checkout, `ref` is a full 40-char commit SHA, `path` isolates it under `.ci/stock-fold-core` so it can't collide with the primary checkout's tree, and `persist-credentials: false` prevents the implicit `GITHUB_TOKEN` from being written into that repo's git config — mitigating the information-disclosure risk of auto-injected credentials. Ordering is correct: it runs after the 60-test gate and before the step that `slurp`s its file, so the file is guaranteed present when needed.
+
+**65-test SOURCE OVERLAY gate (lines 65–72)**
+The marker-delimited `slurp`/`indexOf`/`subs` extraction is defensively checked (`(<= 0 start) (< start end)`), so a missing or reordered marker throws rather than silently evaluating an empty or wrong-sized form — reasonable given the source file is pinned to an exact SHA, mitigating most drift risk. The comment correctly scopes this as testing helper *source* on the qualified runtime, not a rebuilt artifact, matching your framing. `scheme/eval-string` failures propagate uncaught (not swallowed), so a bad overlay fails the step rather than passing quietly.
+
+One concrete, low-severity finding: `(prn {:gate :stock-fold-source-overlay :complete true})` executes *before* the `System/exit` pass/fail branch, guarded only by the `(= 65 (:test r))` count assertion — not by `(:fail r)`/`(:error r))`. If the test count matches 65 but one or more tests actually fail or error, the log will still show `{:complete true}` immediately before the step exits 1. A log reader skimming for the completion marker (rather than checking the exit code) could misread a failing run as a clean pass. Suggest gating that `prn` on `(zero? (+ (:fail r) (:error r)))` too, or renaming the key (e.g. `:ran true` vs `:passed`) to avoid the ambiguity.
+
+No other syntax, ordering, coverage, or credential/information-disclosure issues found in these three sections; `deps.edn` aliases are consistent with the namespaces referenced and don't affect this CI path (the gate uses an inline `-Sdeps` override, not these aliases).

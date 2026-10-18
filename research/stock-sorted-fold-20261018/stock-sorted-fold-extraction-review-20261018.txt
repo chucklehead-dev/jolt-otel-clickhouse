@@ -1,0 +1,28 @@
+Read the five in-scope files (`host-table.ss:140-269`, `sorted-map-fold-test.ss`, `jolt_byte_writer.ss`, both JSON test files) plus `vars.ss`/`rt.ss`'s var-cell interning to settle the "interned cell anchor" question, since it's explicitly flagged in the packet.
+
+## No semantic defect found in the core extraction
+
+- **`stock-sorted-map?`** (`host-table.ss:226-230`): `htable?` → type-key `eq?` → `:ops` identity against `(var-cell-root sc-stock-map-ops-cell)`. The ops-identity check is the actual safety net; it correctly excludes per-object `:ops` replacement and sorted-sets (different ops table) regardless of the type-key tag, and never trial-calls anything. Matches the declined-without-callback tests.
+- **`sorted-map-fold-seq-order`** (`host-table.ss:236-243`): reads `(jolt-ref-get m kw-tree)` exactly once before any `visit` call, then recurses purely on that captured tree. Because the tree is a persistent/immutable structure, any in-flight mutation of `m` (including swapping `:ops` mid-fold from inside `visit`) cannot affect the fold already in progress — the fold never re-reads `m` after the first line. This genuinely satisfies the "snapshot root before callbacks" and "per-object ops mutation after seq capture" concerns raised in the packet; I could not construct a counterexample.
+- **Var-cell identity across boot/restore**: `jolt-var`/`var-cell-lookup` (`rt.ss:1946-1954`) intern by `"ns/name"` into a single global `var-table`; `state-image.ss:358-361` restores a function-valued external by doing the same `var-cell-lookup`, i.e. the restored object is the *same* interned cell, not a reconstructed lookalike. So `sc-stock-map-ops-cell`, captured once at `host-table.ss` load time, stays `eq?`-correct across a state-image restore as long as `"clojure.core"/"sm-ops"` is interned before any sorted map is built (asserted by the comment at line 221). No contradiction found.
+- **Fold/visit signature reuse**: `emit-map-entry!` (`jolt_byte_writer.ss:196-213`) is the same visitor passed to both `pmap-fold-seq-order` (ordinary maps, line 270) and `sorted-map-fold-seq-order` (sorted maps, line 243). Key-conversion, omission, and the non-scalar-child flush gate are therefore identical for both paths — I found no behavioral divergence between the native-fold and seq-fallback cases for nested writers, exceptions, or key/value callbacks (the `live-scalar-writer-prefix-edits-and-replacement` and `stock-fold-handles-nonscalar-values-with-live-child-writers` tests exercise exactly this and both passed on inspection of the code paths they probe).
+- **Reduced-non-awareness**: real but explicitly scoped — the only consumer (`emit-map-entry!`) never returns `Reduced`, and the helper is documented as non-portable, so this is a contract limitation, not a bug in the reviewed usage.
+
+## Clearly scoped qualification gap
+
+The optional-helper detection in `jolt_byte_writer.ss:4-12` is pure arity-mask duck typing:
+
+```
+(bitwise-bit-set? (procedure-arity-mask admit) 1)
+(bitwise-bit-set? (procedure-arity-mask fold) 3)
+```
+
+This proves nothing about *behavior* — only that something bound to those two names accepts 1 and 3 arguments respectively. The packet's own contract text ("Unsupported options preserve fallback... absent/unsupported arity keeps old sequence path") asserts a decline-on-wrong-arity guarantee, but the only test exercising this detection gate (`optional-helper-absence-keeps-same-bytes` in `json_stock_sorted_fold_test.clj:35-42`) shadows `top-level-bound?` to simulate *absence*, not *presence with incompatible arity*. No test in the reviewed set binds `stock-sorted-map?`/`sorted-map-fold-seq-order` to stubs of the wrong arity and checks that `djn-stock-sorted-map-folder` resolves to `#f` and falls back correctly. The arity-check branch of that `and` chain is therefore unexercised — this is a missing-qualification gap in the given evidence, not a source defect (the logic itself looks correct by inspection; it's just unverified by the supplied tests).
+
+## Minor note, not a defect
+
+`djn-stock-sorted-map-folder` is computed once at file-load time (line 4, top level), capturing the `admit`/`fold` procedure objects directly rather than re-resolving the vars per writer invocation. This matches the file's stated design ("helper closures are constructed once, not once for every row") and is consistent with how other per-factory state is handled, so it is not a new defect — but it does mean that if `stock-sorted-map?` or `sorted-map-fold-seq-order` were ever redefined *after* this module loads (hot-reload), the writer would keep using the stale procedures rather than re-checking. Nothing in the reviewed files suggests that scenario is supported or expected, so I flag it only as an implicit assumption, not a gap requiring action.
+
+## Summary
+
+No concrete correctness defect in the extraction of the bounded diagnostic into the generic stock-sorted predicate/fold, nor in its optional consumption from native JSON, based on the listed files. The one concrete, clearly scoped gap is that the arity-based optional-helper gate's "wrong arity declines" branch has no exercising test in the provided evidence — everything else the packet asks about (boot/restore identity, non-scalar callbacks, post-capture mutation, custom comparator, live-writer prefix semantics) checks out against the source as written.

@@ -1,0 +1,4 @@
+:stock-fold-source-overlay :entered
+
+Ran 65 tests. 1006 assertions passed, 0 failures, 0 errors.
+{:gate :stock-fold-source-overlay, :complete true, :passed true}
