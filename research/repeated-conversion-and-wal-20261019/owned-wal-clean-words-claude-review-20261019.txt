@@ -1,0 +1,21 @@
+Write isn't available in this session, so I'll deliver the review directly as text.
+
+## Review: `resources/jdbc/chdb/owned_ascii_wal.ss` clean-word fast path
+
+Scope: diff of `resources/jdbc/chdb/owned_ascii_wal.ss` between this worktree and `chdb-selected-native-settings-audit-20261019` (lines 47–60 `word-has?`/`clean-word?`, lines 65–71 the new fast-path `cond` clause). Source-only; nothing executed.
+
+**1. (Confirmed by inspection, not execution) Stale SMT source-pin — `formal/smt/owned-wal-bounds/source-sha256.txt:1`.**
+The digest recorded for `owned_ascii_wal.ss` is byte-identical in both worktrees (`2bbe2de2...`), yet the two `.ss` files differ by 12 lines (the new `word-has?`/`clean-word?` logic and fast-path branch). Two different file contents cannot both legitimately hash to the same sha256, so this branch's pinned digest was not regenerated after the edit. `scripts/check-owned-wal-bounds.sh:6` runs `sha256sum --check` against this file first — it will fail on this branch's current source. Beyond the stale hash, the SMT README (`formal/smt/owned-wal-bounds/README.md:17-25`) describes the modeled facts only in terms of the old single-byte-at-a-time emission ("advances input by 1 and output by 1, 2 or 6 bytes") — it never mentions the 4-byte aligned read/copy. So this isn't just a hash refresh — the model's fact-mapping needs to be extended to cover the new branch (or explicitly scoped out) before the "proof receipt" can be said to apply to this file. This is the one item I'd block on; everything else is advisory.
+
+**2. Predicate correctness — matches scalar table exactly (proof by inspection).**
+`clean-word?` requires: no high bit set (ASCII), `word & 0x60606060` has no zero byte (excludes cp 0–31, i.e. controls), and no byte equals `"`(0x22)/`/`(0x2f)/`\`(0x5c). Checking against the escape table built at lines 6–12: for cp ≥ 32 and < 128, the table value is 0 (copy raw) unless cp is `" / \` — identical partition, including the pre-existing quirk that DEL (0x7F) is *not* escaped by either path. `word-has?`'s subtract/AND zero-byte trick is the standard SWAR idiom; here it's stronger than the general case since every operand byte is already <128 (checked by the prior `fxand word #x80808080 = 0`), which rules out the classic 0x80 false-positive edge case — the line-48 comment ("can conservatively match extra lanes") is a safe over-statement, not a bug.
+
+**3. Bounds/reserve — consistent with the existing `at ≤ capacity-12` guard.**
+The fast path is gated by `i mod 4 == 0`, `i+4 ≤ n`, and only runs after the loop's existing capacity check (line 65) has confirmed `at ≤ capacity-12`; the 4-byte `bytevector-copy!` always lands within `[at, at+4) ⊆ [at, capacity-8)`. No new guard was needed and none appears missing. `bytevector-u32-native-ref` and the copy are both checked (non-`#3%`) calls, matching the stated design that only the pre-existing single-byte stores stay unsafe/unchanged.
+
+**4. Test coverage — read, not run.**
+`test/jdbc/chdb_owned_wal_clean_words_test.clj` exercises: every ASCII cp (0–127) at every word lane (0–3) and alignment padding (0–3) against `wal/portable-line-bytes`; chunk-boundary sizes bracketing `capacity-12` (244/245, 65516/65523–65525, 65536, 131072) comparing the real encoder against a scalar-only variant (`clean-word?` patched to `#f`); and four source-mutation checks proving each conjunct of `clean-word?` is load-bearing (dropping the quote/slash/backslash/control check individually produces wrong V1 bytes for a crafted input). This is a strong, well-targeted suite — but I only read it; I did not execute the test runner, so I can't confirm it currently passes, only that it looks correctly aimed at the new code.
+
+**5. Minor, non-blocking nit.** `(fixnum? #x80808080)` (the 32-bit-host gate) is re-checked every loop iteration rather than hoisted outside `loop`; likely constant-folded by the compiler, but if not it's a small redundant per-iteration check. Not a correctness issue.
+
+**Not found:** no evidence of a false-negative in clean-word detection, no overflow/capacity bug in the new path, no divergence from scalar escape output in cases the test file covers. The one concrete action item is the SMT digest/fact-mapping drift in Finding 1.
