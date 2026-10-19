@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Let experimental native byte-batch encoding consume an optional SDK-owned
+  scalar-attribute context scoped to one payload. Older SDKs and configured
+  JSON retain their existing path. No SDK pin, default, captured value or
+  persistence acknowledgement changes; prototype qualification is separate.
+
 - Build singleton-vector span event columns directly instead of running three
   generic `mapv` passes. Preserve timestamp/name/attribute conversion order,
   fresh output vectors, named/compact layouts and lazy-input behavior. Event
