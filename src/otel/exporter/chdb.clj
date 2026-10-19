@@ -1256,6 +1256,10 @@
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
           encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
           nested @(ns-resolve 'jolt.codec.experimental 'prepare-nested-text)
+          prepare-var (ns-resolve 'jdbc.chdb.owned-statement 'precompute-wal)
+          prepare (when prepare-var @prepare-var)
+          _ (when-not (ifn? prepare)
+              (throw (ex-info "Experimental codec requires private WAL preparation" {})))
           codec (open)
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
           _ (require 'otel.exporter.chdb.native-attributes)
@@ -1263,7 +1267,7 @@
                       #'key-string #'value-string original-attribute-key-string folder)]
       {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
        :nested (fn [value] (nested codec value))
-       :folder folder :attributes attributes})
+       :folder folder :attributes attributes :prepare-statement prepare})
     (catch Throwable _
       (throw (ex-info "Experimental span codec requires its source alias and a qualified runtime"
                       {:type ::experimental-span-codec-unavailable})))))
@@ -1302,7 +1306,9 @@
                                (insert-byte-limit))]
                     ;; Same immutable snapshot and fallback as the existing
                     ;; driver encoder. Never replay input producers on decline.
-                    (or (owned-statement/try-snapshot bytes) (String. bytes "UTF-8")))
+                    (if-let [statement (owned-statement/try-snapshot bytes)]
+                      ((:prepare-statement codec) statement)
+                      (String. bytes "UTF-8")))
                   (if (= :native-guarded-byte-batch *json-backend*)
                   (json-each-row-payload (checked rows) prefix
                                         (boolean (:owned-statement-output? initial-snapshot)))

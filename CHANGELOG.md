@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Prepare private WAL bytes before writer submission in the explicit span-codec
+  experiment. This moves pure encoding out of the serialized Durable worker;
+  ordinary backends and persistence confirmation remain unchanged. Requires the
+  matching experimental driver path; default dependency pins are not advanced.
+
 - Keep nested event/link JSON in private encoded bytes inside the explicit
   span codec, avoiding its intermediate String. Outer fields remain JSON
   strings, not raw JSON splices; ordinary writers and Durable bytes are unchanged.

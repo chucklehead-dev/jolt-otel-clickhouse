@@ -48,6 +48,37 @@
                     #'e/*experimental-attribute-transform* (:attributes context)}
       (is (= {"x" "1" "y" "false"} (#'e/attrs {:x 1 :y false}))))))
 
+(deftest missing-private-preparation-fails-opt-in-before-storage
+  (let [resolve-var ns-resolve opens (atom 0)]
+    (with-redefs [ns-resolve (fn [namespace name]
+                              (when-not (= ['jdbc.chdb.owned-statement 'precompute-wal] [namespace name])
+                                (resolve-var namespace name)))
+                  jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "Storage opened" {})))]
+      (is (= :otel.exporter.chdb/experimental-span-codec-unavailable
+             (try (e/exporter {:experimental-span-codec? true :signals #{:spans}
+                               :durable? true :insert-format :json-compact-each-row
+                               :json-backend :native-guarded-byte-batch
+                               :owned-statement-output? true})
+                  nil (catch Throwable error (:type (ex-data error))))))
+      (is (zero? @opens)))))
+
+(deftest private-preparation-precedes-final-plan-check-and-execution
+  (let [context (#'e/load-experimental-span-codec!) calls (atom []) captured (atom nil)
+        context (assoc context :prepare-statement
+                       (fn [statement]
+                         (swap! calls conj :prepare)
+                         ((:prepare-statement context) statement)))
+        checked (fn [] {:compact-plans :test :owned-statement-output? true})]
+    (with-redefs-fn {#'compact/require-order! (fn [& _] (swap! calls conj :plan))
+                    #'e/execute-durable-sql! (fn [_ statement]
+                                              (reset! captured statement)
+                                              (swap! calls conj :execute))}
+      (fn []
+        (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [1] checked context vector)
+        (is (= [:plan :prepare :plan :execute] @calls))
+        (is (owned/statement? @captured))
+        (is (not (map? (owned/prepared-wal-for-write @captured))))))))
+
 (deftest invalid-opt-in-never-opens-storage
   (let [opens (atom 0)]
     (with-redefs [jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "DB called" {})))]
