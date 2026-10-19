@@ -1,0 +1,36 @@
+[opencode] session ses_eab437866ffeDU9IbvEfTShGoV
+Now the remaining pieces: `vec->seq` (the wrapper cell), `conj!`/`persistent!` for the `'vec` transient kind, and whether the compiler special-cases `mapv`.
+[opencode revised its response]
+The broad grep overflowed; narrowing to compiler builtin dispatch and the `reduce` binding:
+[opencode revised its response]
+# Conclusion
+
+At head `18dce94a633b798e3e5fafce964e8e42b398a4bb` (confirmed via git head; base `a0ac71c3f...` differs only by the sorted-fold extraction per task statement), unary `mapv` is already a transient fold with an existing raw-vector reduce loop. The residual cost for `(mapv f [x])` is fixed per-call allocation: one reducing closure, one 8-slot transient buffer + transient record, one chunked-seq wrapper cell, and one trimmed result pvec copy. No `mapv`-specific compiler builtin exists. One narrow arm in `jolt-reduce` would drop the seq-wrapper cell; the rest is inherent to the Clojure-shaped definition.
+
+# Exact evidence — call chain for `(mapv f [x])`
+
+1. `jolt-core/clojure/core/00-kernel.clj:67` — `(persistent! (reduce (fn [v o] (conj! v (f o))) (transient []) coll))`. Temporaries: the reducing closure (closes over `f`), per call.
+2. `(transient [])` → `jolt-transient-new` (host/chez/transients.ss:53-61): cnt 0 ≤ pv-width → `make-vector tvec-min-cap` (8-slot buffer) + `make-jolt-transient` record.
+3. `reduce` is host-bound (`host/chez/ns.ss:1062` → `jolt-reduce`, seq.ss:1878). 3-arity (1893-1901): `iface-method coll "reduce" 3` misses for a pvec → `(reduce-seq f init (jolt-seq coll))`. `jolt-seq` (seq.ss:746,755) → `vec->seq` (637-644) → `cseq-vec` (312) → one `make-cseqv` chunked-seq cell wrapping the vector — a pure dispatch artifact.
+4. `reduce-seq` (1859-1877) hits the `(cseq? s) (cseq-cvec s)` arm (1871) → `vec-reduce` (1830-1835) → `vec-reduce-general` (1836-1858): **the raw-vector traversal specialization already exists** — walks leaves via `pv-leaf-for`/`vector-ref` by index, no per-element cells, honors `reduced` (checked at entry 1840 and per step 1846), steps a procedure `f` directly (`direct?`, 1863).
+5. Per element: `conj!` 2-arity is the fixed clause `jolt-conj-one!` (transients.ss:281-291) → `tvec-conj1!` (227-231): in-place `vector-set!`, no rest list, no growth for n≤8.
+6. `persistent!` → `jolt-persistent!` 'vec (transients.ss:179-192): cnt 1 ≠ buffer len 8 → `make-pvec (vec-copy-range buf 0 1)` — one trimmed copy.
+
+So for one element: closure + 8-slot buf + transient record + cseqv cell + 1-slot result vector; callback count/order identical to element order; `reduced` from `f` short-circuits in `vec-reduce-general` and unwraps at 1873.
+
+# Finding — one small candidate
+
+In `jolt-reduce`'s `(f init coll)` clause (seq.ss:1897-1901), after the existing `iface-method` check, add `((pvec? coll) (let ((r (vec-reduce f init coll 0))) (if (jolt-reduced? r) (jolt-reduced-val r) r)))`. This reuses the already-specialized loop and deletes only the `jolt-seq`/`vec->seq` wrapper cell and `reduce-seq` dispatch.
+
+Compatibility caveats (source-read only; Codex owns validation):
+- Keep `iface-method "reduce" 3` first so deftype/reify/IReduceInit drivers are unaffected.
+- Must unwrap `jolt-reduced` (mirror 1899/1873); `vec-reduce` returns the accumulator raw.
+- Subvec: `subvec` returns a structurally sliced pvec (00-kernel.clj:53), so a `pvec?` arm covers it; leaf order is unchanged.
+- Empty vector: current path returns init via nil seq (1890/1867); the arm must too (`vec-reduce` with n=0 returns init, but a `reduced` init must unwrap — entry check 1840 returns the box raw).
+- No behavior change to callback arity (still 2-arg steps), exceptions (same `vector-ref` reads, same `f` invocations), or `(seq v)` class answers.
+
+# Remaining unknowns
+
+- Whether Chez inlines the closure at a direct call site (performance claim out of scope).
+- Whether any caller relies on `reduce` on a vector being interruptible mid-leaf via mutation — none visible in-tree.
+- `host/chez/java/natives-*.ss` reduce bindings (streams, host-static) are separate paths, not consulted by `mapv`.

@@ -1,0 +1,5 @@
+:singleton-event-durable :arm baseline :exporter-resource file:/home/chuck/ai-src/worktrees/exporter-default-omission-json-20261018/src/otel/exporter/chdb.clj :json-resource file:/home/chuck/.jolt/gitlibs/https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return

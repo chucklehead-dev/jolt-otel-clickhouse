@@ -1,0 +1,6 @@
+
+FAIL in (singleton-path-avoids-mapv-but-general-inputs-do-not) (chdb_event_columns_test.clj:31)
+expected: (zero? (clojure.core/deref calls))
+  actual: (not (zero? 3))
+
+Ran 3 tests. 33 assertions passed, 1 failures, 0 errors.
