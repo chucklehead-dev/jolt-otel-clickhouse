@@ -105,12 +105,36 @@
         (throw (ex-info "Native attribute projection is unavailable"
                         {:type ::native-attributes-unavailable}))))))
 
+(def ^:private sdk-scalar-map-converter
+  ;; Keep the Var live. Older SDKs simply lack the optional map helper and
+  ;; retain the existing native/generic conversion without a dependency floor.
+  (delay (ns-resolve 'otel.any-value 'try-scalar-string-map)))
+
+(def ^:private sdk-sorted-scalar-map-converter
+  (delay (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)))
+
+(defn- try-sdk-scalar-attrs [m converter]
+  (when (and (identical? key-string original-attribute-key-string)
+             (identical? value-string original-attribute-value-string))
+    (when-let [convert-var @converter]
+      (let [convert @convert-var
+            result (convert m)]
+        ;; A replaced SDK helper can change exporter policy before returning.
+        ;; Do not accept its result past a changed per-entry conversion root.
+        (when (and (identical? key-string original-attribute-key-string)
+                   (identical? value-string original-attribute-value-string))
+          result)))))
+
+(defn- sdk-scalar-attrs [m]
+  (or (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
+      (try-sdk-scalar-attrs m sdk-scalar-map-converter)))
+
 (defn- attrs [m]
   (if (reusable-string-attrs? m)
     ;; Match the old fresh map's metadata without copying immutable entries.
     (with-meta m nil)
     (or (when (= :native-guarded-byte-batch *json-backend*)
-          (@small-attribute-transform m))
+          (or (sdk-scalar-attrs m) (@small-attribute-transform m)))
         (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))))
 
 (defn- service-name [resource fallback]

@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- Update the optional native JSON backend to compare its known default omission
+  marker by identity. This avoids rebuilding nested sorted attributes merely to
+  reject a function marker. Custom value functions retain their equality and
+  fallback behavior; ordinary JSON, SDK/driver pins, typed values, output limits
+  and Durable acknowledgement semantics are unchanged.
+
+- Advance the optional native JSON dependency to use runtime-owned stock
+  sorted-map folding when present. Older runtimes and custom operations retain
+  sequence traversal; live JSON callbacks, typed source values, ordinary JSON
+  and Durable acknowledgement semantics are unchanged. Runtime artifact
+  adoption is qualified separately from this dependency update.
+
+- Use the SDK's optional sorted scalar-map normalization in the native backend
+  while original converter policies remain installed. Decline custom operations
+  and unsupported inputs before callbacks; keep the normal conversion with
+  older SDKs or changed policies. Typed source values, JSON dispatch and Durable
+  acknowledgements remain unchanged.
+
+- Advance the optional native JSON pin to retain byte emission for sorted
+  event attributes while honoring live map sequence operations and JSONWriter
+  callbacks. Add actual SDK-ended span/event coverage for named and compact
+  rows, Unicode, Boolean values and exact payload limits. Ordinary JSON,
+  schema/driver/SDK pins and Durable acknowledgement semantics are unchanged.
+
+- Use the SDK's optional bounded scalar-map conversion for native attribute
+  shaping while original exporter converters remain installed. Older SDKs,
+  unsupported values and changed policies retain the existing conversion;
+  JSON writer dispatch, typed values and persistence behavior are unchanged.
+
+- Avoid redundant normalization and membership calls while projecting declared
+  attributes from built-in string-key maps under the original policies. Keep
+  custom converters, non-string aliases, duplicate values, field statuses and
+  callback order on the existing path; schema and Durable semantics are unchanged.
+
 - Honor the current String and Collection JSON writers for empty link fields
   in the legacy compiled span plan, rather than retaining construction-time
   bytes. Include changed output in the existing per-row byte limit. Attribute

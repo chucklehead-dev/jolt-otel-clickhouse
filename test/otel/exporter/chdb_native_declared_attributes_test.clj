@@ -405,6 +405,121 @@
       (is (vector? (project (@#'fixture/span {"checkout.count" 7}))))
       (is (pos? @selected)))))
 
+(deftest owned-string-collector-preserves-shape-order-and-duplicate-fallback
+  (let [fast (scheme/eval-string
+               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?
+                                                @#'p/original-key-string)]
+    (doseq [n [0 1 8 9 16 128]
+            wanted [#{} #{"0" "7" "Aa" "BB"}]]
+      (let [input (into {} (map #(vector (str %) %) (range n)))
+            input (if (> n 8) (assoc input "Aa" 101 "BB" 102) input)]
+        (when (<= (count input) 128)
+          (let [expected (portable-collect input wanted)
+                actual (fast input wanted #'p/key-string #'clojure.core/contains?
+                             @#'p/original-key-string)]
+            (is (map? actual))
+            (is (= expected actual)) (is (= (vec expected) (vec actual)))
+            (is (= (class expected) (class actual)))
+            (is (= (meta expected) (meta actual)))))))
+    (let [input {"checkout.count" 1 :checkout.count 2} wanted #{"checkout.count"}]
+      (is (false? (fast input wanted #'p/key-string #'clojure.core/contains?
+                       @#'p/original-key-string)))
+      (is (= {"checkout.count" [1 2]} (collect input wanted))))))
+
+(deftest owned-string-collector-rejects-preinstalled-policy-and-preserves-effects
+  (let [input (into {} (map #(vector (str %) %) (range 16))) wanted #{"0" "7"}
+        fast (scheme/eval-string
+               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        original @#'p/original-key-string]
+    (doseq [changed [:normalizer :membership]]
+      (let [effects (atom [])
+            replacements
+            (case changed
+              :normalizer {#'p/key-string (fn [key] (swap! effects conj [:key key]) (original key))}
+              :membership {#'clojure.core/contains?
+                           (fn [_ key] (swap! effects conj [:member key]) (= key "7"))})]
+        (with-redefs-fn replacements
+          (fn []
+            ;; Even a replacement installed before construction is not stock.
+            (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
+              (is (false? (fast input wanted #'p/key-string #'clojure.core/contains? original)))
+              (is (empty? @effects))
+              (let [out (collect input wanted)]
+                (is (= 16 (count @effects)))
+                (is (= (mapv first input) (mapv second @effects)))
+                (is (= (if (= changed :membership) {"7" [7]} {"0" [0] "7" [7]}) out))))))))))
+
+(deftest owned-string-collector-unsupported-inputs-run-generic-callbacks-once
+  (let [fast (scheme/eval-string
+               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        original @#'p/original-key-string]
+    (doseq [input [{"0" 1 :0 2} (into {} (map #(vector (str %) %) (range 129)))]
+            wanted [#{"0"} (set (map str (range 9)))]]
+      (is (false? (fast input wanted #'p/key-string #'clojure.core/contains? original))))
+    (let [calls (atom []) input {"before" 1 :alias 2 "after" 3}
+          collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
+      (with-redefs [p/key-string (fn [key] (swap! calls conj key) (original key))]
+        (is (= (portable-collect input #{"alias"}) (collect input #{"alias"})))
+        (is (= (concat (map first input) (map first input)) @calls))))))
+
+(deftest owned-string-collector-actually-selects-fast-path-and-keeps-fallback
+  (with-redefs [native/declared
+                "(lambda (m wanted key-var contains-var) (error 'control \"generic collector reached\"))"]
+    (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?
+                                                  @#'p/original-key-string)]
+      (is (= {"count" [7]} (collect {"count" 7 "other" false} #{"count"})))
+      (is (= {"7" [7]} (collect (into {} (map #(vector (str %) %) (range 16))) #{"7"})))
+      (with-redefs [p/key-string (fn [key] key)]
+        (is (thrown? Throwable (collect {"count" 7} #{"count"}))))
+      (is (thrown? Throwable (collect {:count 7} #{"count"}))))))
+
+(deftest owned-string-collector-declines-changed-string-predicate
+  (let [fast (scheme/eval-string
+               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        original-string? string?
+        result (with-redefs [clojure.core/string? (fn [value] (original-string? value))]
+                 (fast {"count" 7} #{"count"} #'p/key-string #'clojure.core/contains?
+                       @#'p/original-key-string))]
+    (is (false? result))))
+
+(deftest owned-string-collector-wanted-boundaries-and-bound-vars-remain-live
+  (let [factory (scheme/eval-string
+                  (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
+        original @#'p/original-key-string
+        fast (factory #'p/key-string #'clojure.core/contains? original)
+        input (into {} (map #(vector (str %) %) (range 16)))
+        eight (set (map str (range 8)))]
+    (is (= (portable-collect input eight) (fast input eight)))
+    (is (= (vec (portable-collect input eight)) (vec (fast input eight))))
+    (is (false? (fast input (conj eight "8"))))
+    (is (false? (fast input #{"0" :non-string})))
+    (with-redefs [p/key-string (fn [key] key)]
+      (is (false? (fast input eight))))
+    (is (= (portable-collect input eight) (fast input eight)))))
+
+(deftest owned-string-collector-post-scan-policy-change-declines-before-fallback
+  (let [source (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss"))
+        changed (atom 0) calls (atom []) original @#'p/original-key-string
+        mutation (fn [] (swap! changed inc)
+                   (alter-var-root #'p/key-string
+                     (constantly (fn [key] (swap! calls conj key) (original key)))))
+        injected (str "(lambda (change) (let ((fold pmap-fold-seq-order) (calls 0)) "
+                      "(let ((pmap-fold-seq-order (lambda (m f init) "
+                      "(let ((out (fold m f init))) (set! calls (+ calls 1)) "
+                      "(when (= calls 2) (jolt-invoke0 change)) out)))) " source ")))" )
+        fast-factory ((scheme/eval-string injected) mutation)
+        input (into {} (map #(vector (str %) %) (range 16))) wanted #{"7"}]
+    (with-redefs [p/key-string original]
+      (let [fast (fast-factory #'p/key-string #'clojure.core/contains? original)]
+        (is (false? (fast input wanted)))
+        (is (= 1 @changed)) (is (empty? @calls))
+        ;; The declined pure scan has not run a converter. Its normal fallback
+        ;; therefore runs the new converter exactly once for each input entry.
+        (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
+          (is (= {"7" [7]} (collect input wanted)))
+          (is (= (mapv first input) @calls)))))))
+
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'otel.exporter.chdb-native-declared-attributes-test)]
     (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1))))

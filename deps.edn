@@ -5,8 +5,9 @@
          :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "37c684a2c370fc82fde82331635973bce87a52b3"
-         ;; Includes ready-batch scheduling and batch<=queue validation.
+         :git/sha "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+         ;; Includes SDK-owned HAMT/sorted scalar conversion, ready-batch scheduling
+         ;; and batch<=queue validation.
          ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
          ;; independent of dependency traversal order.
@@ -18,7 +19,16 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:native-attributes-test
+ :aliases {:sdk-sorted-scalar-map-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sdk-sorted-scalar-map-test"]}
+           :sorted-event-encoding-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sorted-event-encoding-test"]}
+           :sdk-scalar-map-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sdk-scalar-map-test"]}
+           :native-attributes-test
            {:extra-paths ["test" "bench"]
             :main-opts ["-m" "otel.exporter.chdb-native-attributes-test"]}
            :native-projection-test
@@ -54,7 +64,7 @@
            :native-json-byte-batch
            {:extra-deps {org.clojure/data.json
                          {:git/url "https://github.com/casselc/data.json.git"
-                          :git/sha "8d557cc18eb9526ed29ae5613089c3793d5973fa"}}}
+                          :git/sha "2172061060a102ccab779f5adc5d77f8b83a81f6"}}}
            :benchmark {:extra-paths ["bench"]
                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
            :typed-log-test

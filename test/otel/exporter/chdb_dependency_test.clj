@@ -7,13 +7,13 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
+  "https___github.com_casselc_otel.git/7878a2eb4340519d6843d13490a5a7c99ebade8a/")
 
 (def ^:private prior-otel-root
-  "https___github.com_casselc_otel.git/d93846e40b837dcecb546fb59f6cb05ca639f054/")
+  "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
 
 (def ^:private prior-otel-coordinate
-  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"d93846e40b837dcecb546fb59f6cb05ca639f054\" :exclusions [jolt-lang/jolt-crypto]}}}")
+  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"37c684a2c370fc82fde82331635973bce87a52b3\" :exclusions [jolt-lang/jolt-crypto]}}}")
 
 (def ^:private chdb-root
   "https___github.com_chucklehead-dev_jolt-chdb.git/3d766fa295b0e98c30f275d0a334db92e6dd998c/")
@@ -28,7 +28,7 @@
   "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
 
 (def ^:private native-data-json-source-root
-  "https___github.com_casselc_data.json.git/8d557cc18eb9526ed29ae5613089c3793d5973fa/src/main/clojure")
+  "https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/src/main/clojure")
 
 (def ^:private wrong-coordinate
   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
@@ -96,7 +96,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/"
+  (let [fixture-root "https___github.com_casselc_otel.git/7878a2eb4340519d6843d13490a5a7c99ebade8a/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -109,23 +109,31 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
+    (check "SDK before owned scalar-map capability is rejected" false
+           (boolean (oracle (str/replace source
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                             "37c684a2c370fc82fde82331635973bce87a52b3"))))
+    (check "SDK before sorted scalar normalization is rejected" false
+           (boolean (oracle (str/replace source
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                             "697f58bd5b4925f72339694bedbace97bdc869bb"))))
     (check "SDK before batch-ready wakeup is rejected" false
            (boolean (oracle (str/replace source
-                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
                              "d93846e40b837dcecb546fb59f6cb05ca639f054"))))
     (check "SDK before per-reader policy is rejected" false
            (boolean (oracle (str/replace source
-                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
     (check "SDK before definition-owned helper qualification is rejected" false
            (boolean (oracle (str/replace source
-                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"))))
     (check "SDK before bounded string admission is rejected" false
            (boolean (oracle (str/replace source
-                             "37c684a2c370fc82fde82331635973bce87a52b3"
+                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
                              "14ffd741351373f07d96aa070b0f9853d7daf8ab"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))
@@ -211,7 +219,13 @@
     ;; This guards selection of the new checkpoint, not ABI compatibility:
     ;; the old revision remains a valid native backend when chosen explicitly.
     (check "native byte alias coordinate oracle rejects prior pin" false
-           (oracle (str/replace source "8d557cc18eb9526ed29ae5613089c3793d5973fa"
+           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
+                                "96f3e47dba5970728866dacb5ac41a25135a2df5")))
+    (check "native byte alias coordinate oracle still rejects earlier native pin" false
+           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
+                                "8d557cc18eb9526ed29ae5613089c3793d5973fa")))
+    (check "native byte alias coordinate oracle still rejects older source" false
+           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
                                 "a0172a0f1418632c760af98ef5280dd234d21e85")))
     (check "native byte alias resolution completes without warnings" true
            (and (map? result) (zero? (:exit result))
