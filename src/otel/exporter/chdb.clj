@@ -252,6 +252,8 @@
 (defn- span-row
   ([span typed-projector] (span-row span typed-projector false))
   ([span typed-projector compact?]
+   (span-row span typed-projector compact? nil))
+  ([span typed-projector compact? write-nested-json]
   (let [context (:span-context span)
         scope (:scope span)
         resource (:resource span)
@@ -271,7 +273,10 @@
         duration (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
         status (otel-enum-string (get-in span [:status :code]) :unset)
         message (or (get-in span [:status :description]) "")
-        events-json (nested-json-string events) links-json (nested-json-string links)
+        ;; Nil preserves late Var lookup at EACH original call boundary; do
+        ;; not capture the default writer before conversion callbacks run.
+        events-json (if write-nested-json (write-nested-json events) (nested-json-string events))
+        links-json (if write-nested-json (write-nested-json links) (nested-json-string links))
         common (when-not compact?
                  {"Timestamp" time "TraceId" trace-id "SpanId" span-id
                   "ParentSpanId" parent-id "TraceState" trace-state

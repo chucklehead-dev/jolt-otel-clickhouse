@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Allow the internal span-row adapter to receive a per-call nested JSON writer
+  for explicit codec experiments. Existing callers keep the original writer,
+  including changes between event and link encoding. No backend, dependency,
+  schema or persistence default changes.
+
 - Build singleton-vector span event columns directly instead of running three
   generic `mapv` passes. Preserve timestamp/name/attribute conversion order,
   fresh output vectors, named/compact layouts and lazy-input behavior. Event
