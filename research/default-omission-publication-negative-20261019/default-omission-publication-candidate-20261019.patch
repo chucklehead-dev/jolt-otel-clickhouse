@@ -1,0 +1,129 @@
+diff --git a/.github/workflows/jolt.yml b/.github/workflows/jolt.yml
+index 3b3eefd..2a8f027 100644
+--- a/.github/workflows/jolt.yml
++++ b/.github/workflows/jolt.yml
+@@ -51,6 +51,8 @@ jobs:
+         run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-native-test'
+       - name: Require default omission identity and custom equality controls
+         run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-default-omission-test'
++      - name: Require omission publication and callback-prefix controls
++        run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-default-publication-test'
+       - name: Require byte and segmented writer regression tests
+         shell: bash
+         run: |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 470e608..2c550b1 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,11 @@
+ 
+ ## Unreleased — experimental, fork-only
+ 
++- Avoid an extra buffered-prefix publication before the native byte writer's
++  default identity-based omission check. Continue publishing before observable
++  receiver classification and custom JSON writers, including the current key
++  and colon. Custom value functions and portable encoding are unchanged.
++
+ - Compare the known default omission marker by identity, avoiding structural
+   equality and collection normalization just to reject that marker. Apply the
+   same rule to portable output and the default-options native writers. Custom
+diff --git a/deps.edn b/deps.edn
+index d9855c0..22cdf18 100644
+--- a/deps.edn
++++ b/deps.edn
+@@ -5,7 +5,10 @@
+          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
+ 
+  :aliases
+- {:jolt-default-omission-test
++ {:jolt-default-publication-test
++  {:extra-paths ["src/test/jolt"]
++   :main-opts ["-m" "clojure.data.json-default-publication-test"]}
++  :jolt-default-omission-test
+   {:extra-paths ["src/test/jolt"]
+    :main-opts ["-m" "clojure.data.json-default-omission-test"]}
+   :jolt-stock-sorted-fold-test
+diff --git a/src/main/clojure/clojure/data/json/jolt_byte_writer.ss b/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+index 90cb81d..d02b3d1 100644
+--- a/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
++++ b/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+@@ -198,11 +198,10 @@
+                     (begin (flush!)
+                       (let ((name (jolt-invoke1 (vector-ref stock-slots 10) k)))
+                         (sync!) name)))))
+-      ;; Retain the conservative publication boundary for unknown values.
+-      ;; Default omission itself is now a callback-free identity check.
+-      (unless (or (jolt-nil? child) (string? child) (boolean? child)
+-                  (number? child) (keyword? child) (symbol-t? child)
+-                  (pvec? child) (pmap? child) (procedure? child)) (flush!))
++      ;; The admitted default omission check is callback-free. Publish at the
++      ;; actual later classification/custom-dispatch boundary in emit!, not
++      ;; before this identity check. That boundary includes the key/colon and
++      ;; still runs before any user predicate or writer can observe the sink.
+       (unless (string? name)
+         (flush!)
+         (jolt-throw (host-new "Exception" "JSON object keys must be strings")))
+diff --git a/src/test/jolt/clojure/data/json_default_publication_test.clj b/src/test/jolt/clojure/data/json_default_publication_test.clj
+new file mode 100644
+index 0000000..b44e12d
+--- /dev/null
++++ b/src/test/jolt/clojure/data/json_default_publication_test.clj
+@@ -0,0 +1,58 @@
++(ns clojure.data.json-default-publication-test
++  (:require [clojure.test :refer [deftest is run-tests]]
++            [clojure.data.json :as json]
++            [clojure.data.json.jolt-native :as native]
++            [clojure.java.io :as io]
++            [jolt.scheme :as scheme]))
++
++(native/load-payload-byte-buffer-writer!)
++
++(deftype VisibleChild [seen]
++  json/JSONWriter
++  (-write [_ out _]
++    (swap! seen conj (.toString out))
++    (.write out "7")))
++
++(deftest default-identity-check-does-not-publish-an-incomplete-map-prefix
++  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
++        factory
++        (scheme/eval-string
++          (str "(let ((publications 0) (original djn-sb-install-or-append!))
++                  (let ((djn-sb-install-or-append!
++                          (lambda (writer text)
++                            (set! publications (+ publications 1))
++                            (original writer text)))) " source
++               " (jolt-vector djn-make-byte-buffer-writer
++                   (lambda () publications)
++                   (lambda () (set! publications 0)))))"))
++        writer ((nth factory 0))
++        value {"nested" (sorted-map "a" 1)}
++        write! (fn []
++                 (let [out (java.io.StringWriter.)]
++                   (writer value out json/default-write-options @#'json/native-writer-stock)
++                   (.toString out)))]
++    ;; Warm this factory's method site before observing publication counts.
++    (is (= (json/write-str value) (write!)))
++    ((nth factory 2))
++    (is (= "{\"nested\":{\"a\":1}}" (write!)))
++    ;; The sorted receiver's real classification boundary and final output
++    ;; remain; only the earlier bare-"{" omission publication disappears.
++    (is (= 2 ((nth factory 1))))))
++
++(deftest actual-custom-writer-still-observes-the-current-key-and-colon
++  (let [seen (atom []) value {"nested" (VisibleChild. seen)}]
++    (is (= "{\"nested\":7}"
++           (binding [json/*experimental-native-writer*
++                     (native/load-payload-byte-buffer-writer!)]
++             (json/write-str value))))
++    (is (= ["{\"nested\":"] @seen))
++    (reset! seen [])
++    (is (= "prefix\n{\"nested\":7}\n"
++           (String. (native/write-prefixed-batch-bytes! "prefix\n" [value] 100) "UTF-8")))
++    ;; The callback sees its own row, not the preceding payload prefix.
++    (is (= ["{\"nested\":"] @seen))))
++
++(defn -main [& _]
++  (let [r (run-tests 'clojure.data.json-default-publication-test)]
++    (assert (= 2 (:test r)))
++    (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

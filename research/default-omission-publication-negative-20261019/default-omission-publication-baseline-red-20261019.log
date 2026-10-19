@@ -1,0 +1,6 @@
+
+FAIL in (default-identity-check-does-not-publish-an-incomplete-map-prefix) (json_default_publication_test.clj:40)
+expected: (= 2 ((nth factory 1)))
+  actual: (not (= 2 3))
+
+Ran 2 tests. 6 assertions passed, 1 failures, 0 errors.
