@@ -1,0 +1,11 @@
+
+FAIL in (default-retains-late-root-lookup) (chdb_explicit_codec_row_adapter_test.clj:18)
+expected: (= ["first" "later"] [(nth row 22) (nth row 23)])
+  actual: (not (= ["first" "later"] ["first" "first"]))
+
+FAIL in (default-retains-late-root-lookup) (chdb_explicit_codec_row_adapter_test.clj:19)
+expected: (= [:first :later] (clojure.core/deref calls))
+  actual: (not (= [:first :later] [:first :first]))
+
+Ran 3 tests. 6 assertions passed, 2 failures, 0 errors.
+:expected-captured-default-mutant-rejected

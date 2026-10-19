@@ -1,1 +1,1 @@
-{:scope :stock-jolt-explicit-codec-research, :checks 79, :compiler-fork false, :data-json-dependency false, :standalone-qualified false, :durable-qualified false}
+{:scope :stock-jolt-explicit-codec-research, :checks 128, :compiler-fork false, :data-json-dependency false, :standalone-qualified false, :durable-qualified false}

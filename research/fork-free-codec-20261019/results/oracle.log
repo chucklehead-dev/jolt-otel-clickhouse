@@ -1,1 +1,1 @@
-{:independent-parser :babashka-native-cheshire, :cases 180, :pass true}
+{:independent-parser :babashka-native-cheshire, :cases 180, :variants 2, :pass true}
