@@ -1,0 +1,25 @@
+Write is disabled in this session, so I can't persist a plan file. Since this task is a pure read-only review (not an implementation task), here is the completed review directly:
+
+## Review: escaped-ascii-cursor-20261019 (4ae3388 vs 2172061)
+
+**Findings: none — no concrete defects.**
+
+Traced the new branch in `raw-string!` (jolt_byte_writer.ss:115–122) against the claimed invariants:
+
+- **Bounds**: fast-path guard is `cursor <= 65534`. Max write index is `cursor+1 = 65535`, the last valid index of the 65536-byte `buf`. `<= 65535` would allow an OOB store at 65536; the code correctly uses `65534`. Post-branch `cursor <= 65536` always, so the pre-existing `(fx=? cursor 65536)` flush check on the next iteration still catches every case — no value can skip past the boundary.
+- **Boundary fallback**: at `cursor == 65535` with a quote/backslash/slash char, the fast-path guard excludes it, falling through unmodified to the scalar `case` branch, which publishes `used` and lets the existing `byte!`/`flush-buffer!` split the two bytes across a flush exactly as before the patch.
+- **No reentrancy risk**: the new branch does only two direct `#3%bytevector-u8-set!` calls and a tail loop call — no `flush!`/`byte!`/user-code callout — consistent with "cursor publication cannot call user code."
+- **`used` staleness**: intentionally stale during the fast path (same as the pre-existing ASCII cursor advance), republished only at the flush check, loop exit, or scalar fallback — all unchanged, callout-free points. `string!`'s cache logic is unaffected since emitted bytes are byte-identical to the pre-patch scalar output.
+- **No overlap/gap** across the three branches: plain-ASCII excludes 34/92/47, the new branch only matches 34/92/47, the scalar fallback catches everything else — unchanged.
+
+Checked the other four files for consistency, not just presence:
+- `deps.edn`: new alias's `:main-opts` namespace matches the new test file's `ns`.
+- `.github/workflows/jolt.yml`: new step follows the same `-Srepro -M:...` pattern as siblings.
+- `CHANGELOG.md`: wording matches the actual `cursor <= 65534` guard; doesn't overclaim.
+- Test file: both deftests are self-verifying (the source-patching control asserts `source`/`observed`/`disabled` are pairwise distinct before trusting escape counts, so a broken `str/replace` match fails loudly rather than passing silently). `-main` asserts exactly 2 tests ran.
+
+**Real gaps (non-blocking):**
+1. The negative-control test isolates the fast path via exact substring matches against the live `.ss` source text. Self-checking, but brittle — a future edit preserving both target substrings while changing surrounding logic wouldn't be caught by this test specifically (only by the second, behavioral test).
+2. No test case names the exact cursor transition (`cursor == 65536` right after a two-byte store feeding the next flush check) as an explicit scenario; coverage relies on the `n ∈ [65528,65539]` sweep incidentally landing on that offset rather than targeting it by name.
+
+Both gaps are about test intent being implicit rather than explicit — neither indicates incorrect shipped behavior.

@@ -1,0 +1,5 @@
+:escape-cursor-durable :arm baseline :json-resource file:/home/chuck/ai-src/worktrees/data-json-default-omission-identity-20261018/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return

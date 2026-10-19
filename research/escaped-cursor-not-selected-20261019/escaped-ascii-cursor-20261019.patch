@@ -1,0 +1,145 @@
+diff --git a/.github/workflows/jolt.yml b/.github/workflows/jolt.yml
+index 3b3eefd..9316efc 100644
+--- a/.github/workflows/jolt.yml
++++ b/.github/workflows/jolt.yml
+@@ -51,6 +51,8 @@ jobs:
+         run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-native-test'
+       - name: Require default omission identity and custom equality controls
+         run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-default-omission-test'
++      - name: Require escaped-cursor mechanism and scratch-boundary controls
++        run: '"$WRITER_JOLT_BIN" -Srepro -M:jolt-escape-cursor-test'
+       - name: Require byte and segmented writer regression tests
+         shell: bash
+         run: |
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 470e608..728ef57 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## Unreleased — experimental, fork-only
+ 
++- Emit quote, backslash and slash escapes through the native byte writer's
++  local cursor when both bytes fit in private scratch. Retain the scalar
++  boundary fallback, Unicode/control escapes, output limits and live writers.
++
+ - Compare the known default omission marker by identity, avoiding structural
+   equality and collection normalization just to reject that marker. Apply the
+   same rule to portable output and the default-options native writers. Custom
+diff --git a/deps.edn b/deps.edn
+index d9855c0..2872e5d 100644
+--- a/deps.edn
++++ b/deps.edn
+@@ -5,7 +5,10 @@
+          :git/sha "2494b21b25cd959573c3e6050cd475e4bf302fdb"}}
+ 
+  :aliases
+- {:jolt-default-omission-test
++ {:jolt-escape-cursor-test
++  {:extra-paths ["src/test/jolt"]
++   :main-opts ["-m" "clojure.data.json-escape-cursor-test"]}
++  :jolt-default-omission-test
+   {:extra-paths ["src/test/jolt"]
+    :main-opts ["-m" "clojure.data.json-default-omission-test"]}
+   :jolt-stock-sorted-fold-test
+diff --git a/src/main/clojure/clojure/data/json/jolt_byte_writer.ss b/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+index 90cb81d..43ee96e 100644
+--- a/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
++++ b/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+@@ -96,8 +96,9 @@
+     (byte! 34)
+     ;; No pre-scan or temporary UTF-8 copy. Clean ASCII advances a local cursor
+     ;; instead of calling byte!/updating its captured mutable cell per byte.
+-    ;; Publish the cursor before every escape and flush, retaining exactly the
+-    ;; same scratch-boundary, budget and surrogate behavior as the scalar path.
++    ;; Common two-byte escapes also keep the local cursor while both bytes fit.
++    ;; Publish before every boundary fallback/flush; budget, surrogate and
++    ;; observable writer behavior stay on the existing paths.
+     (let ((n (string-length s)))
+       (let loop ((i 0) (cursor used))
+         (cond
+@@ -111,6 +112,14 @@
+                  (begin
+                    (#3%bytevector-u8-set! buf cursor cp)
+                    (loop (fx+ i 1) (fx+ cursor 1)))
++                 (if (and (or (fx=? cp 34) (fx=? cp 92) (fx=? cp 47))
++                          (fx<=? cursor 65534))
++                     (begin
++                       ;; Pure two-byte JSON escape; both private indices are
++                       ;; <65536, and cursor publication cannot call user code.
++                       (#3%bytevector-u8-set! buf cursor 92)
++                       (#3%bytevector-u8-set! buf (fx+ cursor 1) cp)
++                       (loop (fx+ i 1) (fx+ cursor 2)))
+                  (begin
+                    (set! used cursor)
+                    (case cp
+@@ -122,7 +131,7 @@
+                           (let ((x (fx- cp #x10000)))
+                             (u16! (fx+ #xd800 (fxsra x 10)))
+                             (u16! (fx+ #xdc00 (fxand x #x3ff)))))))
+-                   (loop (fx+ i 1) used))))))))
++                   (loop (fx+ i 1) used)))))))))
+     (byte! 34))
+   (define (append-range! bytes start end)
+     ;; Private buffer/scratch ranges only; bytevector-copy! retains bounds checks.
+diff --git a/src/test/jolt/clojure/data/json_escape_cursor_test.clj b/src/test/jolt/clojure/data/json_escape_cursor_test.clj
+new file mode 100644
+index 0000000..cb7a2b9
+--- /dev/null
++++ b/src/test/jolt/clojure/data/json_escape_cursor_test.clj
+@@ -0,0 +1,55 @@
++(ns clojure.data.json-escape-cursor-test
++  (:require [clojure.test :refer [deftest is run-tests]]
++            [clojure.data.json :as json]
++            [clojure.data.json.jolt-native :as native]
++            [clojure.java.io :as io]
++            [clojure.string :as str]
++            [jolt.scheme :as scheme]))
++
++(native/load-payload-byte-buffer-writer!)
++
++(deftest direct-two-byte-path-has-an-output-equivalent-disabled-control
++  (let [source (slurp (io/resource "clojure/data/json/jolt_byte_writer.ss"))
++        observed (str/replace source "(#3%bytevector-u8-set! buf cursor 92)"
++                   "(begin (set! escapes (+ escapes 1)) (#3%bytevector-u8-set! buf cursor 92))")
++        disabled (str/replace observed "(fx<=? cursor 65534)" "#f")
++        probe (fn [body]
++                (let [factory (scheme/eval-string
++                                (str "(let ((escapes 0)) " body
++                                  " (jolt-vector djn-make-byte-buffer-writer (lambda () escapes)))"))
++                      out (java.io.StringWriter.)]
++                  (((nth factory 0)) "\"\\/" out json/default-write-options
++                    @#'json/native-writer-stock)
++                  [(.toString out) ((nth factory 1))]))
++        expected (json/write-str "\"\\/")]
++    ;; Keep negative-control logs scalar: do not print the whole source twice.
++    (is (true? (not= source observed)))
++    (is (true? (not= observed disabled)))
++    (is (= [expected 3] (probe observed)))
++    (is (= [expected 0] (probe disabled)))))
++
++(deftest common-escapes-retain-unicode-controls-and-exact-boundaries
++  ;; Opening quotes/array delimiters shift the cursor too. This interval
++  ;; exercises common escapes with zero, one and two scratch bytes remaining,
++  ;; followed by controls/Unicode and the closing quote across later flushes.
++  (doseq [n (concat [0 14 15 16] (range 65528 65540))
++          shape [:string :nested]]
++    (let [value (str (apply str (repeat n "a")) "\"\\/\b\f\n\r\tβ😀")
++          value (if (= shape :nested) {"key\"\\/" [value false nil]} value)
++          ordinary (binding [json/*experimental-native-writer* nil]
++                     (json/write-str value))
++          prefix "prefix/β😀\n"
++          payload (str ordinary "\n")
++          size (alength (.getBytes payload "UTF-8"))
++          bytes (native/write-prefixed-batch-bytes! prefix [value] size)]
++      (is (= (str prefix payload) (String. bytes "UTF-8")))
++      (is (= (+ size (alength (.getBytes prefix "UTF-8"))) (alength bytes)))
++      (is (= :clojure.data.json.jolt-native/output-limit
++             (:type (ex-data
++                      (try (native/write-prefixed-batch-bytes! prefix [value] (dec size))
++                        (catch clojure.lang.ExceptionInfo e e)))))))))
++
++(defn -main [& _]
++  (let [r (run-tests 'clojure.data.json-escape-cursor-test)]
++    (assert (= 2 (:test r)))
++    (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

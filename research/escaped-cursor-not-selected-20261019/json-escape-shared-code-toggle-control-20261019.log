@@ -1,0 +1,1 @@
+{:gate :shared-code-toggle-live-entry-control, :passed true, :loader-calls 2, :controls [{:fast? false, :direct-escapes 0, :output-equal true} {:fast? true, :direct-escapes 3, :output-equal true}]}

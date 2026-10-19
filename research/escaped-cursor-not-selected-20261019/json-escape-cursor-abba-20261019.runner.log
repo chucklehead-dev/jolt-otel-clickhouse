@@ -1,0 +1,4 @@
+index=0 arm=baseline terminal0 output=/home/chuck/ai-src/evidence/json-escape-cursor-abba-20261019-0-baseline.edn
+index=1 arm=candidate terminal0 output=/home/chuck/ai-src/evidence/json-escape-cursor-abba-20261019-1-candidate.edn
+index=2 arm=candidate terminal0 output=/home/chuck/ai-src/evidence/json-escape-cursor-abba-20261019-2-candidate.edn
+index=3 arm=baseline terminal0 output=/home/chuck/ai-src/evidence/json-escape-cursor-abba-20261019-3-baseline.edn

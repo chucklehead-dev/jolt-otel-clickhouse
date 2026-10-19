@@ -1,0 +1,3 @@
+
+Ran 4 tests. 16 assertions passed, 0 failures, 0 errors.
+{:gate :default-omission-identity, :complete true, :passed true}

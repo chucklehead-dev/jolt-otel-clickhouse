@@ -1,0 +1,28 @@
+[opencode] session ses_eab147442ffeKosc2NVD3PZuzP
+HEAD confirmed at `3d766fa295b0e98c30f275d0a334db92e6dd998c` (detached, clean). Now locating `open-native!`, settings references, and relevant tests/docs.
+[opencode revised its response]
+Now reading the durable `:open-native!` seam, the SETTINGS-rejection tests, and the thread-status probe.
+[opencode revised its response]
+Final check: README stream-insert documentation and the two owned-stream option tests.
+[opencode revised its response]
+# Conclusion
+
+At `3d766fa295b0e98c30f275d0a334db92e6dd998c` (verified HEAD, clean detached), there is **no connection-level mechanism** for `max_threads`/`max_insert_threads`/`input_format_parallel_parsing`. Two **query-local** public paths exist without any `:open-native!` override: (1) a `SETTINGS` clause embedded in the `stream-insert!` query string, and (2) a prior `SET` statement through ordinary `execute!` on the same connection (session scope). The closed owned-stream header admits only `input_format_read_datetime_number_as_raw_value=1`; the three settings are genuinely absent there, not merely undocumented.
+
+# Exact evidence
+
+- `open-spec!` `src/jdbc/chdb.clj:892-905` calls `(native/open! (spec-path spec))` — no options. `native/open!` 2-arity `src/jdbc/chdb/native.clj:353-370` accepts only `{:keys [backups-allowed-path]}`; `connect-owned!` `native.clj:268-307` builds argv `["chdb" "--path=…" "--backups.allowed_path=…"]` only. Durable default `:open-native!` `src/jdbc/chdb/durable.clj:813-816` likewise passes only `:backups-allowed-path`. Bootstrap options are process-immutable (`native.clj:250-255`).
+- Header validation: `compact-stream-header?` `chdb.clj:467-469` — regex allows only the optional `SETTINGS input_format_read_datetime_number_as_raw_value=1`; enforced at `chdb.clj:487-488` (`::invalid-stream-header`) with byte-exact buffer match `chdb.clj:491-493`; selector fallback at `chdb.clj:546-548`; version fence `"26.9.0"` at `chdb.clj:497` (native.clj pins 26.7.3, `native.clj:8`).
+- `stream-insert!` `chdb.clj:931-980`: `query` is caller SQL passed verbatim to `chdb-stream-insert-n`; only option is `:format`. `insert-json-rows!` prefix `chdb.clj:599-601` has no SETTINGS. `bounded-select` `chdb.clj:695-702` hardcodes `max_result_rows/max_result_bytes/result_overflow_mode` (SELECT-only).
+- ABI (`resources/jdbc/chdb/abi.edn:74-91`): stream functions take only query/format pointers — no settings argument.
+
+# Findings
+
+1. **Works, undocumented:** `SETTINGS max_insert_threads=8, input_format_parallel_parsing=1` inside the `stream-insert!` query text; proven passthrough by `chdb_owned_compact_stream_test.clj:122-132` (query incl. SETTINGS reaches `[:open query …]`) and real-native `chdb_owned_stream_option_native_test.clj:11,33-47`.
+2. **Works, undocumented, untested here:** prior `SET max_threads=8` via `jdbc/execute!` (`execute-any`, `chdb.clj:582-583`) on the same connection; conversely, `chdb_owned_stream_option_native_test.clj:69` proves header SETTINGS is *not* retained session-wide.
+3. **Genuinely absent:** connection-open options beyond `:backups-allowed-path`; the three settings in the owned compact header (rejected headers at `chdb_owned_compact_stream_test.clj:78-85`; fallback shapes `chdb_owned_stream_option_test.clj:55-60`); any option emitting them in any API.
+4. README `190-192,250-256` documents `stream-insert!` but no settings selection, and warns it is unqualified for long-running use.
+
+# Remaining unknowns
+
+Whether ClickHouse 26.9 honors these settings via the stream INSERT header/`SET` path, and historical auto/parallel defaults, require native experiments owned by main — not inferable from this source.

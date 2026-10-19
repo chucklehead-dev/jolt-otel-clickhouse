@@ -1,0 +1,14 @@
+
+FAIL in (direct-two-byte-path-has-an-output-equivalent-disabled-control) (json_escape_cursor_test.clj:26)
+expected: (true? (not= source observed))
+  actual: false
+
+FAIL in (direct-two-byte-path-has-an-output-equivalent-disabled-control) (json_escape_cursor_test.clj:27)
+expected: (true? (not= observed disabled))
+  actual: false
+
+FAIL in (direct-two-byte-path-has-an-output-equivalent-disabled-control) (json_escape_cursor_test.clj:28)
+expected: (= [expected 3] (probe observed))
+  actual: (not (= ["\"\\\"\\\\\\/\"" 3] ["\"\\\"\\\\\\/\"" 0]))
+
+Ran 2 tests. 97 assertions passed, 3 failures, 0 errors.

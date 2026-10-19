@@ -1,0 +1,10 @@
+:singleton-event-durable :arm candidate :exporter-resource file:/home/chuck/ai-src/worktrees/exporter-singleton-event-columns-20261019/src/otel/exporter/chdb.clj :json-resource file:/home/chuck/.jolt/gitlibs/https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/src/main/clojure/clojure/data/json/jolt_byte_writer.ss
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return
+Unhandled exception: Partitioned SDK screen failed
+  ex-data: {:label :processor-shutdown}
+  at ~/ai-src/evidence/sdk-trace-affinity-screen-20261018.clj:18:1
+  trace:
+    db.jdbc-shim/tget (~/.jolt/gitlibs/https___github.com_casselc_db.git/cb06349c7ffe55e423021e402d4f182f4a27bcf7/clj/db/jdbc_shim.clj:60)

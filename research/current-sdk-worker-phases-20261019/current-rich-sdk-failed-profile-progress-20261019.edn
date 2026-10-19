@@ -1,0 +1,1 @@
+{:stats [{:queue-size 0, :attempted-span-count 160000, :exported-span-count 80000, :failed-span-count 80000, :dropped-count 0}], :lanes 1, :arrival "saturated", :offered-rows 160000, :elapsed-nanos 10199463344}
