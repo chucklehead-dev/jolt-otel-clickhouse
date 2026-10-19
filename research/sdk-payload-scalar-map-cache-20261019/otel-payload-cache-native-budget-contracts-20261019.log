@@ -1,0 +1,5 @@
+Unhandled exception (ClassCastException): string-length: 0 is not a string
+  trace:
+    otel.any-value/load-scalar-string-map-converter (./src/otel/any_value.clj:274)
+    walk
+    otel.payload-scalar-string-map-cache-test/-main (./test/otel/payload_scalar_string_map_cache_test.clj:201)

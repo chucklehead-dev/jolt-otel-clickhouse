@@ -1,0 +1,23 @@
+	Command being timed: "timeout --signal=TERM --kill-after=5s 240s /home/chuck/ai-src/evidence/jolt-hosted-stock-fold-7098-20261018.sh -Srepro -Sdeps {:paths ["src" "resources" "test" "bench" "/home/chuck/ai-src/worktrees/chdb-current-typed-storage-0821-20261014/bench" "/home/chuck/ai-src/worktrees/chdb-current-typed-storage-0821-20261014/test"] :deps {io.github.casselc/otel {:local/root "/home/chuck/ai-src/worktrees/otel-payload-scalar-map-native-budget-20261019" :exclusions [jolt-lang/jolt-crypto]}}} -A:native-json-byte-batch /home/chuck/ai-src/evidence/sdk-payload-cache-durable-writer-20261019.clj /tmp/sdk-payload-cache-durable-20261019.zg76yykJ on"
+	User time (seconds): 24.91
+	System time (seconds): 2.32
+	Percent of CPU this job got: 109%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:24.81
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 910920
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 596634
+	Voluntary context switches: 12047
+	Involuntary context switches: 258
+	Swaps: 0
+	File system inputs: 0
+	File system outputs: 1482880
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

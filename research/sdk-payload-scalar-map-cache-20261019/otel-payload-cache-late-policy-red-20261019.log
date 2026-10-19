@@ -1,0 +1,6 @@
+
+FAIL in (a-late-policy-change-declines-with-nil-not-native-false) (payload_scalar_string_map_cache_test.clj:139)
+expected: (nil? (convert m))
+  actual: (not (nil? false))
+
+Ran 15 tests. 147 assertions passed, 1 failures, 0 errors.

@@ -1,0 +1,12 @@
+Unhandled exception (ClassCastException): class java.lang.Character cannot be cast to class java.util.Map$Entry
+  at ~/ai-src/evidence/sdk-payload-cache-real-encoding-screen-20261019.clj:19:1
+  trace:
+    user/nested-sorted-sdk-shape (~/ai-src/evidence/nested-sorted-sdk-fixture-20261018.clj:8)
+    vec-reduce
+    reduce-seq
+    into-xform
+    update
+    jfn$clojure.core/mapv$0
+    vec-reduce
+    reduce-seq
+    mapv

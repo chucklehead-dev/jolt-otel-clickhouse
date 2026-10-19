@@ -1,0 +1,3 @@
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/chuck/ai-src/worktrees/otel-payload-scalar-map-native-budget-20261019/src
+WARNING: Use of :paths external to the project has been deprecated, please remove: /home/chuck/ai-src/worktrees/otel-payload-scalar-map-native-budget-20261019/resources
+:jvm-final-payload-cache-optional-decline :normal-value-preserved

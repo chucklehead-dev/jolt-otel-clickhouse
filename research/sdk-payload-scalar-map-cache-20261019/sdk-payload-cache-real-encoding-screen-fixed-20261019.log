@@ -1,0 +1,6 @@
+Unhandled exception: chDB telemetry export batch exceeds 8 MiB
+  ex-data: {:limit 8388608}
+  at ~/ai-src/evidence/sdk-payload-cache-real-encoding-screen-20261019.clj:19:1
+  trace:
+    jdbc.chdb.json-each-row/fail! (~/.jolt/gitlibs/https___github.com_chucklehead-dev_jolt-chdb.git/3d766fa295b0e98c30f275d0a334db92e6dd998c/src/jdbc/chdb/json_each_row.cljc:14)
+    jdbc.chdb.json-each-row/load-native-writer-factory! (~/.jolt/gitlibs/https___github.com_chucklehead-dev_jolt-chdb.git/3d766fa295b0e98c30f275d0a334db92e6dd998c/src/jdbc/chdb/json_each_row.cljc:40)

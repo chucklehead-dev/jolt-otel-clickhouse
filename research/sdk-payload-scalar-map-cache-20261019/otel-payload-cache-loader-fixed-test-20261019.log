@@ -1,0 +1,22 @@
+
+FAIL in (plain-and-sorted-maps-match-existing-helper-order-type-and-metadata) (payload_scalar_string_map_cache_test.clj:47)
+expected: (= (oracle plain) result)
+  actual: (not (= {} nil))
+
+FAIL in (plain-and-sorted-maps-match-existing-helper-order-type-and-metadata) (payload_scalar_string_map_cache_test.clj:49)
+expected: (map? result)
+  actual: false
+
+FAIL in (plain-and-sorted-maps-match-existing-helper-order-type-and-metadata) (payload_scalar_string_map_cache_test.clj:47)
+expected: (= (oracle plain) result)
+  actual: (not (= {"key-0" "λ\n\""} nil))
+
+FAIL in (plain-and-sorted-maps-match-existing-helper-order-type-and-metadata) (payload_scalar_string_map_cache_test.clj:48)
+expected: (= (vec (keys plain)) (vec (keys result)))
+  actual: (not (= ["key-0"] []))
+
+FAIL in (plain-and-sorted-maps-match-existing-helper-order-type-and-metadata) (payload_scalar_string_map_cache_test.clj:49)
+expected: (map? result)
+  actual: false
+
+Ran 9 tests. 115 assertions passed, 5 failures, 0 errors.

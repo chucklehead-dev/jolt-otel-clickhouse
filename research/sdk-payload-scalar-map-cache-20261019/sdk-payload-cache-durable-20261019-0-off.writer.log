@@ -1,0 +1,8 @@
+error[analyze/unknown-namespace]: No such namespace: fixture
+  --> /home/chuck/ai-src/evidence/sdk-payload-cache-durable-writer-20261019.clj:9:3
+   |
+ 7 |   (assert (some? (any/scalar-string-map-payload-converter)))
+ 8 |   (load-file "/home/chuck/ai-src/evidence/nested-sorted-sdk-fixture-20261018.clj")
+ 9 |   (let [original fixture/spans
+   |   ^
+   = note: raised while expanding the `let` macro

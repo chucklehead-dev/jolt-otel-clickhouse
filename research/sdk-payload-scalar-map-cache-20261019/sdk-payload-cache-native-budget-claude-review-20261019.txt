@@ -1,0 +1,21 @@
+## Review result: no concrete bugs found (c474e02)
+
+**Guard gap from the prior review is closed, for both paths.** `distinct-source-wrappers-may-share-only-immutable-contents` (payload_scalar_string_map_cache_test.clj:45-67) now asserts actual source-root sharing, output-root sharing on a hit, and that a same-entry-count-but-different-root input takes the uncached path — exercised for both `plain-fixture` and `sorted-fixture`, matching the task's description of the fix.
+
+**Checked and sound:**
+
+- **Live `same-policy?` checks** (payload_scalar_string_map_cache.ss:13-18, 61-64): the 8 `[var, original-value]` bindings are decoded once into a flat vector, but every call re-derefs the live var cells — not a startup snapshot. Index math (`2i`/`2i+1`) is consistent with the encode loop. Mirrors the established pattern in the unchanged `scalar_string_map.ss`/`sorted_scalar_string_map.ss`.
+- **`store!`'s return contract** (lines 40-58): always returns `nil` (true policy/type mismatch) or the untouched `result`, even on a budget decline (`insertions ≥ max-insertions`, or charge would exceed `max-chars`) — the final `(and (same-policy?) result)` runs regardless of whether the storing branch executed. A full budget cannot silently turn a valid conversion into a spurious decline; confirmed against `a-budget-decline-...` and `a-tiny-character-budget-...`.
+- **Entry layout**: HAMT (`'hamt #f cnt root-out cnt-out`) and sorted (`'sorted ops cnt root-out cnt-out`) entries share one `table`, but `fresh` reads indices 3/4 uniformly and every lookup checks the `'hamt`/`'sorted` tag before trusting an entry — an `eq?` collision between a HAMT root and a sorted tree pointer in the shared table (already implausible given distinct record types) couldn't cause cross-kind reuse.
+- **`weight`** (lines 36-39) sums `string-length` over keys and values; both converters always emit text values (booleans → `"true"/"false"`, fixnums → decimal), so it never hits a non-string.
+- **Miss-path wrapper reuse**: returning the original helper's own output directly (no rewrap) is safe given its documented fresh/metadata-free/non-mutating contract.
+- **Eight-root indirection**: redefining `try-scalar-string-map` itself is caught by the outer `current?` check (since the binding list includes `[#'try-scalar-string-map original-try-scalar-string-map]`), not by the frozen `original-...` call observing it — verified by `eight-policy-roots-decline-before-first-construction-...` showing zero replacement invocations.
+- **Fence/arity checks** in `any_value_native.clj` match the actual call-site arities in the `.ss` body (`pmap-fold-seq-order` 3-arg, `make-pmap` 2-arg, `hashtable-ref`/`-set!` 3-arg, `make-weak-eq-hashtable` 0-arg, `jolt-ref-get` 2-arg).
+
+**Explicitly out of scope, not re-flagged:** woven-converter-body qualification (named by the task as still outstanding), single-thread-only safety, weak-hashtable GC primitive semantics.
+
+**Missing-test observations (not bugs):**
+- No test exercises `max-insertions = 0`.
+- No test directly forces an `eq?` collision attempt between HAMT and sorted keys in the shared table (the tag guard that would prevent misuse is unexercised, though likely unreachable in practice).
+
+This matches your own evidence: the gate passing at 14 tests/144 assertions and the identical 8,648,398-byte digest across 64 real-exporter samples are parity/consistency signals, not proof of delivery/recovery correctness, and imply no adoption decision.

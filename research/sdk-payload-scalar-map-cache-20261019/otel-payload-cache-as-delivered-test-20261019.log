@@ -1,0 +1,4 @@
+Unhandled exception (AssertionError): Assert failed: native scalar-string-map payload cache must actually run in this explicit gate
+(some? convert)
+  trace:
+    otel.payload-scalar-string-map-cache-test/-main (./test/otel/payload_scalar_string_map_cache_test.clj:135)
