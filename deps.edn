@@ -19,7 +19,10 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:sdk-sorted-scalar-map-test
+ :aliases {:event-columns-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-event-columns-test"]}
+           :sdk-sorted-scalar-map-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-sdk-sorted-scalar-map-test"]}
            :sorted-event-encoding-test

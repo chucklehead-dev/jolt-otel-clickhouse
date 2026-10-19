@@ -91,6 +91,7 @@ jobs:
           jolt -Srepro -M:preloaded-scalar-test
       - name: Qualify confirmed compact field binding and real native readback
         run: |
+          jolt -Srepro -M:event-columns-test
           jolt -Srepro -M:compact-wire-test
           jolt -Srepro -M:direct-compact-layout-test
           jolt -Srepro -M:compact-wire-native-test
