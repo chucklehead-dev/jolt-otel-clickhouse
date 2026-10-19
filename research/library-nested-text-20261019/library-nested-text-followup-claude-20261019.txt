@@ -1,0 +1,11 @@
+Note: the Write tool isn't available in this session, so I can't produce the plan file — delivering the findings directly instead.
+
+**Verdict:** Yes — `qualify-nested-text!` (experimental.clj:12-19) closes the requested fail-fast gap without changing per-export output or leaking data.
+
+**Placement:** Invoked at experimental.clj:38 inside the `backend` `delay`, after layout qualification (:35) and scalar qualification (:36), before the `[scalar project fold nested]` tuple is returned/memoized (:39). An exception here leaves the `delay` unrealized, so `open-codec` retries on every call rather than caching a broken backend. This mirrors an existing idiom in `chdb.clj:1864-1865` ("Probe the owned snapshot ABI before storage acquisition, with no SQL or caller payload") — consistent with established style.
+
+**Correctness:** It exercises producer and consumer together. The producer `nested` → `ffc-json-nested-text` (json.ss:187-188) wraps plain JSON bytes in an `ffc-json-text` record. The consumer is `emit!`'s `ffc-json-text?` branch (json.ss:143) → `encoded-text!` (json.ss:91-106), which escapes `"`, `\`, `/` byte-by-byte, matching `string!`'s char-escaping (json.ss:68-88). The check compares `scalar(nested(probe))` to `scalar(String(scalar(probe)))` — opaque-splice path vs. literal double-encoding — using quotes/slash/backslash/newline/Unicode, exactly the bytes `encoded-text!` must escape. A raw-splice mutant (nested = identity) skips escaping and is correctly rejected via `::unavailable`, matching the test.
+
+**No side effects:** builds only a fixed local probe, compares strings, no I/O/mutation; runs once per backend realization (memoized), not per export — can't affect export output.
+
+**Limitations:** probe is short (~10 chars), so it doesn't exercise chunked/multi-buffer encoder paths (still covered only by the separate `prepared-nested-text-chunk-boundaries-and-reuse` test). Only one mutant is asserted rejected, though the equality check would likely catch most escaping divergences generically.
