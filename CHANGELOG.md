@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an opt-in, source-only explicit codec experiment for span-only, owned
+  compact Durable export. Keep normal encoding and persistence confirmation
+  unchanged; validate configuration before storage acquisition and retain
+  compact-plan checks around encoding. See `docs/EXPLICIT-CODEC-EXPERIMENT.md`
+  for tested scope and remaining gates; no default or protocol change.
+
 - Allow the internal span-row adapter to receive a per-call nested JSON writer
   for explicit codec experiments. Existing callers keep the original writer,
   including changes between event and link encoding. No backend, dependency,

@@ -1247,6 +1247,19 @@
      :histogram (vec (concat common ["Count" "Sum" "BucketCounts" "ExplicitBounds"]
                              exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
 
+(defn- load-experimental-span-codec! []
+  (try
+    (require 'jolt.codec.experimental)
+    (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
+          encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
+          nested @(ns-resolve 'jolt.codec.experimental 'write-nested)
+          codec (open)]
+      {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
+       :nested (fn [value] (nested codec value))})
+    (catch Throwable _
+      (throw (ex-info "Experimental span codec requires its explicit source alias"
+                      {:type ::experimental-span-codec-unavailable})))))
+
 (defn- direct-metric-layout? [snapshot]
   (and (:durable? snapshot)
        (= :json-compact-each-row (:insert-format snapshot))
@@ -1254,7 +1267,10 @@
        (every? empty? (vals (:typed-metric-columns snapshot)))
        (= direct-metric-columns schema/clickstack-metric-insert-columns)))
 
-(defn- execute-closed-compact-rows! [connection table columns rows checked-snapshot!]
+(defn- execute-closed-compact-rows!
+  ([connection table columns rows checked-snapshot!]
+   (execute-closed-compact-rows! connection table columns rows checked-snapshot! nil nil))
+  ([connection table columns rows checked-snapshot! codec project]
   (let [initial-snapshot (checked-snapshot!)]
     (compact-format/require-order! (:compact-plans initial-snapshot) connection table columns)
     (letfn [(checked [remaining]
@@ -1267,15 +1283,27 @@
                     (cons row (lazy-seq (checked (next remaining))))))))]
       (let [query (compact-insert-query table columns)
             prefix (str query " FORMAT JSONCompactEachRow\n")
-            sql (if (= :native-guarded-byte-batch *json-backend*)
+            sql (if codec
+                  (let [bytes ((:encode codec) prefix rows
+                               (fn [record]
+                                 (let [row (project record)]
+                                   (when-not (and (vector? row) (= (count columns) (count row)))
+                                     (throw (ex-info "Invalid direct compact telemetry row"
+                                                     {:type ::invalid-compact-row})))
+                                   row))
+                               (insert-byte-limit))]
+                    ;; Same immutable snapshot and fallback as the existing
+                    ;; driver encoder. Never replay input producers on decline.
+                    (or (owned-statement/try-snapshot bytes) (String. bytes "UTF-8")))
+                  (if (= :native-guarded-byte-batch *json-backend*)
                   (json-each-row-payload (checked rows) prefix
                                         (boolean (:owned-statement-output? initial-snapshot)))
-                  (str prefix (json-each-row-payload (checked rows))))
+                  (str prefix (json-each-row-payload (checked rows)))))
             snapshot (checked-snapshot!)]
         ;; Custom conversion/JSON callbacks may have changed private state.
         ;; Do not pair completed positional data with a different live plan.
         (compact-format/require-order! (:compact-plans snapshot) connection table columns)
-        (execute-durable-sql! connection sql)))))
+        (execute-durable-sql! connection sql))))))
 
 (defn- insert-direct-metric-batch! [connection state type columns rows]
   (execute-closed-compact-rows!
@@ -1305,14 +1333,18 @@
 (defn- insert-direct-span-batch! [connection state spans]
   ;; Internal constructed vectors only; arbitrary vectors remain rejected by
   ;; the general compact-map projection. Keep input realization/budget ordering.
-  (execute-closed-compact-rows!
-    connection "otel_traces" direct-span-columns (map #(span-row % nil true) spans)
+  (let [codec (:experimental-span-codec @state)]
+   (execute-closed-compact-rows!
+    connection "otel_traces" direct-span-columns
+    (if codec spans (map #(span-row % nil true) spans))
     (fn []
       (let [snapshot @state]
-        (when-not (direct-span-layout? snapshot)
+        (when-not (and (direct-span-layout? snapshot)
+                       (identical? codec (:experimental-span-codec snapshot)))
           (throw (ex-info "Direct compact span plan changed"
                           {:type ::invalid-direct-span-plan})))
-        snapshot))))
+        snapshot))
+    codec (when codec #(span-row % nil true (:nested codec))))))
 
 (defn- direct-typed-span-layout? [snapshot]
   (let [{:keys [map-projector vector-projector columns]} (:typed-span-vector-plan snapshot)]
@@ -1331,19 +1363,24 @@
   (let [initial @state
         plan (:typed-span-vector-plan initial)
         columns (:columns plan)
-        projector (:vector-projector plan)]
+        projector (:vector-projector plan)
+        codec (:experimental-span-codec initial)]
     (execute-closed-compact-rows!
       connection "otel_traces" columns
-      (map (fn [span]
+      (if codec spans
+       (map (fn [span]
              ;; Preserve span-row's base conversion before typed projection.
-             (into (span-row span nil true) (projector span))) spans)
+             (into (span-row span nil true) (projector span))) spans))
       (fn []
         (let [snapshot @state]
           (when-not (and (direct-typed-span-layout? snapshot)
+                         (identical? codec (:experimental-span-codec snapshot))
                          (identical? plan (:typed-span-vector-plan snapshot)))
             (throw (ex-info "Direct typed compact span plan changed"
                             {:type ::invalid-direct-typed-span-plan})))
-          snapshot)))))
+          snapshot))
+      codec (when codec
+              (fn [span] (into (span-row span nil true (:nested codec)) (projector span)))))))
 
 (def ^:private direct-log-columns
   ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText" "SeverityNumber"
@@ -1753,16 +1790,28 @@
   :datetime64-wire defaults :auto: integer nanos on 26.7.3, UTC ISO on 26.9.0.
   Explicit :raw-ticks requires 26.9.0 and Durable; each INSERT carries its
   fixed raw-tick input setting into WAL without a connection/session toggle.
-  Explicit :iso-utc selects the 26.9.0 alternative. Unknown choices fail closed."
+  Explicit :iso-utc selects the 26.9.0 alternative. Unknown choices fail closed.
+  :experimental-span-codec? defaults false. True requires the source-only
+  :experimental-span-codec alias, spans-only native-byte compact Durable export
+  and owned output. Selects an explicit built-in-value codec, NOT JSONWriter
+  extensions. Persistence and default encoding are unchanged."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
-            durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire]
+            durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
+            experimental-span-codec?]
      limit-override :max-insert-bytes
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
-          insert-format :json-each-row owned-statement-output? false}}]
+          insert-format :json-each-row owned-statement-output? false experimental-span-codec? false}}]
+   (when-not (and (boolean? experimental-span-codec?)
+                  (or (not experimental-span-codec?)
+                      (and durable? owned-statement-output? (= #{:spans} (set signals))
+                           (= :native-guarded-byte-batch json-backend)
+                           (= :json-compact-each-row insert-format))))
+     (throw (ex-info "Experimental span codec requires spans-only owned compact Durable export"
+                     {:type ::invalid-experimental-span-codec})))
    (when-not (or (nil? limit-override)
                  (and (integer? limit-override) (pos? limit-override)
                       (<= limit-override max-configured-insert-bytes)))
@@ -1782,6 +1831,9 @@
                :native-guarded-byte-batch} json-backend)
      (throw (ex-info "Unsupported exporter JSON backend"
                      {:type ::invalid-json-backend})))
+   ;; Resolve before database acquisition or DDL. Ordinary consumers never load
+   ;; the incubating namespace/resources; missing support is not a downgrade.
+   (let [experimental-span-codec (when experimental-span-codec? (load-experimental-span-codec!))]
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (not= :configured json-backend)
@@ -1950,6 +2002,7 @@
                                                      :histogram histogram-columns}
                               :durable? durable?
                               :json-backend json-backend
+                              :experimental-span-codec experimental-span-codec
                               :max-insert-bytes limit-override
                               :timestamp-wire timestamp-wire
                               :owned-statement-output? owned-statement-output?
@@ -1960,6 +2013,6 @@
        (catch Throwable t
          ;; A failed ownership cleanup must not replace the startup failure.
          (when owned? (try (.close conn) (catch Throwable _ nil)))
-         (throw t))))))
+         (throw t)))))))
 
 (defn last-error [exporter] (:last-error @(:state exporter)))
