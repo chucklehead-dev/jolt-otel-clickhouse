@@ -1,0 +1,38 @@
+Both the plan file write and ExitPlanMode are unavailable in this session, so I'll deliver the critique directly as my answer (as the task itself specified: read-only, no persisted output).
+
+## Verdict: feasible, but as two separable mechanisms, not one
+
+**Mechanism A — inner sink swap (low risk, no stock-proof needed).** Exporter's `nested-json-string` (`chdb.clj:33-38`) calls `write-str`, which (`json.clj:1166-1181`) writes through a `java.io.Writer` (`StringWriter`), then `.toString()`s it. Since `JSONWriter/-write` dispatches against the `out` *Writer*, not the eventual String, swapping the sink to a byte-collecting UTF‑8 Writer preserves inner custom-writer dispatch exactly — prefix/reentry/error behavior is untouched, because nothing in writer polymorphism depends on the sink's ultimate representation. This alone satisfies "preserve inner custom writer visibility/reentry/errors" and needs no stock-detection.
+
+**Mechanism B — outer byte splice (needs a stock proof).** JSON string-escaping (`"`, `\`, control chars) is byte/ASCII-safe on valid UTF‑8 — a byte-level escaper is a faithful substitute for the existing char-level `write-string`/`slow-write-string` (`json.clj:832-893`, which uses `.length`/`.charAt`/`.subSequence`/`.append`) *only if* (1) the sealed bytes are already known-valid UTF‑8, and (2) no custom `JSONWriter` is installed for `CharSequence`/`String`. `JSONWriter` is an open protocol (`CharSequence` extended at `json.clj:1050`); a user's `-write` expects a real `CharSequence`, and a sealed byte wrapper must not pretend to be one.
+
+The codebase already has the exact precedent needed for (2), independently, in three places — all re-deriving per call rather than caching a verdict:
+- DataJSON `jolt_native.ss:294-305`/`jolt_byte_writer.ss:246-248`: captures the stock `write-string` fn at load, re-checks every call that the protocol Var root is unchanged *and* the per-value method site still resolves (`eq?`) to that fn — "a later extension is never stock," checked because extension can happen mid-recursion.
+- jolt runtime `host/chez/protocols.ss:635-1195`: a per-call-site cache skips re-deriving tags only when an identity check *and* an explicit opt-in domain flag both hold.
+- jolt runtime `io-streams.ss:353-365` (`out-stream-stock-write`/`out-stream-sink-port`): the closest literal precedent — writes bytes directly, no copy, only when `write` is still identity-equal to the captured stock impl; otherwise falls back to a full copy+dispatch.
+
+Reusing DataJSON's own mechanism (not borrowing the runtime's, which is a different layer) is the sound path for the outer check.
+
+## Necessary guards
+1. A private, internal-only sealed-byte type, constructible only at this one call site — never public, never implementing `CharSequence` (so misrouting fails loudly rather than silently), matching `docs/owned-byte-results.md`'s existing restriction that owned-byte capabilities are hand-audited per call site, not type-enforced.
+2. Per-call (never cached) re-derivation of global-root + per-value-site identity — no stored boolean verdict.
+3. The fast path reachable only from this one internal site, never from public `write-str`/`write`.
+4. An explicit UTF‑8 validity check on the inner encoder's output (at least in tests), since `host-static-classes.ss:368-373` documents a real past bug from Java-vs-Chez decode-semantics mismatch — skipping decode removes that safety net.
+5. No new cross-row content-keyed cache beyond `jolt_byte_writer.ss`'s existing one (content-keyed, but only populated post-stock-check) — "no global/value cache" shouldn't become license for a second cache.
+
+## Concrete unsound cases
+- Caching the stock verdict once per writer/session instead of per call — unsound; `extend` can run between any two calls.
+- Treating the sealed fragment as a lazy `CharSequence` — either reintroduces the forbidden conversion cache (if memoized) or degrades to redundant per-access decode (if not); not worth it over a real fallback String.
+- Building a placeholder/empty value to probe receiver behavior, then replaying that verdict against real values — exactly the unsound pattern you flagged; the codebase's own precedent (2172061) uses real function-identity comparison, never structural probing of a stand-in.
+- Skipping UTF‑8 validity: a latent bug in the inner fast encoder (e.g. malformed surrogate pairs) would silently corrupt the outer stream instead of being caught at decode time, as happens today.
+- Assuming no projector ever reads `EventsJSON`/`LinksJSON` from the row — true today (`attribute_projection.clj` projectors read only `span`/`attributes`, never the row) but not type-enforced; a regression would hand a non-String to a callback expecting one.
+
+## Allocation accounting (rough, unmeasured)
+Baseline per fragment: StringWriter buffer + final String (UTF‑16, ~2x size for non-ASCII) + a second char-level escape pass into the outer writer + the row's final UTF‑8 encode — roughly 3–4 fragment-sized passes/allocations. Mechanism A removes the UTF‑16 round trip (~1 allocation + the UTF‑16 size tax on non-ASCII). Mechanism B (stock case only) removes the second escape pass, leaving close to one buffer, one byte-level pass. Fallback costs baseline plus a few `eq?` checks — negligible. No timing numbers were run or should be assumed; this is allocation/pass-count reasoning only.
+
+## Smallest measurable prototype path
+1. Mechanism A alone, still eagerly decoding back to String right after (net no-op on the outer side) — validates writer-polymorphism preserves existing custom-writer/golden-output behavior, independent of B.
+2. Add the sealed-byte type and skip decode at this one call site, but still eagerly decode back to String before the outer merge — validates the type/ownership boundary and isolates the UTF‑16-avoidance saving.
+3. Only then add the per-call stock proof (reusing DataJSON's existing mechanism verbatim) plus the byte-level double-escape splice, with non-stock falling back to step 2's code exactly — isolating the genuinely novel, riskiest part as its own revertible increment.
+
+No step here required inventing a guard unsupported by current source; all three precedent mechanisms cited actually exist at the file:line locations given.

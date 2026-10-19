@@ -99,7 +99,8 @@ the completed SDK review are included. Selected cumulative gains remain intact.
 - Avoiding full nested EventsJSON Unicode String materialization may remove
   substantially more copying than these small edits. Source-only Claude20727
   is live at this checkpoint, reviewing a separate owned pre-encoded-fragment
-  API idea. No implementation or soundness claim yet. Inner callbacks must
+  API idea. The review has since completed; see fragment-review-adjudication.md.
+  Its proposed recipe is not accepted as sound. No implementation yet. Inner callbacks must
   finish at the original row-construction point; outer custom String AND
   ancestor/vector writers must see logical Strings, never internal markers.
   Unknown observable classification must fall back without placeholder/replayed
