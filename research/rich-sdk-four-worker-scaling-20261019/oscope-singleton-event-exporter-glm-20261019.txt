@@ -1,0 +1,23 @@
+[opencode] session ses_eaae0d6eaffecMHPp3YRP8Z5TM
+Task is clear: repin the root exporter SHA in `deps.edn`, move the old `4a42…` pin to a causal red control in the dependency-resolution oracle test, and add a user-facing changelog entry. Making the three file edits now.
+[opencode revised its response]
+The environment's edit policy denied the `deps.edn` and `CHANGELOG.md` edits (both are on the hardcoded deny list), while the test-file edits applied. Since the three-file change cannot be completed as specified, I'm reverting my test-file edits to leave the worktree exactly as found rather than shipping a knowingly-red oracle.
+[opencode revised its response]
+**Blocker — no changes applied. Worktree left clean at base `57a8597`.**
+
+**Outcome:** The tool environment's edit policy hard-denies modifications to `deps.edn` and `CHANGELOG.md` (both match deny patterns `*deps.edn`, `*CHANGELOG.md`). My `deps.edn` repin and `CHANGELOG.md` entry were rejected before applying. The `dependency_resolution_test.clj` edits did apply, but I reverted them (file verified back to its original 352 lines) rather than leave an oracle that expects the new pin against an unrepinned root. Per scope rules I stopped instead of working around the deny via another tool.
+
+**Exact intended diffs for Main to apply:**
+
+1. `deps.edn` (line 20 only): `io.github.chucklehead-dev/jolt-otel-clickhouse` `:git/sha` `"4a42716286177fd0c033d69deb708b29dd162933"` → `"2c54b98d35464c8fc7c737b0c92a0042272b589a"`. Nothing else (SDK `7878…`, driver `3d76…`, native JSON alias `2172…`, ordinary JSON `0f51…`, profiles/embedded, runtime/native/library defaults untouched).
+
+2. `test/oscope/dependency_resolution_test.clj`:
+   - `exporter-sha` def → `"2c54b98d35464c8fc7c737b0c92a0042272b589a"` (all existing oracle deftests and the sorted-stack current-root control follow it automatically).
+   - New prior defs after `prior-fixed-budget-exporter-sha`: `prior-omission-marker-exporter-sha` `"4a42716286177fd0c033d69deb708b29dd162933"` and `prior-omission-marker-exporter-coordinate` (same `:git/url`, hardcoded SHA), matching the `prior-exporter-sha`/`prior-exporter-coordinate` style.
+   - New deftest `prior-omission-marker-exporter-is-a-causal-red-control` (placed before `ordinary-and-byte-json-roots-are-qualified-independently`): runs `dependency-report ["-Sdeps" prior-omission-marker-exporter-coordinate]`, asserts `successful-report?`, then `exact-exporter-resolution? … prior-omission-marker-exporter-sha` and `(false? (exact-exporter-resolution? … exporter-sha))` under `testing` blocks — the real prior-4a42 mutation resolves successfully and is rejected by the new oracle. All older causal controls retained verbatim.
+
+3. `CHANGELOG.md`, new top `## Unreleased` entry: "Repin the root jolt-otel-clickhouse exporter to the merged singleton-event exporter, which serves singleton events through the existing export path instead of constructing three transient builders per event. Keep the SDK, driver, ordinary JSON, optional native byte-JSON alias, runtime and the separately pinned embedded profile unchanged. This avoids per-event builder allocation; it is not a throughput claim or a new multi-worker mode."
+
+**Tests:** none executed (task forbids commands/builds/dependency resolution). Recommended focused validation, unexecuted: `jolt -M:test` scoped to `oscope.dependency-resolution-test` (or the checked-in runner's equivalent), plus `git diff --check`. It exercises the new oracle deftest, the repin, and every retained red control via real child `-Srepro -Sdeps … -Spath` resolutions.
+
+**Review risks:** Main must confirm `2c54b98…` exists remotely and descends from reviewed work; the mutation test shells out to `jolt` (`JOLT_BIN`) and needs dependency cache access, so it belongs in the serial validation lane Main owns.

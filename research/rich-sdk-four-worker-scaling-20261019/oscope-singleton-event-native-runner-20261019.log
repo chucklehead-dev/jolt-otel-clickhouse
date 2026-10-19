@@ -1,0 +1,3 @@
+consumer=embedded terminal0 output=/home/chuck/ai-src/evidence/oscope-singleton-event-native-embedded-20261019.log
+consumer=standalone terminal0 output=/home/chuck/ai-src/evidence/oscope-singleton-event-native-standalone-20261019.log
+consumer=embedded-typed terminal0 output=/home/chuck/ai-src/evidence/oscope-singleton-event-native-embedded-typed-20261019.log

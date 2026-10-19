@@ -1,0 +1,19 @@
+Since the plan-file write tool is disabled in this session, here's the review directly (read-only findings, no edits made):
+
+## Review: singleton-event exporter repin (3 changed files vs. base 57a8597)
+
+**Scope confirmed.** Exactly `deps.edn`, `test/oscope/dependency_resolution_test.clj`, `CHANGELOG.md` differ from base `57a8597`. The sibling worktree (`oscope-default-omission-exporter-20261019`, 70e8ca3) matches the pre-change state for all three — the "same tree" claim holds for the base, not for A's applied diff.
+
+**deps.edn.** Single coordinate change (lines 18-20): `io.github.chucklehead-dev/jolt-otel-clickhouse` `:git/sha` moves `4a42716286177fd0c033d69deb708b29dd162933` → `2c54b98d35464c8fc7c737b0c92a0042272b589a`. Nothing else in `:deps` or `:aliases` changed. Confirmed unchanged: SDK `7878a2eb...`, driver (jolt-chdb) `3d766fa2...`, ordinary JSON `0f51b991...`, native-json-byte-batch `217206106...`. The exporter coordinate lives only in top-level `:deps`; the default `:test` alias doesn't re-declare it, so it correctly inherits the new pin. The four `:local/root` dev-override aliases bypass the coordinate entirely either way.
+
+**Test coverage.** New test `prior-singleton-exporter-is-a-causal-red-control` (lines 310-314) is additive and follows the file's established "causal red control" pattern exactly (mirrors `prior-exporter-coordinate-is-a-causal-red-control`, lines 300-308): overrides resolution via `-Sdeps` with the old pin, asserts success, asserts `exact-exporter-resolution?` true for the old SHA and false for the new one. This matches the stated requirement — the real prior-root coordinate resolves to itself and is rejected against the current pin.
+
+There is no function literally named "oracle" — that word only appears in comments (lines 271, 306, 348). The actual validator is `exact-exporter-resolution?` (lines 99-108), checking that the resolved classpath contains exactly one `jolt-otel-clickhouse` root (in either `io.github...` or URL-mangled cache-path form) ending in `/<sha>/`. It validates resolved source-root paths, not declared coordinates — the right thing to catch stale resolution.
+
+All pre-existing `deftest` bodies are byte-for-byte unchanged except the `exporter-sha` var value (mechanically required by the repin). Nothing was removed or weakened; older controls are retained.
+
+**Minor, pre-existing inconsistency (not introduced here):** roughly half the "causal red control" tests, including this new one, omit the `(when (map? result) ...)` guard that some siblings use before touching `:out`. Harmless in practice — a non-map `result` degrades to an empty string rather than throwing — but it's style drift already present in the file, not a defect from this change.
+
+**CHANGELOG.md.** New entry (lines 5-7) is appropriately scoped: states the exporter repin reduces allocation for single-event spans, that SDK/driver/JSON backends/embedded profile keep their pins, and explicitly disclaims any throughput or new-export-mode claim — matches the constraint against throughput/multi-worker claims.
+
+**Limits of this review.** No commands were executed and no tests were run. This is a static read of the source plus a literal comparison against the base/sibling worktree — it confirms the diff is internally consistent and additive, not that `clj -X:test` (or whatever runner) actually passes. I found nothing in the 3 changed files that contradicts the stated intent or drops existing coverage.

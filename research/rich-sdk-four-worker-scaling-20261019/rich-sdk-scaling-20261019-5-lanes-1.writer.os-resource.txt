@@ -1,0 +1,23 @@
+	Command being timed: "timeout --signal=TERM --kill-after=5s 240s /home/chuck/ai-src/evidence/jolt-hosted-stock-fold-7098-20261018.sh -Srepro -Sdeps {:paths ["src" "resources" "test" "bench" "/home/chuck/ai-src/worktrees/chdb-current-typed-storage-0821-20261014/bench" "/home/chuck/ai-src/worktrees/chdb-current-typed-storage-0821-20261014/test"]} -A:native-json-byte-batch /home/chuck/ai-src/evidence/rich-sdk-scaling-writer-20261019.clj /tmp/rich-sdk-scaling-20261019.Z3bZ0Tsk 1 saturated"
+	User time (seconds): 30.25
+	System time (seconds): 2.45
+	Percent of CPU this job got: 108%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:30.20
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 931932
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 4
+	Minor (reclaiming a frame) page faults: 676450
+	Voluntary context switches: 13023
+	Involuntary context switches: 439
+	Swaps: 0
+	File system inputs: 232
+	File system outputs: 1482864
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
