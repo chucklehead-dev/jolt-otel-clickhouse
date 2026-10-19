@@ -1,0 +1,7 @@
+traversal.ss: OK
+json.ss: OK
+probe.clj: OK
+oracle.clj: OK
+check-oracle.bb: OK
+benchmark.clj: OK
+run.sh: OK

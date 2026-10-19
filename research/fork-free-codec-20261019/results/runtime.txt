@@ -1,0 +1,10 @@
+jolt v0.8.23
+{:version "v0.8.23"
+ :project-dir "."
+ :config-files []
+ :config-user nil
+ :config-project "./deps.edn"
+ :gitlibs-dir "/home/chuck/.jolt/gitlibs"
+ :mvn-local-repo "/home/chuck/.m2/repository"
+ :repro true
+ :aliases []}
