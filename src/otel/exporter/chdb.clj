@@ -113,6 +113,22 @@
 (def ^:private sdk-sorted-scalar-map-converter
   (delay (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)))
 
+(def ^:private sdk-scalar-map-payload-factory
+  ;; Optional defining-SDK capability. Keep the Var live, not a function sampled
+  ;; from a consumer startup context. Old SDKs retain the existing conversion.
+  (delay (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter)))
+
+(def ^:dynamic ^:private *sdk-scalar-map-payload-converter* nil)
+
+(defn- try-sdk-payload-scalar-attrs [m]
+  (when (and *sdk-scalar-map-payload-converter*
+             (identical? key-string original-attribute-key-string)
+             (identical? value-string original-attribute-value-string))
+    (let [result (*sdk-scalar-map-payload-converter* m)]
+      (when (and (identical? key-string original-attribute-key-string)
+                 (identical? value-string original-attribute-value-string))
+        result))))
+
 (defn- try-sdk-scalar-attrs [m converter]
   (when (and (identical? key-string original-attribute-key-string)
              (identical? value-string original-attribute-value-string))
@@ -126,7 +142,8 @@
           result)))))
 
 (defn- sdk-scalar-attrs [m]
-  (or (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
+  (or (try-sdk-payload-scalar-attrs m)
+      (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
       (try-sdk-scalar-attrs m sdk-scalar-map-converter)))
 
 (defn- attrs [m]
@@ -550,6 +567,10 @@
       (if (nil? prefix) payload (str prefix payload)))
     ;; A context belongs to this payload, not the exporter: independent SDK
     ;; signals may serialize concurrently. Preserve incremental row effects.
+    (binding [*sdk-scalar-map-payload-converter*
+              (when (= :native-guarded-byte-batch *json-backend*)
+                (when-let [factory-var @sdk-scalar-map-payload-factory]
+                  (@factory-var)))]
     (let [encoder (row-encoder/open-encoder
                    {:parallelism 1 :json-backend *json-backend*})]
       (try
@@ -562,7 +583,7 @@
           (if (= :jdbc.chdb.json-each-row/output-limit (:type (ex-data e)))
             (throw (insert-limit-exception (insert-byte-limit)))
             (throw e)))
-        (finally (row-encoder/close! encoder)))))))
+        (finally (row-encoder/close! encoder))))))))
 
 (defn- compact-columns! [columns]
   (when-not (and (vector? columns) (seq columns)
