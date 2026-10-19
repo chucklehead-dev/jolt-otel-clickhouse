@@ -1,0 +1,50 @@
+;; Policy anchors are supplied by their SDK owner, never captured in a consumer.
+;; Admission and conversion contain no user callbacks. Unsupported structures
+;; decline before allocating output or invoking any converter.
+;; SDK string-bytes charges exactly 4 * host character count, not actual UTF8
+;; bytes. Jolt count and Chez string-length both count the same codepoints.
+;; The loader separately fences the host's entire fixnum range within Int64.
+(lambda (bindings maximum)
+  ;; Bindings are immutable defining-SDK data. Decode their storage once;
+  ;; dereference every live policy Var before AND after each admission scan.
+  (let* ((binding-count (pvec-cnt bindings))
+         (cells (make-vector binding-count)) (anchors (make-vector binding-count)))
+  (define (same-policy?)
+    (let loop ((i 0))
+      (or (= i binding-count)
+          (and (eq? (var-cell-deref (vector-ref cells i)) (vector-ref anchors i))
+               (loop (+ i 1))))))
+  (define (admitted? node)
+    (and (hnode? node)
+      (let ((arr (hnode-arr node)))
+        (let loop ((i 0))
+          (or (= i (vector-length arr))
+              (let ((child (vector-ref arr i)))
+                (and (if (hnode? child) (admitted? child)
+                         (and (pair? child) (string? (car child))
+                              (let ((v (cdr child)))
+                                (or (boolean? v) (fixnum? v)
+                                    (and (string? v) (<= (string-length v) maximum))))))
+                     (loop (+ i 1)))))))))
+  (define (text v)
+    (cond ((string? v) v) ((eq? v #t) "true") ((eq? v #f) "false")
+          (else (jolt-fixnum->string v))))
+  (define (copy-node node)
+    (let* ((arr (hnode-arr node)) (n (vector-length arr)) (out (make-vector n)))
+      (let loop ((i 0))
+        (unless (= i n)
+          (let ((child (vector-ref arr i)))
+            (vector-set! out i
+              (if (hnode? child) (copy-node child)
+                  (let ((value (text (cdr child))))
+                    (if (eq? value (cdr child)) child (cons (car child) value))))))
+          (loop (+ i 1))))
+      (make-hnode (hnode-bm node) out)))
+  (do ((i 0 (+ i 1))) ((= i binding-count))
+    (let ((entry (pvec-nth! bindings i)))
+      (vector-set! cells i (pvec-nth! entry 0))
+      (vector-set! anchors i (pvec-nth! entry 1))))
+  (lambda (m)
+    (and (pmap? m) (> (pmap-cnt m) 8) (<= (pmap-cnt m) 128)
+         (same-policy?) (admitted? (pmap-root m)) (same-policy?)
+         (make-pmap (copy-node (pmap-root m)) (pmap-cnt m))))))

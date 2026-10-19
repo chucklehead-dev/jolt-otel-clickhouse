@@ -1,0 +1,31 @@
+Note: the Write tool is disabled in this session, so I can't create the plan file. Since this task is a pure read-only review (no code change to propose or approve), I'm delivering the findings directly below.
+
+## Review: scalar-policy-anchor-decode refactor
+
+**Scope:** compared `resources/otel/scalar_string_map.ss` and `resources/otel/sorted_scalar_string_map.ss` against the pre-change versions in `otel-sdk-sorted-scalar-map-20261018`, read the new `test/otel/scalar_policy_anchor_decode_test.clj`, and read the relevant parts of `src/otel/any_value.clj` / `any_value_native.clj`.
+
+### No semantic defects found (source inspection)
+
+In both `.ss` files, the refactor pulls the per-binding extraction out of `same-policy?`'s loop body:
+
+```
+(let ((entry (pvec-nth! bindings i)))
+  (vector-set! cells i (pvec-nth! entry 0))
+  (vector-set! anchors i (pvec-nth! entry 1)))
+```
+
+into a one-time `do` loop that runs once when the outer factory lambda is invoked (`scalar_string_map.ss:43-46`, `sorted_scalar_string_map.ss:44-47`). `same-policy?` still calls `(var-cell-deref (vector-ref cells i))` fresh on every invocation (`scalar_string_map.ss:15`, `sorted_scalar_string_map.ss:17`), and is still invoked twice per conversion — before and after `admitted?`/`admitted-tree?` (`scalar_string_map.ss:49`, `sorted_scalar_string_map.ss:67`) — exactly matching pre-change behavior. Only the *structural decode* of which pvec slot holds the Var vs. the expected anchor is cached; the live dereference of the Var's current value is not. This matches the stated intent.
+
+Supporting checks:
+- `cells`/`anchors` are fresh `make-vector` locals per factory call, written only in the one-time `do` loop, never mutated afterward — they stay a frozen snapshot for the life of the returned converter closure ("roots live after construction" holds).
+- `copy-node`/`copy-tree!`, the admission predicates, and every `(lambda (m) ...)` body are byte-for-byte unchanged from the pre-change files. Every call still builds a fresh `pmap`/`jolt-persistent!` result — no output caching was introduced.
+- In the sorted file, the one-time decode loop runs after the prototype-shape guard (lines 10-12) but before the sorted-node-geometry guard (lines 48-61). If the geometry check fails, the decode work is wasted but has no observable side effect — not a behavioral defect.
+- `any_value.clj` / `any_value_native.clj` are unmodified (confirmed by reading both and by git status) — consistent with "no conversion/cache/API/policy changes intended."
+
+### Coverage gap (test, not executed)
+
+The new test is well-targeted: the substring `(pvec-nth! bindings i)` occurs exactly once in each `.ss` file (confirmed by inspection), landing precisely on the new one-time `do` loop, so the instrumentation can't accidentally also land inside `same-policy?`. It asserts the decode counter stays at 1 across two conversions, a `with-redefs` policy-break check, and a post-restore conversion — directly exercising the regression this refactor could introduce (a stale cached Var reference instead of a live one).
+
+Gap: the test only supplies a single-entry `anchors` list (`[[#'policy-root policy-root]]`, test line 20), never the real 6-entry binding lists `any_value.clj` actually passes (`any_value.clj:275-280`, `313-318`). The per-index loop body is identical regardless of count, so risk is low, but the test does not positively rule out index cross-talk (e.g. `cells[i]`/`anchors[i]` written to the wrong slot) when more than one binding is present.
+
+I have **not executed** this test or any other command — this is a static read of the source only. Qualification/execution is main's to own, per your instructions.

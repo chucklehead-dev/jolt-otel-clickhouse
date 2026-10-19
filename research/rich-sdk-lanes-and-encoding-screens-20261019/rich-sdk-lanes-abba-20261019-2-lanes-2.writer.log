@@ -1,0 +1,5 @@
+:rich-sdk-lanes :lanes 2 :selected-stack true
+:benchmark-setup :schema :enter
+:benchmark-setup :schema :return
+:benchmark-setup :installer :enter
+:benchmark-setup :installer :return

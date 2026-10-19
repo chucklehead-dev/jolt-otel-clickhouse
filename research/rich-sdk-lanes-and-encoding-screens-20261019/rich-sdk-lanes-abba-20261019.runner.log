@@ -1,0 +1,13 @@
+index=0 arm=lanes-1 owned_store=/tmp/rich-sdk-lanes-abba-20261019.Uh143wo0
+index=0 arm=lanes-1 writer_reader_validator_terminal0 owned_store=/tmp/rich-sdk-lanes-abba-20261019.Uh143wo0
+index=0 retired_validated_synthetic_store=/tmp/rich-sdk-lanes-abba-20261019.Uh143wo0
+index=1 arm=lanes-2 owned_store=/tmp/rich-sdk-lanes-abba-20261019.KhPhzzy4
+index=1 arm=lanes-2 writer_reader_validator_terminal0 owned_store=/tmp/rich-sdk-lanes-abba-20261019.KhPhzzy4
+index=1 retired_validated_synthetic_store=/tmp/rich-sdk-lanes-abba-20261019.KhPhzzy4
+index=2 arm=lanes-2 owned_store=/tmp/rich-sdk-lanes-abba-20261019.d6THYUwD
+index=2 arm=lanes-2 writer_reader_validator_terminal0 owned_store=/tmp/rich-sdk-lanes-abba-20261019.d6THYUwD
+index=2 retired_validated_synthetic_store=/tmp/rich-sdk-lanes-abba-20261019.d6THYUwD
+index=3 arm=lanes-1 owned_store=/tmp/rich-sdk-lanes-abba-20261019.yFmgGc5r
+index=3 arm=lanes-1 writer_reader_validator_terminal0 owned_store=/tmp/rich-sdk-lanes-abba-20261019.yFmgGc5r
+index=3 retired_validated_synthetic_store=/tmp/rich-sdk-lanes-abba-20261019.yFmgGc5r
+all_four_arms_terminal0_and_owned_stores_retired
