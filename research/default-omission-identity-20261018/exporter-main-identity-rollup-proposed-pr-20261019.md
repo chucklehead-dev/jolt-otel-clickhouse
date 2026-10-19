@@ -30,6 +30,15 @@ the optional native JSON backend. Ordinary JSON remains unchanged.
   bounded local comparison, not S3 or sustained tail qualification and not an
   attribution of the entire cumulative rollup to a single change.
 
-The cumulative source review and hosted workflow results must be checked before
-merge. No runtime artifact, backend default, ordinary JSON pin or driver changes
-are included.
+- Hosted workflow [39272493202](https://github.com/chucklehead-dev/jolt-otel-clickhouse/actions/runs/39272493202)
+  passes all three jobs: aggregate tests, native JSON backends and scoped-S3 SDK.
+- Cumulative twelve-file Claude source review completed; Codex inspected its
+  two suggestions. The pinned SDK helpers explicitly decline unsupported
+  inputs; swallowing arbitrary replacement-helper exceptions would mask
+  errors rather than establish compatibility. The scalar/sorted CI alias
+  difference does not change their SDK capability checks: neither is a JSON
+  encoding gate, which is covered separately by sorted-event integration.
+
+No runtime artifact, backend default, ordinary JSON pin or driver changes are
+included. The exact PR head and participant/check state will be refreshed before
+merge.

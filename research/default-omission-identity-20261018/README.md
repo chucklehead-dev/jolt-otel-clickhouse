@@ -85,3 +85,39 @@ for the preceding stack. After reviewed/green exporter integration, advance
 Oscope's root pins and separately qualify its minimal embedded profile (#167).
 No upstream PR is authorized without user review. No new exhaustive model run
 is needed for these unchanged Durable protocol transitions.
+
+## Integration advanced, 2026-10-19 15:01 UTC
+
+The preceding running-review/CI checkpoint has settled:
+
+- Cumulative Claude retry session 19572 completed, exit 0. Its nonempty report
+  and Codex's source-grounded adjudication are now included. Neither suggestion
+  established a blocking defect; no blanket exception-swallowing fallback was
+  added for arbitrary replacement-helper errors.
+- Explicit workflow 39272493202 passed all three jobs. Exporter PR #139's
+  separate PR workflows 39273352679 and 39273352266 passed all four checks.
+- Exporter #139 MERGED at `d6b6b594c06ecba9fd9a62395e74be9e9730636f` after
+  refreshing exact base/head, every check and empty participant state.
+  GitHub's merge tree `0f93a196fde018d02268a965ef4e1a0983fbd975` equals
+  the tested head's tree and retains tested `4a42716` as a parent.
+- Oscope #169 is open at `70e8ca37414938339692ca8e0d814e779508976f` on
+  `deps/default-omission-exporter-20261019`, based on current main `11feb1f5`.
+  Three files change: dependency pins, exact-source oracles/immediate-prior
+  controls and changelog. Its Claude review completed with no defects.
+- Oscope root qualification passed 112 tests / 1,586 assertions. Three serial
+  real native fixtures completed exit 0. Embedded and standalone observed
+  stream calls/JSON companion use and settled independent fresh readers. The
+  typed-manifest fixture observes stream/companion use and live typed results
+  in-process; it does NOT independently recover in another process.
+- Oscope PR CI has six live checks at this checkpoint. Refresh their actual
+  outcomes and participants before guarded merge; do not infer success here.
+- Root issue exporter #138 was updated at comment 6270181068, with measured
+  performance, exact qualification scope and the pushed evidence checkpoint.
+
+No local benchmark or Claude process remains live from this slice. Native
+fixtures own their ordinary cleanup; no raw store or build bulk was added to
+this checkpoint. Remaining priority after Oscope integration is exclusive
+allocation attribution and the next cumulative encoding/row-shaping improvement,
+not a reset of the existing performance baseline. S3 performance, the 25k/20k
+objective, latest-runtime helper qualification and minimal embedded profile
+#167 remain incomplete.

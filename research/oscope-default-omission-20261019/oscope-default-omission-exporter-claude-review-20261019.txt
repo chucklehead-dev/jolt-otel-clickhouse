@@ -1,0 +1,16 @@
+No plan file or ExitPlanMode tool is available in this session, so I'll give the review directly as my answer.
+
+## Review: oscope-default-omission-exporter-20261019
+
+**Diff contents.** `deps.edn`: exporter root `4d48871…`→`4a42716…` (root `:deps`); `:native-json-byte-batch` alias's `data.json` extra-dep `96f3e47…`→`2172061…`. Grep confirms no stray old SHAs remain. Every other pin (SDK/otel, driver/jolt-chdb, viewer, ordinary `data.json` root, all other aliases) is untouched — matches the changelog's "unchanged" claims; the embedded profile isn't referenced in this diff at all, consistent with "not updated here."
+
+**CHANGELOG.** One new bullet matching the two SHA bumps. Its behavioral claim (avoiding a structural comparison against a default JSON omission marker) describes code in the external exporter/`data.json` repos, not verifiable from this diff — reasonable to state, but these three files can't substantiate it.
+
+**Test file.** `exporter-sha` constant and both byte-JSON root literals updated to the new values; cross-checked byte-for-byte against `deps.edn` — identical.
+
+- `ordinary-and-byte-json-roots-are-qualified-independently` / `previous-byte-json-checkpoint-is-a-coordinate-red-control`: literals updated correctly, still exercise real `-A:native-json-byte-batch` vs. plain-root resolution.
+- `prior-sorted-stack-coordinates-are-causal-red-controls`: the exporter row's `old-sha` is now the immediately-prior reviewed root (`4d48871…`, last cycle's current value); the `data.json` row's rejected-prior is `96f3e47…`, accepted-current `2172061…`. Correctly rotates last cycle's "current" into this cycle's "rejected prior" control.
+- The `data.json` row uses `{:aliases {:native-json-byte-batch {:override-deps {...}}}}` plus `-A:native-json-byte-batch`, not a bare `extra-deps` injection — `override-deps` is required because the alias's own `extra-deps` would otherwise coexist with a same-level override attempt. This matches the stated mechanism. The exporter row correctly uses a plain `:deps` override instead, since that pin lives in root `:deps`, not an alias.
+- Exact-match oracles (`exact-coordinate?`, `exact-exporter-resolution?`) already reject every SHA but the current pin, so widening the red-control set to more historical SHAs would be redundant — correctly not done.
+
+**Findings.** No correctness defects. Scope claims (exporter root + optional native-JSON-byte pin changed; SDK/driver/ordinary-JSON/runtime/embedded-profile untouched) are accurate and internally consistent across `deps.edn`, the test literals, and the changelog text. The only unverifiable item is the changelog's description of the exporter's internal encoding behavior, which lives outside this diff's three files — noted, not a defect.

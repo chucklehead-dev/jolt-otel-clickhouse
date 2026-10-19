@@ -1,0 +1,85 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index a13b3a5..6531792 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,12 @@
+ 
+ ## Unreleased
+ 
++- Update the root exporter and optional native JSON pins to avoid structural
++  comparisons against the default JSON omission marker when encoding nested
++  sorted attributes. Custom value functions retain their equality behavior.
++  Keep the SDK, driver, ordinary JSON, runtime and storage defaults unchanged;
++  the separately pinned minimal embedded profile is not updated here.
++
+ - Update the root application's SDK, exporter and optional native byte-JSON
+   pins together for lower-allocation sorted telemetry attributes and encoding.
+   Keep ordinary JSON, storage/configuration defaults and runtime artifact pins
+diff --git a/deps.edn b/deps.edn
+index 10cd0d2..baa2b63 100644
+--- a/deps.edn
++++ b/deps.edn
+@@ -17,7 +17,7 @@
+          :git/sha "cb06349c7ffe55e423021e402d4f182f4a27bcf7"}
+         io.github.chucklehead-dev/jolt-otel-clickhouse
+         {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+-         :git/sha "4d48871cf2ac7a2ad0bf6517042c624df376a9bf"}
++         :git/sha "4a42716286177fd0c033d69deb708b29dd162933"}
+         io.github.chucklehead-dev/jolt-otel-viewer
+         {:git/url "https://github.com/chucklehead-dev/jolt-otel-viewer.git"
+          :git/sha "5723a7c28c3bb3ae7cb27f9856b90463e77df523"}
+@@ -30,7 +30,7 @@
+  {:native-json-byte-batch
+   {:extra-deps {org.clojure/data.json
+                 {:git/url "https://github.com/casselc/data.json.git"
+-                 :git/sha "96f3e47dba5970728866dacb5ac41a25135a2df5"}}}
++                 :git/sha "2172061060a102ccab779f5adc5d77f8b83a81f6"}}}
+ 
+   :test-export-options
+   {:extra-paths ["test"] :main-opts ["-m" "oscope.export-options-test"]}
+diff --git a/test/oscope/dependency_resolution_test.clj b/test/oscope/dependency_resolution_test.clj
+index bb35ad0..65940cc 100644
+--- a/test/oscope/dependency_resolution_test.clj
++++ b/test/oscope/dependency_resolution_test.clj
+@@ -6,7 +6,7 @@
+             [oscope.child-support :as child]))
+ 
+ (def ^:private exporter-sha
+-  "4d48871cf2ac7a2ad0bf6517042c624df376a9bf")
++  "4a42716286177fd0c033d69deb708b29dd162933")
+ 
+ (def ^:private prior-fixed-budget-exporter-sha
+   "695fa01711cc97e16c6d62dde9c8ad9cab1e1fdd")
+@@ -172,7 +172,7 @@
+                                "\"https://github.com/casselc/data.json.git\" :git/sha \""
+                                prior-sha "\"}}}")])
+         ordinary-root (root "0f51b99101bc5e840f957c073f87b6f877309a25")
+-        byte-root (root "96f3e47dba5970728866dacb5ac41a25135a2df5")]
++        byte-root (root "2172061060a102ccab779f5adc5d77f8b83a81f6")]
+     (doseq [report [ordinary byte prior]] (is (successful-report? report)))
+     (doseq [report [ordinary byte]]
+       (is (exact-exporter-resolution? (:out report) exporter-sha)))
+@@ -193,7 +193,7 @@
+     (is (exact-coordinate? (:out result) "data.json"
+                            (str "https___github.com_casselc_data.json.git/" sha "/")))
+     (is (false? (exact-coordinate? (:out result) "data.json"
+-                                  "https___github.com_casselc_data.json.git/96f3e47dba5970728866dacb5ac41a25135a2df5/")))))
++                                  "https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/")))))
+ 
+ (deftest prior-sorted-stack-coordinates-are-causal-red-controls
+   ;; These are real dependency selections, not assertions about backend ABI
+@@ -203,11 +203,11 @@
+             "37c684a2c370fc82fde82331635973bce87a52b3" "casselc_otel.git" otel-root]
+            ["io.github.chucklehead-dev/jolt-otel-clickhouse"
+             "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+-            "67e28b59bfd215da982682dd9c59d51d52d460ed"
++            "4d48871cf2ac7a2ad0bf6517042c624df376a9bf"
+             "jolt-otel-clickhouse" (str "https___github.com_chucklehead-dev_jolt-otel-clickhouse.git/" exporter-sha "/")]
+            ["org.clojure/data.json" "https://github.com/casselc/data.json.git"
+-            "8d557cc18eb9526ed29ae5613089c3793d5973fa" "data.json"
+-            "https___github.com_casselc_data.json.git/96f3e47dba5970728866dacb5ac41a25135a2df5/"]]]
++            "96f3e47dba5970728866dacb5ac41a25135a2df5" "data.json"
++            "https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/"]]]
+     (let [selection (str "{" library " {:git/url \"" url "\" :git/sha \"" old-sha "\"}}")
+           byte? (= library "org.clojure/data.json")
+           ;; The JSON mutation must exercise the active byte alias, with an
