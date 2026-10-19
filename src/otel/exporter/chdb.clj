@@ -199,9 +199,24 @@
    ;; Empty immutable vectors have no row callbacks or seq realization to run.
    ;; Keep generic/lazy inputs on the original traversal and EventsJSON encoding
    ;; in span-row untouched, including live JSONWriter extensions.
-   (if (and (vector? events) (empty? events))
+   (cond
+     (and (vector? events) (empty? events))
      (if compact? [[] [] []]
        {"Events.Timestamp" [] "Events.Name" [] "Events.Attributes" []})
+
+     ;; A builtin one-element vector has the same event in all three passes.
+     ;; Keep timestamp, name and attribute conversion in their original order,
+     ;; with fresh output vectors but no transient mapv builders/closures.
+     ;; Lazy/sequential inputs and larger vectors retain the original passes.
+     (and (vector? events) (= 1 (count events)))
+     (let [event (nth events 0)
+           times [(timestamp (:timestamp-unix-nano event))]
+           names [(or (:name event) "")]
+           attributes [(attrs (:attributes event))]]
+       (if compact? [times names attributes]
+         {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes}))
+
+     :else
      (let [times (mapv #(timestamp (:timestamp-unix-nano %)) events)
          names (mapv #(or (:name %) "") events)
          attributes (mapv #(attrs (:attributes %)) events)]

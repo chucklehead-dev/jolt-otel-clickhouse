@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Build singleton-vector span event columns directly instead of running three
+  generic `mapv` passes. Preserve timestamp/name/attribute conversion order,
+  fresh output vectors, named/compact layouts and lazy-input behavior. Event
+  JSON, captured attributes and persistence acknowledgements are unchanged.
+
 - Update the optional native JSON backend to compare its known default omission
   marker by identity. This avoids rebuilding nested sorted attributes merely to
   reject a function marker. Custom value functions retain their equality and
