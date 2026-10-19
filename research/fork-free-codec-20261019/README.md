@@ -110,10 +110,11 @@ and independently verified red/green receipts preserved alongside it.
 
 ## Next bounded slice
 
-The actual rich fixture and selected-encoder comparisons below now pass. Next,
-qualify a loadable Clojure API and the full consumer on stock Jolt, then run the
-real exporter/Durable experiment, preserving typed descriptor/value/status
-semantics and nested EventsJSON/LinksJSON. Reuse
+The rich comparisons and the actual exporter/Durable experiment below now pass.
+A loadable dependency-free module is available on the companion feature branch.
+Next qualify the full consumer on stock Jolt and address remaining projection,
+WAL/native and copy costs, preserving typed descriptor/value/status semantics.
+Reuse
 existing `jolt-bytes` ownership/window/cursor work where applicable rather than
 creating a second general-purpose buffer framework. AOT/standalone packaging
 remains a separate required gate; source-evaluated Scheme is not proof of it.
@@ -178,3 +179,72 @@ At 16 samples/arm, p95/p99 are again maxima, not production tail qualification.
 These component results do not establish the Durable throughput goal. The
 larger remaining allocation target is projection/attribute conversion, where
 intermediate stringified maps and row vectors still exist.
+
+## Actual SDK/exporter/Durable experiment
+
+The companion branch now has a loadable module under `incubator/codec`, an
+explicit `:experimental-span-codec?` exporter option, and configuration docs.
+The option is off by default and requires spans-only native-byte compact
+Durable export with owned output. It does not change admission/confirmation,
+SQL snapshot ownership, native execution, WAL, lease/CAS or recovery code.
+This is an independent supported-value codec, not a transparent JSONWriter
+replacement. It fails unsupported values rather than dropping attributes.
+
+The four-arm run used actual SDK batches, one worker/exporter, a 20,000-item
+queue and 5,000-row rich typed batches. Each process wrote 160,000 measured
+rows plus 15,000 warmup rows, then a separate older-stack reader compared all
+175,000 physical rows, nested fields and typed statuses. Every process passed.
+Each temporary store (~712 MiB) was removed only after reader/validator success
+and copied/cmp-checked receipts. No database/storage objects are retained here.
+
+| Arm, in execution order | Confirmed window rows/s | Estimated bytes/row |
+| --- | ---: | ---: |
+| Off | 9,690 | 24,398 |
+| On | 11,826 | 20,658 |
+| On | 12,683 | 20,655 |
+| Off | 11,480 | 24,394 |
+
+Pooled window rate is 10.51k vs 12.24k rows/s, but control drift is 18.5%, larger
+than the pooled 16.5% difference. **Do not call this a qualified throughput
+speedup.** The estimated allocation reduction is about 15.3%, stable across
+both pairs. Raw callback latencies and raw counter samples are preserved.
+
+| Pooled confirmed callback latency | p50 | p90 | p95 | p99 |
+| --- | ---: | ---: | ---: | ---: |
+| Off | 434.54 ms | 581.32 ms | 651.41 ms | 761.74 ms |
+| On | 384.77 ms | 470.73 ms | 502.02 ms | 539.03 ms |
+
+There are only 64 callbacks/arm, across two processes. These are service
+latencies, not individual-span end-to-end latency, qualified production tails,
+or proof that the 25k/20k throughput targets are met. The corresponding service
+rates at p50/p99 latency are about 13.0k/9.3k rows/s in the on arm. Neither
+those nor the window rates meet the target. No S3/fault-injection claim follows.
+
+The exact benchmark source matches exporter commit
+`26067f50914a3fd248da7bc5820bc14153154b19`; `durable-abba/source/` preserves it.
+Review then corrected only startup diagnostics and separated test classpaths
+in `7cc1a7beda189787ec467d794d2b6bd3c34fb539`. One final on-arm semantic check
+at that clean commit also independently recovered 175,000 rows. It is retained
+under `durable-final-check/` but deliberately excluded from the performance
+comparison. **875,000 physical rows were independently checked in total.**
+
+Hosted [stock-library CI](https://github.com/chucklehead-dev/jolt-otel-clickhouse/actions/runs/39316367714)
+passes at `f8760012108cfed993809a1e29f5caba27ad5e1f`: official archive and binary
+checksums verified, 4 tests/37 assertions actually executed. The qualified
+exporter focused suite passes 18 tests/98 assertions locally. These are not
+full-project CI or full-stock-consumer qualification. The SDK/projection/driver
+stack still has remaining fork-dependent pieces to investigate.
+
+Reproduction is intentionally source-pinned and fail-closed:
+
+```sh
+CODEC_EXPECTED_HEAD=f8760012108cfed993809a1e29f5caba27ad5e1f \
+CODEC_OUTPUT=/tmp/choose-a-new-evidence-directory \
+bash research/fork-free-codec-20261019/run-durable.sh
+```
+
+Use the actual clean exporter commit being tested, a nonexistent evidence
+directory, and one heavy run at a time. `CODEC_ARMS=on` is the single semantic
+check; the default is off/on/on/off. The original measured script is archived
+at `durable-abba/source/run-measured.sh`. See `integration-review-response.md`
+for review disposition and the full remaining gates.

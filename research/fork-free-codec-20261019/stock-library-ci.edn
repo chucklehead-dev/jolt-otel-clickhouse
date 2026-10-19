@@ -1,0 +1,15 @@
+{:repository "chucklehead-dev/jolt-otel-clickhouse"
+ :head "f8760012108cfed993809a1e29f5caba27ad5e1f"
+ :workflow "experimental-codec-stock"
+ :run-id 39316367714
+ :job-id 118278788130
+ :job "stock-library"
+ :status :completed :conclusion :success
+ :url "https://github.com/chucklehead-dev/jolt-otel-clickhouse/actions/runs/39316367714"
+ :official-jolt "0.8.23"
+ :archive-sha256 "90031be43241e61d0788a2f1bbd3da56d8f4324ae9fa87271f9637b43a6071f2"
+ :binary-sha256 "7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94"
+ :tests 4 :assertions 37 :failures 0 :errors 0
+ :checksums-and-test-output-verified-from-job-log true
+ :scope :independent-codec-library-only
+ :full-exporter-ci-qualified false}

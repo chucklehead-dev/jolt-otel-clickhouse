@@ -1,0 +1,13 @@
+index=0 arm=off owned_store=/tmp/explicit-codec-durable-20261019.iVAY0lfc
+index=0 writer_reader_validator_terminal0 owned_store=/tmp/explicit-codec-durable-20261019.iVAY0lfc
+index=0 retired_validated_synthetic_store=/tmp/explicit-codec-durable-20261019.iVAY0lfc
+index=1 arm=on owned_store=/tmp/explicit-codec-durable-20261019.DeXfrGta
+index=1 writer_reader_validator_terminal0 owned_store=/tmp/explicit-codec-durable-20261019.DeXfrGta
+index=1 retired_validated_synthetic_store=/tmp/explicit-codec-durable-20261019.DeXfrGta
+index=2 arm=on owned_store=/tmp/explicit-codec-durable-20261019.nxpcVe9P
+index=2 writer_reader_validator_terminal0 owned_store=/tmp/explicit-codec-durable-20261019.nxpcVe9P
+index=2 retired_validated_synthetic_store=/tmp/explicit-codec-durable-20261019.nxpcVe9P
+index=3 arm=off owned_store=/tmp/explicit-codec-durable-20261019.6AT4tO8Z
+index=3 writer_reader_validator_terminal0 owned_store=/tmp/explicit-codec-durable-20261019.6AT4tO8Z
+index=3 retired_validated_synthetic_store=/tmp/explicit-codec-durable-20261019.6AT4tO8Z
+terminal0: four writer/independent-reader/validator arms, all stores retired

@@ -1,0 +1,23 @@
+Write access isn't available in this session, so I can't create the plan file the harness normally expects — I'll deliver the review directly as text instead, since this task has nothing to implement anyway.
+
+## Prior finding 1 — misleading/leaky unavailable-runtime message
+
+**Addressed.** `src/otel/exporter/chdb.clj` now raises `"Experimental span codec requires its source alias and a qualified runtime"` under `::experimental-span-codec-unavailable`, still via a blanket `catch Throwable _` that discards the original cause (`ex-cause` stays `nil`). The new test `unavailable-runtime-does-not-blame-only-alias-or-leak-cause` redefines `codec/open-codec` to throw with a private message/ex-data, then asserts the wrapped message mentions "qualified runtime," omits the synthetic private string, and carries no cause — the assertions match the code exactly.
+
+## Prior finding 2 — runtime alias pulling in test paths
+
+**Addressed.** `deps.edn`'s `:experimental-span-codec` now has only `["incubator/codec/src"]`; a new `:experimental-span-codec-test` alias carries both src and test paths. Runtime consumers of the first alias no longer load test code. The EDN map structure (alternating keys/values) is still valid.
+
+## New workflow — `experimental-codec-stock.yml`
+
+No actionable issues found:
+
+- `permissions: contents: read` + `persist-credentials: false` on checkout — matches the read-only-token / no-credential-persistence requirement.
+- Stock Jolt v0.8.23 is fetched from a pinned GitHub Releases URL; both the tarball and extracted binary are checksum-verified (`sha256sum -c`, well-formed 64-hex digests) before use, plus a `--version` sanity check. No compiler rebuild, no unpinned native fetch, no secrets referenced.
+- Work happens in `mktemp -d "$RUNNER_TEMP/stock-codec.XXXXXXXX"`; a `case` guard confirms the created path actually matches `$RUNNER_TEMP/stock-codec.????????` before the `trap 'rm -rf -- "$task_tmp"' EXIT` is allowed to act on it — guards the cleanup against acting on an unexpected path.
+- The final `-Sdeps '{:paths ["src" "test"] :deps {}}'` run is dependency-free (`:deps {}`) and scoped to `jolt.codec.experimental-test`, matching "tests only the dependency-free incubator module." `set -euo pipefail` is active throughout.
+- Fail-closed test check: asserts `(pos? (:test r))` before checking pass/fail, so a silently-empty run (e.g. bad namespace/require) can't masquerade as a pass.
+
+One caveat, not an issue: `JOLT_NO_USER_DEPS=1` / `JOLT_AOT_CACHE=0` isolate the run from user-level config by convention of the stock binary — this can't be verified from source alone since nothing was executed here, so treat it as an assumption rather than a confirmed guarantee. No claim is made that this workflow has actually run or passed in CI.
+
+**Outcome:** both prior findings are resolved in the patch; the new CI job's narrow scope has no actionable issues. Nothing to implement, so no further action is proposed.

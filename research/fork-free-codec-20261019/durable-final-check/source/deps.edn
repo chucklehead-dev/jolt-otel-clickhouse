@@ -1,0 +1,117 @@
+{:paths ["src"]
+ :jolt/min-version "0.8.6"
+ :deps {io.github.chucklehead-dev/jolt-chdb
+        {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
+         :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
+        io.github.casselc/otel
+        {:git/url "https://github.com/casselc/otel.git"
+         :git/sha "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+         ;; Includes SDK-owned HAMT/sorted scalar conversion, ready-batch scheduling
+         ;; and batch<=queue validation.
+         ;; Keep its canonical crypto declaration excluded and select it
+         ;; directly below so this exporter owns the exact provider and SHA,
+         ;; independent of dependency traversal order.
+         :exclusions [jolt-lang/jolt-crypto]}
+        jolt-lang/jolt-crypto
+        {:git/url "https://github.com/jolt-lang/jolt-crypto.git"
+         :git/sha "5effcc89a3258499a79a2a3d69edad9e7800d1bf"}
+        metosin/malli {:mvn/version "0.20.1"}
+        org.clojure/data.json
+        {:git/url "https://github.com/casselc/data.json.git"
+         :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
+ :aliases {:experimental-span-codec
+           {:extra-paths ["incubator/codec/src"]}
+           :experimental-span-codec-test
+           {:extra-paths ["incubator/codec/src" "incubator/codec/test"]}
+           :event-columns-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-event-columns-test"]}
+           :sdk-sorted-scalar-map-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sdk-sorted-scalar-map-test"]}
+           :sorted-event-encoding-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sorted-event-encoding-test"]}
+           :sdk-scalar-map-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-sdk-scalar-map-test"]}
+           :native-attributes-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-native-attributes-test"]}
+           :native-projection-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-native-declared-attributes-test"]}
+           :preloaded-scalar-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-preloaded-scalar-test"]}
+           :scalar-attribute-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-scalar-attribute-test"]}
+           :owned-output-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-owned-output-test"]}
+           :typed-compact-vector-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-compact-vector-test"]}
+           :prefixed-payload-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-prefixed-payload-test"]}
+           :direct-compact-layout-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-direct-compact-layout-test"]}
+           :compact-wire-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-compact-wire-test"]}
+           :compact-wire-native-test
+           {:extra-paths ["test" "bench"]
+            :main-opts ["-m" "otel.exporter.chdb-compact-wire-native-test"]}
+           :json-backend-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-json-backend-test"]}
+           :native-json-byte-batch
+           {:extra-deps {org.clojure/data.json
+                         {:git/url "https://github.com/casselc/data.json.git"
+                          :git/sha "2172061060a102ccab779f5adc5d77f8b83a81f6"}}}
+           :benchmark {:extra-paths ["bench"]
+                       :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
+           :typed-log-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-test"]}
+           :typed-log-socket-test
+           {:extra-paths ["test"]
+            :extra-deps
+            {io.github.casselc/jolt-http
+             {:git/url "https://github.com/casselc/jolt-http.git"
+              :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}}
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-socket-native-test"]}
+           :typed-gauge-socket-test
+           {:extra-paths ["test"]
+            :extra-deps
+            {io.github.casselc/jolt-http
+             {:git/url "https://github.com/casselc/jolt-http.git"
+              :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}}
+            :main-opts ["-m" "otel.exporter.chdb-typed-gauge-socket-native-test"]}
+           :typed-histogram-socket-test
+           {:extra-paths ["test"]
+            :extra-deps
+            {io.github.casselc/jolt-http
+             {:git/url "https://github.com/casselc/jolt-http.git"
+              :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}}
+            :main-opts ["-m" "otel.exporter.chdb-typed-histogram-socket-native-test"]}
+           :typed-log-explorer-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-log-explorer-runner"]}
+           :typed-metric-explorer-test
+           {:extra-paths ["test"]
+            :main-opts ["-m" "otel.exporter.chdb-typed-metric-explorer-runner"]}
+           :test {:extra-paths ["test" "bench"]
+                  :extra-deps
+                  {io.github.casselc/jolt-http
+                   {:git/url "https://github.com/casselc/jolt-http.git"
+                    :git/sha "35d1d7f9ebdc796ee9bd4c80745298b2c8b7fdf8"}
+                   io.github.chucklehead-dev/jolt-hegel
+                   {:git/url "https://github.com/chucklehead-dev/jolt-hegel.git"
+                    :git/sha "b214f769983211431c74e427f0f35553cfba7b34"}}
+                  :main-opts ["-m" "otel.exporter.chdb-test"]}}
+ :tasks {benchmark "jolt -M:benchmark"
+         test "jolt -M:test"}}

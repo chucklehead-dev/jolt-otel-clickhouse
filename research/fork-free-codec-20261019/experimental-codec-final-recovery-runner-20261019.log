@@ -1,0 +1,4 @@
+index=0 arm=on owned_store=/tmp/explicit-codec-durable-20261019.VgbJyu33
+index=0 writer_reader_validator_terminal0 owned_store=/tmp/explicit-codec-durable-20261019.VgbJyu33
+index=0 retired_validated_synthetic_store=/tmp/explicit-codec-durable-20261019.VgbJyu33
+terminal0: 1 writer/independent-reader/validator arms, all stores retired
