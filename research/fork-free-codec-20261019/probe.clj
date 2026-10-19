@@ -24,11 +24,28 @@
 ;; Compare visit order against the independently constructed ordinary seq.
 (doseq [m [(array-map) (array-map :a 1 :b 2)
            (into {} (map (fn [i] [(str "k" i) i]) (range 1100)))
-           (into (hash-map) {"Aa" 1 "BB" 2 "AaAa" 3 "BBBB" 4})]]
+           (into (hash-map) {"Aa" 1 "BB" 2 "AaAa" 3 "BBBB" 4})
+           (hash-map "Aa" 1 "BB" 2)]]
   ;; Return a Jolt vector at the bridge rather than interpreting a Scheme list.
   (let [actual ((scheme/eval-string
                  "(lambda (m) (apply jolt-vector (reverse (ffc-map-fold m (lambda (k v a) (cons (jolt-vector k v) a)) '()))))") m)]
     (check (= (mapv vec m) actual))))
+
+;; The stock representation has array or hnode roots, never a bare hcoll.
+;; Verify the whole-map two-key collision really reaches that representation.
+(check (= [true true]
+          ((scheme/eval-string
+             "(lambda (m) (let ((r (pmap-root m)))
+                (jolt-vector (hnode? r)
+                  (and (hnode? r) (= (vector-length (hnode-arr r)) 1)
+                       (hcoll? (vector-ref (hnode-arr r) 0))))))")
+           (hash-map "Aa" 1 "BB" 2))))
+
+;; Chez rejects surrogate code points when constructing a character. This
+;; validates the input representation boundary, NOT reachability of the
+;; encoder's defensive surrogate branch with an ordinary Chez string.
+(check (rejects? #((scheme/proc "integer->char") 55296)))
+(check (rejects? #((scheme/proc "integer->char") 57343)))
 
 ;; Observe exception prefixes and nested folds while effects run, not just the
 ;; final set of visited entries. Force a real HAMT collision bucket above.

@@ -80,21 +80,25 @@ upstream projection costs and does not measure SDK queues, native insertion,
 WAL/publication, S3, restart recovery, or the selected optimized encoder. It
 cannot establish a speedup over that encoder or the Durable throughput target.
 
-The isolated runner completed successfully: 75 dependency-free probe checks,
+The isolated runner completed successfully after review: 79 dependency-free probe checks,
 180 independently parsed oracle cases, 360 reference equality/readback checks,
 15 entry-allocation controls, whole-batch changed-input/output controls and
 all measured full-output comparisons. Source hashes were unchanged across it.
 
 | Prepared-row component | p50 | p90 | p95 | p99 | Estimated bytes/row, median |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| Stock data.json, literal UTF-8 | 1192.83 ms | 1604.29 ms | 1705.29 ms | 1705.29 ms | 193,829 |
-| Explicit codec, stock Jolt | 49.46 ms | 59.14 ms | 62.05 ms | 62.05 ms | 2,355 |
+| Stock data.json, literal UTF-8 | 1203.24 ms | 1440.52 ms | 1633.74 ms | 1633.74 ms | 193,829 |
+| Explicit codec, stock Jolt | 46.92 ms | 51.94 ms | 53.80 ms | 53.80 ms | 2,355 |
 
 These are 5,000-row batches, each 4,025,770 output bytes. At 12 samples per arm,
 p95/p99 are simply the observed maximum, not evidence about production tails.
-Large baseline GC counts remain in the raw samples. This ~24x component ratio
+Large baseline GC counts remain in the raw samples. This ~26x component ratio
 compares against unmodified data.json, **not** the already optimized selected
 stack. Do not extrapolate it into a collector/Durable speedup.
+
+The [independent review and disposition](review-response.md) preserve both
+Claude's source-only findings and Codex's checks. The follow-up runner passed
+the collision-root controls and separate-parser extreme-double corpus too.
 
 ## Next bounded slice
 

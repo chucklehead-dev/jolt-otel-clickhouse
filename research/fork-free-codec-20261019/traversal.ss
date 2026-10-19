@@ -20,6 +20,8 @@
                           (cond
                            ((hnode? child) (walk child a))
                            ((hcoll? child)
+                            ;; Stock seq reverses the physical collision alist;
+                            ;; callback effects must follow that same order.
                             (let backward ((pairs (hcoll-alist child)))
                               (if (null? pairs) a
                                   (let ((next (backward (cdr pairs))))
