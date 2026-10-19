@@ -1,5 +1,7 @@
 (ns otel.exporter.chdb-experimental-codec-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.string :as str]
+            [jolt.codec.experimental :as codec]
             [otel.exporter.chdb :as e]
             [otel.exporter.chdb.compact-format :as compact]
             [jdbc.chdb.owned-statement :as owned]
@@ -13,6 +15,14 @@
                (try (e/exporter {:experimental-span-codec? option}) nil
                     (catch Throwable t (:type (ex-data t))))))))
     (is (zero? @opens))))
+
+(deftest unavailable-runtime-does-not-blame-only-alias-or-leak-cause
+  (with-redefs [codec/open-codec (fn [] (throw (ex-info "synthetic-private-detail" {:private "not exported"})))]
+    (let [error (try (#'e/load-experimental-span-codec!) nil (catch Throwable t t))]
+      (is (= :otel.exporter.chdb/experimental-span-codec-unavailable (:type (ex-data error))))
+      (is (str/includes? (ex-message error) "qualified runtime"))
+      (is (not (str/includes? (ex-message error) "synthetic-private-detail")))
+      (is (nil? (ex-cause error))))))
 
 (deftest row-shape-and-post-encoding-plan-check-before-execute
   (let [codec (#'e/load-experimental-span-codec!)

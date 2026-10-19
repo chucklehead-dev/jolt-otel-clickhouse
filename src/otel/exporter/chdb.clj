@@ -1257,7 +1257,7 @@
       {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
        :nested (fn [value] (nested codec value))})
     (catch Throwable _
-      (throw (ex-info "Experimental span codec requires its explicit source alias"
+      (throw (ex-info "Experimental span codec requires its source alias and a qualified runtime"
                       {:type ::experimental-span-codec-unavailable})))))
 
 (defn- direct-metric-layout? [snapshot]

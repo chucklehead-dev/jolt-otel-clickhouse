@@ -20,6 +20,8 @@
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
  :aliases {:experimental-span-codec
+           {:extra-paths ["incubator/codec/src"]}
+           :experimental-span-codec-test
            {:extra-paths ["incubator/codec/src" "incubator/codec/test"]}
            :event-columns-test
            {:extra-paths ["test"]
