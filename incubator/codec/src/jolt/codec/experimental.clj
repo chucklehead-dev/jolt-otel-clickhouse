@@ -12,7 +12,7 @@
 (def ^:private backend
   (delay
     ;; Lexical definitions avoid process-global Scheme helper replacement.
-    (let [[scalar project qualify]
+    (let [[scalar project qualify fold]
           (scheme/eval-string
             (str "(let () " traversal-source "\n" json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
@@ -21,19 +21,26 @@
                  "      (eq? (record-type-uid (record-rtd v)) 'chez-pvec-v4)"
                  "      (eq? (record-type-uid (record-rtd s)) 'chez-htable-v2)"
                  "      (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1)"
-                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1)))))"))]
+                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold))"))]
       (when-not (and (qualify {} [] (sorted-map) (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
-      [scalar project])))
+      [scalar project fold])))
 
-(deftype ^:private Codec [tag scalar project])
+(deftype ^:private Codec [tag scalar project fold])
 (defn open-codec []
-  (let [[scalar project] @backend] (Codec. seal scalar project)))
+  (let [[scalar project fold] @backend] (Codec. seal scalar project fold)))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
   codec)
+
+(defn native-map-folder
+  "Internal synchronous Scheme visitor bridge for ordinary persistent maps.
+  No entries/sequences are built. Not a portable reduce-kv or Reduced API."
+  [codec]
+  (require-codec! codec)
+  (.-fold codec))
 
 (defn write-nested
   "Return ASCII JSON text for one value. Each call owns its storage; empty

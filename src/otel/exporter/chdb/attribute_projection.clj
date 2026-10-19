@@ -187,7 +187,9 @@
     ((ns-resolve 'otel.exporter.chdb.native-projection 'load-positional-output!)
      #'projected-value original-projected-value)))
 
-(defn- indexed-vector-projector [locations wanted plan]
+(defn- indexed-vector-projector
+  ([locations wanted plan] (indexed-vector-projector locations wanted plan nil))
+  ([locations wanted plan collector]
   (let [location-count (count locations)]
     (fn [span]
       (let [values
@@ -196,7 +198,7 @@
                 (let [attributes (or (attributes-at span (nth locations i)) {})
                       wanted-keys (nth wanted i)
                       collected
-                      (or (@small-declared-collector attributes wanted-keys)
+                      (or ((or collector @small-declared-collector) attributes wanted-keys)
                           ;; Retain the native path's existing fallback and
                           ;; live membership behavior; portable filtering must
                           ;; not silently broaden this optimization's contract.
@@ -206,7 +208,7 @@
                                         (assoc out normalized (conj (get out normalized []) value)) out)))
                                   {} attributes))]
                   (recur (inc i) (conj out collected)))))]
-        (@owned-plan-output plan values)))))
+        (@owned-plan-output plan values))))))
 
 (defn trace-vector-projector
   "Compile confirmed trace fields into positional value/status pairs.
@@ -217,6 +219,8 @@
   default two-argument path remains portable and unchanged."
   ([descriptor-set target] (trace-vector-projector descriptor-set target false))
   ([descriptor-set target native-maps?]
+   (trace-vector-projector descriptor-set target native-maps? nil))
+  ([descriptor-set target native-maps? folder]
   (let [fields (confirmed-span-fields descriptor-set target)
         locations (vec (distinct (map :location fields)))
         wanted (mapv second (location-plan fields))
@@ -224,10 +228,14 @@
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
     (if native-maps?
-      (indexed-vector-projector
-       locations
-       wanted
-       plan)
+      (if folder
+        (do
+         (require 'otel.exporter.chdb.native-projection)
+         (indexed-vector-projector
+           locations wanted plan
+           ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
+            #'key-string #'clojure.core/contains? original-key-string folder)))
+        (indexed-vector-projector locations wanted plan))
     (fn [span]
       (let [values (mapv (fn [location keys]
                            (values-by-key (attributes-at span location) keys))

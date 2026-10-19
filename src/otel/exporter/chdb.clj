@@ -129,12 +129,15 @@
   (or (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
       (try-sdk-scalar-attrs m sdk-scalar-map-converter)))
 
+(def ^:dynamic ^:private *experimental-attribute-transform* nil)
+
 (defn- attrs [m]
   (if (reusable-string-attrs? m)
     ;; Match the old fresh map's metadata without copying immutable entries.
     (with-meta m nil)
     (or (when (= :native-guarded-byte-batch *json-backend*)
-          (or (sdk-scalar-attrs m) (@small-attribute-transform m)))
+          (or (sdk-scalar-attrs m)
+              ((or *experimental-attribute-transform* @small-attribute-transform) m)))
         (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))))
 
 (defn- service-name [resource fallback]
@@ -1253,9 +1256,14 @@
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
           encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
           nested @(ns-resolve 'jolt.codec.experimental 'write-nested)
-          codec (open)]
+          codec (open)
+          folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
+          _ (require 'otel.exporter.chdb.native-attributes)
+          attributes ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
+                      #'key-string #'value-string original-attribute-key-string folder)]
       {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
-       :nested (fn [value] (nested codec value))})
+       :nested (fn [value] (nested codec value))
+       :folder folder :attributes attributes})
     (catch Throwable _
       (throw (ex-info "Experimental span codec requires its source alias and a qualified runtime"
                       {:type ::experimental-span-codec-unavailable})))))
@@ -1629,6 +1637,7 @@
       false
       (try
         (binding [*insert-byte-limit* (:max-insert-bytes @state)
+                  *experimental-attribute-transform* (get-in @state [:experimental-span-codec :attributes])
                   *json-backend* (:json-backend @state :configured)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [receipts
@@ -1836,7 +1845,15 @@
    (let [experimental-span-codec (when experimental-span-codec? (load-experimental-span-codec!))]
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
-   (when (not= :configured json-backend)
+   (when (and experimental-span-codec
+              (not (try
+                     (and (ifn? durable/execute-owned-and-flush!)
+                          (owned-statement/statement?
+                            (owned-statement/try-snapshot (byte-array 0))))
+                     (catch Throwable _ false))))
+     (throw (ex-info "Owned statement stack unavailable"
+                     {:type ::owned-statement-unavailable})))
+   (when (and (not experimental-span-codec) (not= :configured json-backend))
      (let [encoder (row-encoder/open-encoder {:parallelism 1 :json-backend json-backend})]
        (try
          (when (and owned-statement-output?
@@ -1985,8 +2002,12 @@
                                          (= :native-guarded-byte-batch json-backend)
                                          (= :json-compact-each-row insert-format))
                                 {:map-projector typed-span-projector
-                                 :vector-projector (attribute-projection/trace-vector-projector
-                                                    typed-span-descriptors conn true)
+                                 :vector-projector
+                                 (if experimental-span-codec
+                                   (attribute-projection/trace-vector-projector
+                                     typed-span-descriptors conn true (:folder experimental-span-codec))
+                                   (attribute-projection/trace-vector-projector
+                                     typed-span-descriptors conn true))
                                  :columns span-columns})
                               :typed-span-encoder typed-span-encoder
                               :typed-log-projector typed-log-projector

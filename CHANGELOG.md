@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Share the experimental codec's library-owned map walker with attribute
+  projection and avoid loading the old native JSON backend in that opt-in path.
+  Ordinary backends retain their existing selection and conversion behavior.
+
 - Add an opt-in, source-only explicit codec experiment for span-only, owned
   compact Durable export. Keep normal encoding and persistence confirmation
   unchanged; validate configuration before storage acquisition and retain
