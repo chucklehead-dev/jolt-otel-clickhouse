@@ -1,0 +1,11 @@
+
+FAIL in (default-marker-does-not-request-structural-equality) (json_default_omission_test.clj:35)
+expected: (zero? calls)
+  actual: (not (zero? 4))
+
+FAIL in (native-default-marker-check-is-identity-not-a-normalizing-equality) (json_default_omission_test.clj:62)
+expected: (zero? ((nth factory 1)))
+  actual: (not (zero? 3))
+
+Ran 4 tests. 14 assertions passed, 2 failures, 0 errors.
+{:gate :default-omission-identity, :complete true, :passed false}

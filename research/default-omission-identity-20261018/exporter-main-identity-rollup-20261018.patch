@@ -1,0 +1,691 @@
+diff --git a/.github/workflows/tests.yml b/.github/workflows/tests.yml
+index b635e39..a5d4e5c 100644
+--- a/.github/workflows/tests.yml
++++ b/.github/workflows/tests.yml
+@@ -48,6 +48,9 @@ jobs:
+           "$task_bin" -Srepro -A:native-projection-test -m otel.exporter.chdb-native-projection-benchmark "$RUNNER_TEMP/projection-smoke.edn" 100 2
+           rm -f -- "$RUNNER_TEMP/projection-smoke.edn"
+           "$task_bin" -Srepro -M:native-json-byte-batch:native-attributes-test --require-string-output
++          "$task_bin" -Srepro -M:sdk-scalar-map-test
++          "$task_bin" -Srepro -M:native-json-byte-batch:sorted-event-encoding-test
++          "$task_bin" -Srepro -M:native-json-byte-batch:sdk-sorted-scalar-map-test
+           "$task_bin" -Srepro -M:native-json-byte-batch:owned-output-test
+ 
+   scoped-s3-sdk:
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index a2d0bb5..98d180a 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,40 @@
+ 
+ ## Unreleased
+ 
++- Update the optional native JSON backend to compare its known default omission
++  marker by identity. This avoids rebuilding nested sorted attributes merely to
++  reject a function marker. Custom value functions retain their equality and
++  fallback behavior; ordinary JSON, SDK/driver pins, typed values, output limits
++  and Durable acknowledgement semantics are unchanged.
++
++- Advance the optional native JSON dependency to use runtime-owned stock
++  sorted-map folding when present. Older runtimes and custom operations retain
++  sequence traversal; live JSON callbacks, typed source values, ordinary JSON
++  and Durable acknowledgement semantics are unchanged. Runtime artifact
++  adoption is qualified separately from this dependency update.
++
++- Use the SDK's optional sorted scalar-map normalization in the native backend
++  while original converter policies remain installed. Decline custom operations
++  and unsupported inputs before callbacks; keep the normal conversion with
++  older SDKs or changed policies. Typed source values, JSON dispatch and Durable
++  acknowledgements remain unchanged.
++
++- Advance the optional native JSON pin to retain byte emission for sorted
++  event attributes while honoring live map sequence operations and JSONWriter
++  callbacks. Add actual SDK-ended span/event coverage for named and compact
++  rows, Unicode, Boolean values and exact payload limits. Ordinary JSON,
++  schema/driver/SDK pins and Durable acknowledgement semantics are unchanged.
++
++- Use the SDK's optional bounded scalar-map conversion for native attribute
++  shaping while original exporter converters remain installed. Older SDKs,
++  unsupported values and changed policies retain the existing conversion;
++  JSON writer dispatch, typed values and persistence behavior are unchanged.
++
++- Avoid redundant normalization and membership calls while projecting declared
++  attributes from built-in string-key maps under the original policies. Keep
++  custom converters, non-string aliases, duplicate values, field statuses and
++  callback order on the existing path; schema and Durable semantics are unchanged.
++
+ - Honor the current String and Collection JSON writers for empty link fields
+   in the legacy compiled span plan, rather than retaining construction-time
+   bytes. Include changed output in the existing per-row byte limit. Attribute
+diff --git a/deps.edn b/deps.edn
+index a0c71f1..cf8ab05 100644
+--- a/deps.edn
++++ b/deps.edn
+@@ -5,8 +5,9 @@
+          :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
+         io.github.casselc/otel
+         {:git/url "https://github.com/casselc/otel.git"
+-         :git/sha "37c684a2c370fc82fde82331635973bce87a52b3"
+-         ;; Includes ready-batch scheduling and batch<=queue validation.
++         :git/sha "7878a2eb4340519d6843d13490a5a7c99ebade8a"
++         ;; Includes SDK-owned HAMT/sorted scalar conversion, ready-batch scheduling
++         ;; and batch<=queue validation.
+          ;; Keep its canonical crypto declaration excluded and select it
+          ;; directly below so this exporter owns the exact provider and SHA,
+          ;; independent of dependency traversal order.
+@@ -18,7 +19,16 @@
+         org.clojure/data.json
+         {:git/url "https://github.com/casselc/data.json.git"
+          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
+- :aliases {:native-attributes-test
++ :aliases {:sdk-sorted-scalar-map-test
++           {:extra-paths ["test"]
++            :main-opts ["-m" "otel.exporter.chdb-sdk-sorted-scalar-map-test"]}
++           :sorted-event-encoding-test
++           {:extra-paths ["test"]
++            :main-opts ["-m" "otel.exporter.chdb-sorted-event-encoding-test"]}
++           :sdk-scalar-map-test
++           {:extra-paths ["test"]
++            :main-opts ["-m" "otel.exporter.chdb-sdk-scalar-map-test"]}
++           :native-attributes-test
+            {:extra-paths ["test" "bench"]
+             :main-opts ["-m" "otel.exporter.chdb-native-attributes-test"]}
+            :native-projection-test
+@@ -54,7 +64,7 @@
+            :native-json-byte-batch
+            {:extra-deps {org.clojure/data.json
+                          {:git/url "https://github.com/casselc/data.json.git"
+-                          :git/sha "8d557cc18eb9526ed29ae5613089c3793d5973fa"}}}
++                          :git/sha "2172061060a102ccab779f5adc5d77f8b83a81f6"}}}
+            :benchmark {:extra-paths ["bench"]
+                        :main-opts ["-m" "otel.exporter.chdb-benchmark"]}
+            :typed-log-test
+diff --git a/src/otel/exporter/chdb.clj b/src/otel/exporter/chdb.clj
+index b015fcd..c70251e 100644
+--- a/src/otel/exporter/chdb.clj
++++ b/src/otel/exporter/chdb.clj
+@@ -105,12 +105,36 @@
+         (throw (ex-info "Native attribute projection is unavailable"
+                         {:type ::native-attributes-unavailable}))))))
+ 
++(def ^:private sdk-scalar-map-converter
++  ;; Keep the Var live. Older SDKs simply lack the optional map helper and
++  ;; retain the existing native/generic conversion without a dependency floor.
++  (delay (ns-resolve 'otel.any-value 'try-scalar-string-map)))
++
++(def ^:private sdk-sorted-scalar-map-converter
++  (delay (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)))
++
++(defn- try-sdk-scalar-attrs [m converter]
++  (when (and (identical? key-string original-attribute-key-string)
++             (identical? value-string original-attribute-value-string))
++    (when-let [convert-var @converter]
++      (let [convert @convert-var
++            result (convert m)]
++        ;; A replaced SDK helper can change exporter policy before returning.
++        ;; Do not accept its result past a changed per-entry conversion root.
++        (when (and (identical? key-string original-attribute-key-string)
++                   (identical? value-string original-attribute-value-string))
++          result)))))
++
++(defn- sdk-scalar-attrs [m]
++  (or (try-sdk-scalar-attrs m sdk-sorted-scalar-map-converter)
++      (try-sdk-scalar-attrs m sdk-scalar-map-converter)))
++
+ (defn- attrs [m]
+   (if (reusable-string-attrs? m)
+     ;; Match the old fresh map's metadata without copying immutable entries.
+     (with-meta m nil)
+     (or (when (= :native-guarded-byte-batch *json-backend*)
+-          (@small-attribute-transform m))
++          (or (sdk-scalar-attrs m) (@small-attribute-transform m)))
+         (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))))
+ 
+ (defn- service-name [resource fallback]
+diff --git a/src/otel/exporter/chdb/attribute_projection.clj b/src/otel/exporter/chdb/attribute_projection.clj
+index 4850f07..7a69aaa 100644
+--- a/src/otel/exporter/chdb/attribute_projection.clj
++++ b/src/otel/exporter/chdb/attribute_projection.clj
+@@ -16,6 +16,10 @@
+         (keyword? key) (subs (str key) 1)
+         :else (str key)))
+ 
++;; The defining namespace, not a consumer's load-time snapshot, owns the
++;; primitive-string identity rule used by the optional native collector.
++(def ^:private original-key-string key-string)
++
+ (defn- confirmed-fields [descriptor-set actual-target]
+   (let [{:keys [record] :as evidence}
+         (installer/descriptor-set-data descriptor-set)
+@@ -175,7 +179,7 @@
+   (delay
+     (require 'otel.exporter.chdb.native-projection)
+     ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
+-     #'key-string #'clojure.core/contains?)))
++     #'key-string #'clojure.core/contains? original-key-string)))
+ 
+ (def ^:private owned-plan-output
+   (delay
+diff --git a/src/otel/exporter/chdb/native_declared_strings.ss b/src/otel/exporter/chdb/native_declared_strings.ss
+new file mode 100644
+index 0000000..5ae26a0
+--- /dev/null
++++ b/src/otel/exporter/chdb/native_declared_strings.ss
+@@ -0,0 +1,45 @@
++;; Pure speculation only. Unsupported keys/policies decline before any user
++;; converter, membership, hash or equality callback. Generic collection remains
++;; responsible for aliases, custom keys, changed roots and larger wanted sets.
++(let ((string-var (jolt-var "clojure.core" "string?")))
++  (define (string-entry? key ignored ok) (and ok (string? key)))
++  (define (collect-entry! key value context)
++    (when (vector-ref context 3)
++      (if (not (string? key)) (vector-set! context 3 #f)
++          (when (pset-contains? (vector-ref context 0) key)
++            (let ((slots (vector-ref context 1)) (used (vector-ref context 2)))
++              ;; String keys in a builtin immutable map are unique: no aliases
++              ;; can normalize onto this key while this path is admitted.
++              (vector-set! slots used key)
++              (vector-set! slots (+ used 1) (make-pvec (vector value)))
++              (vector-set! context 2 (+ used 2))))))
++    context)
++  (define (collect m wanted key-var contains-var original-key)
++    (and original-key (pmap? m) (<= (pmap-cnt m) 128)
++         (pset? wanted) (<= (pset-count wanted) 8)
++         (eq? (var-cell-deref key-var) original-key)
++         (eq? (var-cell-deref contains-var) jolt-contains?)
++         (eq? (var-cell-deref string-var) jolt-string?)
++         (pmap-fold-seq-order (pset-m wanted) string-entry? #t)
++         (let* ((slots (make-vector (* 2 (pset-count wanted)) #f))
++                (context (vector wanted slots 0 #t)))
++           (pmap-fold-seq-order m collect-entry! context)
++           (and (vector-ref context 3)
++                ;; These reads are not a cross-thread redefinition lock. No
++                ;; callback runs in the admitted scan; changed policy declines
++                ;; without replaying observable work.
++                (eq? (var-cell-deref key-var) original-key)
++                (eq? (var-cell-deref contains-var) jolt-contains?)
++                (eq? (var-cell-deref string-var) jolt-string?)
++                (let ((used (vector-ref context 2)))
++                  (make-pmap (if (= used (vector-length slots)) slots
++                                 (vec-copy-range slots 0 used))
++                             (quotient used 2)))))))
++  ;; Capture stable Var references, NOT their values, once per factory. A
++  ;; five-argument Clojure call otherwise uses the variadic invocation bridge
++  ;; on the qualified runtime, creating a rest list for every attribute map.
++  (case-lambda
++    ((key-var contains-var original-key)
++     (lambda (m wanted) (collect m wanted key-var contains-var original-key)))
++    ((m wanted key-var contains-var original-key)
++     (collect m wanted key-var contains-var original-key))))
+diff --git a/src/otel/exporter/chdb/native_projection.clj b/src/otel/exporter/chdb/native_projection.clj
+index 47dfc13..bc817bd 100644
+--- a/src/otel/exporter/chdb/native_projection.clj
++++ b/src/otel/exporter/chdb/native_projection.clj
+@@ -11,14 +11,24 @@
+   (source "otel/exporter/chdb/native_declared_attributes.ss"))
+ (def ^:private projected
+   (source "otel/exporter/chdb/native_projected_values.ss"))
++(def ^:private string-declared
++  (source "otel/exporter/chdb/native_declared_strings.ss"))
+ 
+ (defn load-declared-collector!
+   "Return a bounded built-in-map collector, declining unsupported layouts.
+   Resolve converter and membership Vars per key in source sequence order.
+-  Preserve every declared duplicate; mutable storage is invocation-owned."
+-  [key-var contains-var]
+-  (let [collect (scheme/eval-string declared)]
+-    (fn [attributes wanted] (collect attributes wanted key-var contains-var))))
++  Preserve every declared duplicate; mutable storage is invocation-owned.
++  The internal third argument must be the defining namespace's original
++  string-identity normalizer, not a consumer snapshot. While that normalizer
++  and stock membership are live, pure string-key maps can be collected without
++  redundant callbacks. All other cases retain the ordered generic path."
++  ([key-var contains-var] (load-declared-collector! key-var contains-var false))
++  ([key-var contains-var original-key]
++   (let [collect (scheme/eval-string declared)
++         fast ((scheme/eval-string string-declared) key-var contains-var original-key)]
++     (fn [attributes wanted]
++       (or (when original-key (fast attributes wanted))
++           (collect attributes wanted key-var contains-var))))))
+ 
+ (defn load-positional-output!
+   "Build private positional output once; resolve the live projector per field.
+diff --git a/test/otel/exporter/chdb_dependency_test.clj b/test/otel/exporter/chdb_dependency_test.clj
+index 52fb899..81f7a26 100644
+--- a/test/otel/exporter/chdb_dependency_test.clj
++++ b/test/otel/exporter/chdb_dependency_test.clj
+@@ -7,13 +7,13 @@
+   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
+ 
+ (def ^:private otel-root
+-  "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
++  "https___github.com_casselc_otel.git/7878a2eb4340519d6843d13490a5a7c99ebade8a/")
+ 
+ (def ^:private prior-otel-root
+-  "https___github.com_casselc_otel.git/d93846e40b837dcecb546fb59f6cb05ca639f054/")
++  "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
+ 
+ (def ^:private prior-otel-coordinate
+-  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"d93846e40b837dcecb546fb59f6cb05ca639f054\" :exclusions [jolt-lang/jolt-crypto]}}}")
++  "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"37c684a2c370fc82fde82331635973bce87a52b3\" :exclusions [jolt-lang/jolt-crypto]}}}")
+ 
+ (def ^:private chdb-root
+   "https___github.com_chucklehead-dev_jolt-chdb.git/3d766fa295b0e98c30f275d0a334db92e6dd998c/")
+@@ -28,7 +28,7 @@
+   "https___github.com_casselc_data.json.git/0f51b99101bc5e840f957c073f87b6f877309a25/src/main/clojure")
+ 
+ (def ^:private native-data-json-source-root
+-  "https___github.com_casselc_data.json.git/8d557cc18eb9526ed29ae5613089c3793d5973fa/src/main/clojure")
++  "https___github.com_casselc_data.json.git/2172061060a102ccab779f5adc5d77f8b83a81f6/src/main/clojure")
+ 
+ (def ^:private wrong-coordinate
+   "{:deps {jolt-lang/jolt-crypto {:git/url \"https://github.com/casselc/jolt-crypto.git\" :git/sha \"8bd234142d56dd75d36d58065a311f29fa08611e\"}}}")
+@@ -96,7 +96,7 @@
+ 
+ (defn run-oracle-controls! [check]
+   ;; Freeze the approved witness independently of the implementation oracle.
+-  (let [fixture-root "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/"
++  (let [fixture-root "https___github.com_casselc_otel.git/7878a2eb4340519d6843d13490a5a7c99ebade8a/"
+         root (str "/public-fixture/a/" fixture-root)
+         other (str "/public-fixture/b/" fixture-root)
+         source (str root "src")
+@@ -109,23 +109,31 @@
+            (boolean (oracle (str source ":" root "src/../resources"))))
+     (check "SDK old reviewed SHA is rejected" false
+            (boolean (oracle (str/replace source
+-                             "37c684a2c370fc82fde82331635973bce87a52b3"
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
++    (check "SDK before owned scalar-map capability is rejected" false
++           (boolean (oracle (str/replace source
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
++                             "37c684a2c370fc82fde82331635973bce87a52b3"))))
++    (check "SDK before sorted scalar normalization is rejected" false
++           (boolean (oracle (str/replace source
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
++                             "697f58bd5b4925f72339694bedbace97bdc869bb"))))
+     (check "SDK before batch-ready wakeup is rejected" false
+            (boolean (oracle (str/replace source
+-                             "37c684a2c370fc82fde82331635973bce87a52b3"
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                              "d93846e40b837dcecb546fb59f6cb05ca639f054"))))
+     (check "SDK before per-reader policy is rejected" false
+            (boolean (oracle (str/replace source
+-                             "37c684a2c370fc82fde82331635973bce87a52b3"
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
+     (check "SDK before definition-owned helper qualification is rejected" false
+            (boolean (oracle (str/replace source
+-                             "37c684a2c370fc82fde82331635973bce87a52b3"
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"))))
+     (check "SDK before bounded string admission is rejected" false
+            (boolean (oracle (str/replace source
+-                             "37c684a2c370fc82fde82331635973bce87a52b3"
++                             "7878a2eb4340519d6843d13490a5a7c99ebade8a"
+                              "14ffd741351373f07d96aa070b0f9853d7daf8ab"))))
+     (check "SDK distinct checkout at same SHA is rejected" false
+            (boolean (oracle (str source ":" other "src"))))
+@@ -211,7 +219,13 @@
+     ;; This guards selection of the new checkpoint, not ABI compatibility:
+     ;; the old revision remains a valid native backend when chosen explicitly.
+     (check "native byte alias coordinate oracle rejects prior pin" false
+-           (oracle (str/replace source "8d557cc18eb9526ed29ae5613089c3793d5973fa"
++           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
++                                "96f3e47dba5970728866dacb5ac41a25135a2df5")))
++    (check "native byte alias coordinate oracle still rejects earlier native pin" false
++           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
++                                "8d557cc18eb9526ed29ae5613089c3793d5973fa")))
++    (check "native byte alias coordinate oracle still rejects older source" false
++           (oracle (str/replace source "2172061060a102ccab779f5adc5d77f8b83a81f6"
+                                 "a0172a0f1418632c760af98ef5280dd234d21e85")))
+     (check "native byte alias resolution completes without warnings" true
+            (and (map? result) (zero? (:exit result))
+diff --git a/test/otel/exporter/chdb_native_declared_attributes_test.clj b/test/otel/exporter/chdb_native_declared_attributes_test.clj
+index 2695a96..827cfe7 100644
+--- a/test/otel/exporter/chdb_native_declared_attributes_test.clj
++++ b/test/otel/exporter/chdb_native_declared_attributes_test.clj
+@@ -405,6 +405,121 @@
+       (is (vector? (project (@#'fixture/span {"checkout.count" 7}))))
+       (is (pos? @selected)))))
+ 
++(deftest owned-string-collector-preserves-shape-order-and-duplicate-fallback
++  (let [fast (scheme/eval-string
++               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
++        collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?
++                                                @#'p/original-key-string)]
++    (doseq [n [0 1 8 9 16 128]
++            wanted [#{} #{"0" "7" "Aa" "BB"}]]
++      (let [input (into {} (map #(vector (str %) %) (range n)))
++            input (if (> n 8) (assoc input "Aa" 101 "BB" 102) input)]
++        (when (<= (count input) 128)
++          (let [expected (portable-collect input wanted)
++                actual (fast input wanted #'p/key-string #'clojure.core/contains?
++                             @#'p/original-key-string)]
++            (is (map? actual))
++            (is (= expected actual)) (is (= (vec expected) (vec actual)))
++            (is (= (class expected) (class actual)))
++            (is (= (meta expected) (meta actual)))))))
++    (let [input {"checkout.count" 1 :checkout.count 2} wanted #{"checkout.count"}]
++      (is (false? (fast input wanted #'p/key-string #'clojure.core/contains?
++                       @#'p/original-key-string)))
++      (is (= {"checkout.count" [1 2]} (collect input wanted))))))
++
++(deftest owned-string-collector-rejects-preinstalled-policy-and-preserves-effects
++  (let [input (into {} (map #(vector (str %) %) (range 16))) wanted #{"0" "7"}
++        fast (scheme/eval-string
++               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
++        original @#'p/original-key-string]
++    (doseq [changed [:normalizer :membership]]
++      (let [effects (atom [])
++            replacements
++            (case changed
++              :normalizer {#'p/key-string (fn [key] (swap! effects conj [:key key]) (original key))}
++              :membership {#'clojure.core/contains?
++                           (fn [_ key] (swap! effects conj [:member key]) (= key "7"))})]
++        (with-redefs-fn replacements
++          (fn []
++            ;; Even a replacement installed before construction is not stock.
++            (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
++              (is (false? (fast input wanted #'p/key-string #'clojure.core/contains? original)))
++              (is (empty? @effects))
++              (let [out (collect input wanted)]
++                (is (= 16 (count @effects)))
++                (is (= (mapv first input) (mapv second @effects)))
++                (is (= (if (= changed :membership) {"7" [7]} {"0" [0] "7" [7]}) out))))))))))
++
++(deftest owned-string-collector-unsupported-inputs-run-generic-callbacks-once
++  (let [fast (scheme/eval-string
++               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
++        original @#'p/original-key-string]
++    (doseq [input [{"0" 1 :0 2} (into {} (map #(vector (str %) %) (range 129)))]
++            wanted [#{"0"} (set (map str (range 9)))]]
++      (is (false? (fast input wanted #'p/key-string #'clojure.core/contains? original))))
++    (let [calls (atom []) input {"before" 1 :alias 2 "after" 3}
++          collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
++      (with-redefs [p/key-string (fn [key] (swap! calls conj key) (original key))]
++        (is (= (portable-collect input #{"alias"}) (collect input #{"alias"})))
++        (is (= (concat (map first input) (map first input)) @calls))))))
++
++(deftest owned-string-collector-actually-selects-fast-path-and-keeps-fallback
++  (with-redefs [native/declared
++                "(lambda (m wanted key-var contains-var) (error 'control \"generic collector reached\"))"]
++    (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?
++                                                  @#'p/original-key-string)]
++      (is (= {"count" [7]} (collect {"count" 7 "other" false} #{"count"})))
++      (is (= {"7" [7]} (collect (into {} (map #(vector (str %) %) (range 16))) #{"7"})))
++      (with-redefs [p/key-string (fn [key] key)]
++        (is (thrown? Throwable (collect {"count" 7} #{"count"}))))
++      (is (thrown? Throwable (collect {:count 7} #{"count"}))))))
++
++(deftest owned-string-collector-declines-changed-string-predicate
++  (let [fast (scheme/eval-string
++               (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
++        original-string? string?
++        result (with-redefs [clojure.core/string? (fn [value] (original-string? value))]
++                 (fast {"count" 7} #{"count"} #'p/key-string #'clojure.core/contains?
++                       @#'p/original-key-string))]
++    (is (false? result))))
++
++(deftest owned-string-collector-wanted-boundaries-and-bound-vars-remain-live
++  (let [factory (scheme/eval-string
++                  (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss")))
++        original @#'p/original-key-string
++        fast (factory #'p/key-string #'clojure.core/contains? original)
++        input (into {} (map #(vector (str %) %) (range 16)))
++        eight (set (map str (range 8)))]
++    (is (= (portable-collect input eight) (fast input eight)))
++    (is (= (vec (portable-collect input eight)) (vec (fast input eight))))
++    (is (false? (fast input (conj eight "8"))))
++    (is (false? (fast input #{"0" :non-string})))
++    (with-redefs [p/key-string (fn [key] key)]
++      (is (false? (fast input eight))))
++    (is (= (portable-collect input eight) (fast input eight)))))
++
++(deftest owned-string-collector-post-scan-policy-change-declines-before-fallback
++  (let [source (slurp (io/resource "otel/exporter/chdb/native_declared_strings.ss"))
++        changed (atom 0) calls (atom []) original @#'p/original-key-string
++        mutation (fn [] (swap! changed inc)
++                   (alter-var-root #'p/key-string
++                     (constantly (fn [key] (swap! calls conj key) (original key)))))
++        injected (str "(lambda (change) (let ((fold pmap-fold-seq-order) (calls 0)) "
++                      "(let ((pmap-fold-seq-order (lambda (m f init) "
++                      "(let ((out (fold m f init))) (set! calls (+ calls 1)) "
++                      "(when (= calls 2) (jolt-invoke0 change)) out)))) " source ")))" )
++        fast-factory ((scheme/eval-string injected) mutation)
++        input (into {} (map #(vector (str %) %) (range 16))) wanted #{"7"}]
++    (with-redefs [p/key-string original]
++      (let [fast (fast-factory #'p/key-string #'clojure.core/contains? original)]
++        (is (false? (fast input wanted)))
++        (is (= 1 @changed)) (is (empty? @calls))
++        ;; The declined pure scan has not run a converter. Its normal fallback
++        ;; therefore runs the new converter exactly once for each input entry.
++        (let [collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains? original)]
++          (is (= {"7" [7]} (collect input wanted)))
++          (is (= (mapv first input) @calls)))))))
++
+ (defn -main [& _]
+   (let [r (clojure.test/run-tests 'otel.exporter.chdb-native-declared-attributes-test)]
+     (System/exit (if (and (pos? (:test r)) (zero? (+ (:fail r) (:error r)))) 0 1))))
+diff --git a/test/otel/exporter/chdb_sdk_scalar_map_test.clj b/test/otel/exporter/chdb_sdk_scalar_map_test.clj
+new file mode 100644
+index 0000000..39ea84e
+--- /dev/null
++++ b/test/otel/exporter/chdb_sdk_scalar_map_test.clj
+@@ -0,0 +1,71 @@
++(ns otel.exporter.chdb-sdk-scalar-map-test
++  (:require [clojure.test :refer [deftest is] :as t]
++            [otel.any-value :as any]
++            [otel.exporter.chdb :as e]))
++
++(defn fixture [n]
++  (into {} (map (fn [i] [(str "key-" i) (case (mod i 3) 0 "λ\n\"" 1 false i)]) (range n))))
++
++(defn oracle [m]
++  (into {} (map (fn [[k v]] [(@#'e/key-string k) (@#'e/value-string v)]) m)))
++
++(defn convert [m]
++  (with-bindings {#'e/*json-backend* :native-guarded-byte-batch}
++    (@#'e/attrs m)))
++
++(deftest stock-sdk-path-is-selected-before-the-native-fallback
++  (let [m (with-meta (fixture 16) {:source true})]
++    (with-redefs [e/small-attribute-transform
++                  (delay (fn [_] (throw (ex-info "fallback-must-not-run" {}))))]
++      (let [result (convert m)]
++        (is (= (oracle m) result))
++        (is (= (vec (keys m)) (vec (keys result))))
++        (is (nil? (meta result)))
++        (is (= {:source true} (meta m)))))))
++
++(deftest unsupported-input-and-missing-sdk-helper-retain-conversion
++  (doseq [m [(fixture 8) (fixture 129) (assoc (fixture 16) :alias 42)
++             (assoc (fixture 16) "float" 1.25)
++             (assoc (fixture 16) "nil" nil)
++             (assoc (fixture 16) "nested" {"x" [1 false]})
++             (assoc (fixture 16) "Aa" 1 "BB" 2)]]
++    (is (= (oracle m) (convert m))))
++  (with-redefs [e/sdk-scalar-map-converter (delay nil)]
++    (is (= (oracle (fixture 16)) (convert (fixture 16))))))
++
++(deftest changed-per-entry-and-sdk-policies-remain-live
++  (let [m (fixture 16) seen (atom [])]
++    (with-redefs [e/value-string (fn [v] (swap! seen conj v) "changed")]
++      (is (= (zipmap (keys m) (repeat "changed")) (convert m)))
++      (is (= (vec (vals m)) @seen)))
++    (reset! seen [])
++    (with-redefs [any/try-scalar-string (fn [v] (swap! seen conj v) "sdk-change")]
++      (is (= (zipmap (keys m) (repeat "sdk-change")) (convert m)))
++      (is (= (vec (vals m)) @seen)))
++    (with-redefs [e/key-string (fn [k] (str "new-" k))]
++      (is (= (oracle m) (convert m))))
++    (with-redefs [any/default-limits (into {} any/default-limits)]
++      (is (= (oracle m) (convert m))))))
++
++(deftest late-exporter-policy-change-after-sdk-call-falls-back
++  (let [m (fixture 16) original @#'e/value-string
++        sdk-var (ns-resolve 'otel.any-value 'try-scalar-string-map)
++        sdk-original @sdk-var
++        seen (atom [])]
++    (with-redefs-fn
++      {#'e/value-string original
++       sdk-var (fn [value]
++                 (let [converted (sdk-original value)]
++                   (alter-var-root #'e/value-string
++                                   (constantly (fn [v] (swap! seen conj v) "late")))
++                   converted))}
++      #(do (is (= (zipmap (keys m) (repeat "late")) (convert m)))
++           (is (= (vec (vals m)) @seen))))))
++
++(defn -main [& _]
++  (let [sdk-var (ns-resolve 'otel.any-value 'try-scalar-string-map)]
++    (assert (and sdk-var (some? (@sdk-var (fixture 16))))
++            "explicit gate requires the new SDK native capability"))
++  (let [{:keys [test pass fail error]} (t/run-tests 'otel.exporter.chdb-sdk-scalar-map-test)]
++    (assert (and (>= test 4) (>= pass 20)))
++    (System/exit (if (zero? (+ fail error)) 0 1))))
+diff --git a/test/otel/exporter/chdb_sdk_sorted_scalar_map_test.clj b/test/otel/exporter/chdb_sdk_sorted_scalar_map_test.clj
+new file mode 100644
+index 0000000..86930dd
+--- /dev/null
++++ b/test/otel/exporter/chdb_sdk_sorted_scalar_map_test.clj
+@@ -0,0 +1,68 @@
++(ns otel.exporter.chdb-sdk-sorted-scalar-map-test
++  (:require [clojure.test :refer [deftest is run-tests]]
++            [otel.any-value :as any] [otel.exporter.chdb :as e]
++            [otel.exporter.chdb-sdk-scalar-map-test :refer [fixture oracle convert]]
++            [jolt.host :as host]))
++
++(defn sorted-fixture [n] (into (sorted-map) (fixture n)))
++
++(deftest source-owned-sorted-path-precedes-native-and-generic-fallbacks
++  (let [m (with-meta (sorted-fixture 16) {:source true}) expected (oracle m)]
++    (with-redefs [e/small-attribute-transform
++                  (delay (fn [_] (throw (ex-info "must-not-fallback" {}))))]
++      (let [actual (convert m)]
++        (is (= expected actual))
++        (is (= (type expected) (type actual)))
++        (is (= (vec expected) (vec actual)))
++        (is (nil? (meta actual)))
++        (is (= {:source true} (meta m)))))))
++
++(deftest unsupported-inputs-and-missing-helper-retain-normal-conversion
++  (doseq [m [(sorted-fixture 129) (assoc (sorted-fixture 16) "nil" nil)
++             (assoc (sorted-fixture 16) "float" 1.25)
++             (assoc (sorted-fixture 16) "nested" [1 false])
++             (sorted-map :alias 42) (assoc (sorted-fixture 9) "Aa" 1 "BB" 2)]]
++    (is (= (vec (oracle m)) (vec (convert m)))))
++  (with-redefs [e/sdk-sorted-scalar-map-converter (delay nil)]
++    (is (= (oracle (sorted-fixture 16)) (convert (sorted-fixture 16))))))
++
++(deftest custom-operations-are-not-tried-before-fallback
++  (let [m (sorted-fixture 16) calls (atom 0)
++        entries (vec m) ops (host/ref-get m :ops)]
++    (host/ref-put! m :ops (assoc ops :seq (fn [_] (swap! calls inc) (seq entries))))
++    (is (= (into {} (map (fn [[k v]] [k (any/try-scalar-string v)])) entries) (convert m)))
++    (is (= 1 @calls))))
++
++(deftest changed-exporter-and-sdk-policies-remain-live
++  (let [m (sorted-fixture 16) seen (atom [])]
++    (with-redefs [e/value-string (fn [v] (swap! seen conj v) "changed")]
++      (is (= (zipmap (keys m) (repeat "changed")) (convert m)))
++      (is (= (vec (vals m)) @seen)))
++    (reset! seen [])
++    (with-redefs [any/try-scalar-string (fn [v] (swap! seen conj v) "sdk-change")]
++      (is (= (zipmap (keys m) (repeat "sdk-change")) (convert m)))
++      (is (= (vec (vals m)) @seen)))
++    (with-redefs [e/key-string (fn [k] (str "new-" k))]
++      (is (= (oracle m) (convert m))))))
++
++(deftest late-policy-change-does-not-call-a-second-sdk-helper-or-accept-result
++  (let [m (sorted-fixture 16) sdk-var (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)
++        actual @sdk-var original @#'e/value-string seen (atom [])]
++    (with-redefs-fn
++      {#'e/value-string original
++       #'any/try-scalar-string-map (fn [_] (throw (ex-info "second-helper-must-not-run" {})))
++       sdk-var (fn [value]
++                 (let [result (actual value)]
++                   (alter-var-root #'e/value-string
++                                   (constantly (fn [v] (swap! seen conj v) "late")))
++                   result))}
++      #(do (is (= (zipmap (keys m) (repeat "late")) (convert m)))
++           (is (= (vec (vals m)) @seen))))))
++
++(defn -main [& _]
++  (let [sdk-var (ns-resolve 'otel.any-value 'try-sorted-scalar-string-map)]
++    (assert (and sdk-var (some? (@sdk-var (sorted-fixture 16))))
++            "strict gate requires the new SDK sorted-map capability"))
++  (let [r (run-tests 'otel.exporter.chdb-sdk-sorted-scalar-map-test)]
++    (assert (= 5 (:test r)))
++    (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))
+diff --git a/test/otel/exporter/chdb_sorted_event_encoding_test.clj b/test/otel/exporter/chdb_sorted_event_encoding_test.clj
+new file mode 100644
+index 0000000..3a1bd12
+--- /dev/null
++++ b/test/otel/exporter/chdb_sorted_event_encoding_test.clj
+@@ -0,0 +1,65 @@
++(ns otel.exporter.chdb-sorted-event-encoding-test
++  (:require [clojure.test :refer [deftest is run-tests]]
++            [clojure.string :as str]
++            [clojure.data.json :as json]
++            [clojure.data.json.jolt-native :as native]
++            [otel.exporter.chdb :as e]
++            [otel.sdk.tracer :as sdk] [otel.sdk.export :as export]
++            [otel.exporter.memory :as memory] [otel.resource :as resource]
++            [otel.trace :as trace]))
++
++(defn ended-spans []
++  (let [attrs (into {"service.name" "sorted-event-test" "flag" false "count" 42}
++                    (map (fn [i] [(str "extra-" i)
++                                  (case (mod i 3) 0 "λ\n\"😀" 1 false i)]) (range 14)))
++        sink (memory/exporter)
++        provider (sdk/tracer-provider {:resource (resource/resource attrs)
++                                       :processors [(export/simple-processor sink)]})
++        tracer (sdk/get-tracer provider {:name "sorted-event-test" :attributes attrs})]
++    (try
++      (dotimes [i 2]
++        (trace/with-span [span tracer (str "scenario-" i) {:attributes attrs}]
++          (trace/add-event! span "event" attrs)))
++      (finally (assert (sdk/shutdown! provider))))
++    (memory/spans sink)))
++
++(defn stock-payload [spans compact?]
++  (with-bindings {#'e/*json-backend* :configured #'e/*timestamp-wire* :raw-ticks}
++    (apply str (map #(str (json/write-str (@#'e/span-row % nil compact?)) "\n") spans))))
++
++(defn native-payload [spans compact? prefix budget]
++  (with-bindings {#'e/*json-backend* :native-guarded-byte-batch #'e/*timestamp-wire* :raw-ticks}
++    (native/write-prefixed-batch-bytes!
++      prefix (map #(@#'e/span-row % nil compact?) spans) budget)))
++
++(deftest actual-sdk-sorted-events-have-identical-named-and-compact-bytes
++  (let [spans (ended-spans)]
++    (is (= 2 (count spans)))
++    (is (every? #(sorted? (get-in % [:resource :attributes])) spans))
++    (is (every? #(sorted? (get-in % [:events 0 :attributes])) spans))
++    (doseq [compact? [false true]]
++      (let [expected (stock-payload spans compact?)
++            actual (String. (native-payload spans compact? "" 100000) "UTF-8")]
++        (is (= expected actual))
++        (is (= 2 (count (str/split-lines actual))))))
++    (let [row (json/read-str (first (str/split-lines
++                                    (String. (native-payload spans false "" 100000) "UTF-8"))))
++          event (first (json/read-str (get row "EventsJSON")))]
++      (is (false? (get-in event ["attributes" "flag"])))
++      (is (= 42 (get-in event ["attributes" "count"])))
++      (is (= "λ\n\"😀" (get-in event ["attributes" "extra-0"]))))))
++
++(deftest event-rich-output-honors-exact-newline-inclusive-byte-limit
++  (let [spans (ended-spans) prefix "prefix-not-in-budget "
++        expected (stock-payload spans true)
++        budget (alength (.getBytes expected "UTF-8"))]
++    (is (= (str prefix expected)
++           (String. (native-payload spans true prefix budget) "UTF-8")))
++    (is (= ::native/output-limit
++           (:type (ex-data (try (native-payload spans true prefix (dec budget))
++                               nil (catch Throwable error error))))))))
++
++(defn -main [& _]
++  (let [r (run-tests 'otel.exporter.chdb-sorted-event-encoding-test)]
++    (assert (and (= 2 (:test r)) (>= (:pass r) 12)))
++    (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

@@ -1,0 +1,42 @@
+data.json scalar-indexed Jolt compatibility
+  ok   host strings are scalar-indexed
+  ok   Character.toChars constructs one scalar
+  ok   escaped surrogate pair reads as one scalar
+  ok   raw supplementary scalar reads unchanged
+  ok   supplementary scalar writes directly
+  ok   supplementary scalar writes as a JSON surrogate pair
+  ok   mixed string round-trips
+  ok   object keys and values round-trip
+  ok   no-options write and write-str agree over scalar and nested corpus
+  ok   explicit write-str options retain variadic override behavior
+  ok   explicit write options retain variadic override behavior
+  ok   default map entries keep exact escaped JSON bytes
+  ok   default writer to Writer keeps the same bytes
+  ok   custom key callback still runs for every nested key
+  ok   custom map callbacks still run for every key and value
+  ok   custom value callback still omits its own sentinel
+  ok   map seq reuse preserves nested key order and omitted value bytes
+  ok   map seq reuse preserves key callback order
+  ok   map seq reuse preserves value callback order
+  ok   simple escapes preserve values and nonzero/boundary positions
+  ok   StringPBR empty and nonempty ordinary runs preserve values
+  ok   StringPBR empty runs do not append a substring
+  ok   StringPBR nonempty runs append the selected substring
+  ok   Unicode, surrogate, and raw astral paths preserve final position
+  ok   malformed and EOF fallbacks retain Reader errors
+  ok   malformed and EOF fallbacks retain StringPBR positions
+  ok   StringPBR simple escapes avoid per-escape Reader decoding
+  ok   ReaderPBR simple escapes retain per-escape Reader decoding
+  ok   StringPBR Unicode retains the shared escape decoder
+  ok   StringPBR invalid escape retains shared decoder
+  ok   StringPBR escape EOF retains shared decoder
+  ok   long read-str values match the generic Reader path
+  ok   long malformed strings match the generic Reader errors
+  ok   long read-str preserves the remaining-data position
+  ok   long read-str bypasses the scalar Reader fallback
+  ok   generic Reader retains the scalar fallback
+  ok   unescaped tail is appended as one bulk run
+  ok   unescaped astral scalar stays inside one scalar-indexed bulk run
+  ok   unpaired high surrogate is rejected
+  ok   unpaired low surrogate is rejected
+all checks passed

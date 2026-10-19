@@ -1,0 +1,22 @@
+FAIL: function/map mismatch is decided by the sorted fast path
+FAIL: function/set mismatch is decided by the sorted fast path
+  (first (seq sm)): 4528 bytes at 10k, 4560 at 40k
+  (doall (take 3 sm)): 4976 bytes at 10k, 5008 at 40k
+  (first (rseq sm)): 4384 bytes at 10k, 4416 at 40k
+  (first (keys sm)): 1296 bytes at 10k, 1328 at 40k
+  (second (vals sm)): 1360 bytes at 10k, 1392 at 40k
+  (first (subseq ss >= 5000)): 2064 bytes at 10k, 2160 at 40k
+  (first (rsubseq ss < 5000)): 2128 bytes at 10k, 2192 at 40k
+  a repeated (hash sm): 112 bytes at 10k, 112 at 40k
+  (= ss ss2) with different counts: 592 bytes at 10k, 592 at 40k
+  (= identity sm) rejects without normalization: 8251088 bytes at 10k, 38236808 at 40k
+FAIL: (= identity sm) rejects without normalization does not grow with the coll (8251088 -> 38236808 bytes, limit 1024)
+  (= sm identity) rejects without normalization: 8251184 bytes at 10k, 38236904 at 40k
+FAIL: (= sm identity) rejects without normalization does not grow with the coll (8251184 -> 38236904 bytes, limit 1024)
+  (= identity ss) rejects without normalization: 8570688 bytes at 10k, 39516564 at 40k
+FAIL: (= identity ss) rejects without normalization does not grow with the coll (8570688 -> 39516564 bytes, limit 1024)
+  (= ss identity) rejects without normalization: 8570880 bytes at 10k, 39516835 at 40k
+FAIL: (= ss identity) rejects without normalization does not grow with the coll (8570880 -> 39516835 bytes, limit 1024)
+  = of two equal 40k sorted sets: 32 bytes/entry
+  full next-walk of a 40k sorted map: 189 bytes/entry
+62/68 passed

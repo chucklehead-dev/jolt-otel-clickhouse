@@ -1,0 +1,9 @@
+Unhandled exception (FileNotFoundException): Could not locate grenadine/pom.jolt (or .clj/.cljc) on the source roots
+  at jolt-core/jolt/deps.clj:1:1
+  trace:
+    for-each
+    ns-require+use
+    ldr-load-body
+    for-each
+    ns-require+use
+    ldr-load-body

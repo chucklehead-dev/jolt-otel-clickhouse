@@ -1,0 +1,10 @@
+:stock-fold-real-binary :entered
+
+Ran 5 tests. 24 assertions passed, 0 failures, 0 errors.
+
+Ran 36 tests. 799 assertions passed, 0 failures, 0 errors.
+
+Ran 10 tests. 34 assertions passed, 0 failures, 0 errors.
+
+Ran 14 tests. 149 assertions passed, 0 failures, 0 errors.
+{:gate :stock-fold-real-binary, :complete true, :passed true, :source-overlay false, :results [{:test 5, :pass 24, :fail 0, :error 0, :type :summary, :namespace clojure.data.json-stock-sorted-fold-test} {:test 36, :pass 799, :fail 0, :error 0, :type :summary, :namespace clojure.data.json-byte-writer-test} {:test 10, :pass 34, :fail 0, :error 0, :type :summary, :namespace clojure.data.json-sorted-byte-test} {:test 14, :pass 149, :fail 0, :error 0, :type :summary, :namespace clojure.data.json-segmented-batch-test}]}

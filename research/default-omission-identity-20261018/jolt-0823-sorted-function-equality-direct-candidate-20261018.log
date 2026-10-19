@@ -1,0 +1,16 @@
+  (first (seq sm)): 4528 bytes at 10k, 4560 at 40k
+  (doall (take 3 sm)): 4976 bytes at 10k, 5008 at 40k
+  (first (rseq sm)): 4384 bytes at 10k, 4416 at 40k
+  (first (keys sm)): 1296 bytes at 10k, 1328 at 40k
+  (second (vals sm)): 1360 bytes at 10k, 1392 at 40k
+  (first (subseq ss >= 5000)): 2064 bytes at 10k, 2160 at 40k
+  (first (rsubseq ss < 5000)): 2128 bytes at 10k, 2192 at 40k
+  a repeated (hash sm): 112 bytes at 10k, 112 at 40k
+  (= ss ss2) with different counts: 592 bytes at 10k, 592 at 40k
+  (= identity sm) rejects without normalization: 208 bytes at 10k, 208 at 40k
+  (= sm identity) rejects without normalization: 304 bytes at 10k, 304 at 40k
+  (= identity ss) rejects without normalization: 304 bytes at 10k, 304 at 40k
+  (= ss identity) rejects without normalization: 496 bytes at 10k, 496 at 40k
+  = of two equal 40k sorted sets: 32 bytes/entry
+  full next-walk of a 40k sorted map: 189 bytes/entry
+68/68 passed

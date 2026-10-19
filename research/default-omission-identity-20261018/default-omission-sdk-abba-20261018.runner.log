@@ -1,0 +1,13 @@
+index=0 arm=baseline owned_store=/tmp/default-omission-sdk-abba-20261018.IUNW6Mwv
+index=0 arm=baseline writer_reader_validator_terminal0 owned_store=/tmp/default-omission-sdk-abba-20261018.IUNW6Mwv
+index=0 retired_validated_synthetic_store=/tmp/default-omission-sdk-abba-20261018.IUNW6Mwv
+index=1 arm=candidate owned_store=/tmp/default-omission-sdk-abba-20261018.YYWrBFsp
+index=1 arm=candidate writer_reader_validator_terminal0 owned_store=/tmp/default-omission-sdk-abba-20261018.YYWrBFsp
+index=1 retired_validated_synthetic_store=/tmp/default-omission-sdk-abba-20261018.YYWrBFsp
+index=2 arm=candidate owned_store=/tmp/default-omission-sdk-abba-20261018.iTf3FPvX
+index=2 arm=candidate writer_reader_validator_terminal0 owned_store=/tmp/default-omission-sdk-abba-20261018.iTf3FPvX
+index=2 retired_validated_synthetic_store=/tmp/default-omission-sdk-abba-20261018.iTf3FPvX
+index=3 arm=baseline owned_store=/tmp/default-omission-sdk-abba-20261018.lBgJ4xho
+index=3 arm=baseline writer_reader_validator_terminal0 owned_store=/tmp/default-omission-sdk-abba-20261018.lBgJ4xho
+index=3 retired_validated_synthetic_store=/tmp/default-omission-sdk-abba-20261018.lBgJ4xho
+all_four_arms_terminal0_and_owned_stores_retired

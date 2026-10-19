@@ -1,0 +1,1 @@
+:completed :no-gc-rounds 16 :boundaries {:json-site {:calls 1408, :gross-bytes 79120}, :key-policy {:calls 192, :gross-bytes 0}, :omission-equality {:calls 0, :gross-bytes 0}, :sorted-fold {:calls 64, :gross-bytes 7056}, :pmap-fold {:calls 64, :gross-bytes 161024}, :publication {:calls 324, :gross-bytes 67264}}
