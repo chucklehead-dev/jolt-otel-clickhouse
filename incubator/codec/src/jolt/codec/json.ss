@@ -4,6 +4,7 @@
 ;; and vectors. No custom JSONWriter dispatch, key/value hooks or sequences yet.
 ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
 ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
+(define-record-type ffc-json-text (fields bytes))
 (define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix)
   (unless (and (fixnum? limit) (fx>=? limit 0)
                (fixnum? max-depth) (fx>=? max-depth 0))
@@ -85,6 +86,24 @@
                   (begin (set! used cursor) (escaped-char! cp)
                          (loop (fx+ i 1) used))))))))
       (byte! 34))
+    ;; This is encoded ASCII JSON used as a STRING field in outer JSON, not a
+    ;; raw JSON splice. Bytes come only from this backend's private encoder.
+    (define (encoded-text! bytes)
+      (byte! 34)
+      (let ((n (bytevector-length bytes)))
+        (let loop ((i 0) (cursor used))
+          (cond
+           ((fx=? i n) (set! used cursor))
+           ((fx=? cursor (bytevector-length tail))
+            (set! used cursor) (ensure-space!) (loop i used))
+           (else
+            (let ((cp (#3%bytevector-u8-ref bytes i)))
+              (if (and (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
+                  (begin (#3%bytevector-u8-set! tail cursor cp)
+                         (loop (fx+ i 1) (fx+ cursor 1)))
+                  (begin (set! used cursor) (escaped-char! cp)
+                         (loop (fx+ i 1) used))))))))
+      (byte! 34))
     (define (integer! n)
       ;; Bignums retain a correct but allocating fallback. No false no-allocation
       ;; claim for arbitrary numeric sizes; telemetry's 64-bit range uses scratch.
@@ -121,6 +140,7 @@
        ((jolt-nil? x) (ascii! "null"))
        ((boolean? x) (ascii! (if x "true" "false")))
        ((string? x) (string! x))
+       ((ffc-json-text? x) (encoded-text! (ffc-json-text-bytes x)))
        ((and (integer? x) (exact? x)) (integer! x))
        ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
        ((keyword? x) (string! (keyword-t-name x)))
@@ -164,6 +184,8 @@
   (ffc-json-encode rows limit max-depth #t #f #f ""))
 (define (ffc-json-ascii-bytes value limit max-depth)
   (ffc-json-encode value limit max-depth #f #t #f ""))
+(define (ffc-json-nested-text value limit max-depth)
+  (make-ffc-json-text (jolt-array-vec (ffc-json-ascii-bytes value limit max-depth))))
 (define (ffc-json-ascii-lines-bytes rows limit max-depth)
   (ffc-json-encode rows limit max-depth #t #t #f ""))
 (define (ffc-json-project-ascii-lines-bytes rows project limit max-depth)

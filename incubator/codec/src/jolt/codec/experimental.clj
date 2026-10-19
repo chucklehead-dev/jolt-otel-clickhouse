@@ -9,10 +9,18 @@
     (throw (ex-info "Missing experimental codec resource" {}))))
 (def ^:private traversal-source (embedded "jolt/codec/traversal.ss"))
 (def ^:private json-source (embedded "jolt/codec/json.ss"))
+(defn- qualify-nested-text! [scalar nested]
+  ;; Exercise this backend's producer/consumer bridge before storage acquisition.
+  ;; A raw JSON splice mutant must differ from the prior String operation.
+  (let [probe {"probe" "quote\"/\\\nλ😀"}
+        ordinary (String. (scalar probe 1000 128) "UTF-8")]
+    (when-not (= (String. (scalar ordinary 4000 128) "UTF-8")
+                 (String. (scalar (nested probe 1000 128) 4000 128) "UTF-8"))
+      (throw (ex-info "Unsupported experimental nested-text runtime" {:type ::unavailable})))))
 (def ^:private backend
   (delay
     ;; Lexical definitions avoid process-global Scheme helper replacement.
-    (let [[scalar project qualify fold]
+    (let [[scalar project qualify fold nested]
           (scheme/eval-string
             (str "(let () " traversal-source "\n" json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
@@ -21,15 +29,18 @@
                  "      (eq? (record-type-uid (record-rtd v)) 'chez-pvec-v4)"
                  "      (eq? (record-type-uid (record-rtd s)) 'chez-htable-v2)"
                  "      (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1)"
-                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold))"))]
+                 "      (eq? (record-type-uid (record-type-descriptor hcoll)) 'chez-hcoll-v1)"
+                 "      (equal? (record-type-field-names (record-type-descriptor hcoll)) '#(hash alist))"
+                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold ffc-json-nested-text))"))]
       (when-not (and (qualify {} [] (sorted-map) (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
-      [scalar project fold])))
+      (qualify-nested-text! scalar nested)
+      [scalar project fold nested])))
 
-(deftype ^:private Codec [tag scalar project fold])
+(deftype ^:private Codec [tag scalar project fold nested])
 (defn open-codec []
-  (let [[scalar project fold] @backend] (Codec. seal scalar project fold)))
+  (let [[scalar project fold nested] @backend] (Codec. seal scalar project fold nested)))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
@@ -49,6 +60,15 @@
   (require-codec! codec)
   (if (and (vector? value) (empty? value)) "[]"
     (String. ((.-scalar codec) value 67108864 128) "UTF-8")))
+
+(defn prepare-nested-text
+  "Internal opaque JSON-text value for this codec's outer STRING encoding.
+  Eagerly encode once into private bytes, without an intermediate String.
+  Not raw JSON, a mutable byte array, or a replacement for write-nested."
+  [codec value]
+  (require-codec! codec)
+  (if (and (vector? value) (empty? value)) "[]"
+    ((.-nested codec) value 67108864 128)))
 
 (defn encode-prefixed-records
   "Return fresh ASCII bytes for prefix + projected JSON lines. Payload limit

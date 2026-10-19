@@ -1,0 +1,184 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 002c0f6..8689e6c 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,10 @@
+ 
+ ## Unreleased
+ 
++- Keep nested event/link JSON in private encoded bytes inside the explicit
++  span codec, avoiding its intermediate String. Outer fields remain JSON
++  strings, not raw JSON splices; ordinary writers and Durable bytes are unchanged.
++
+ - Share the experimental codec's library-owned map walker with attribute
+   projection and avoid loading the old native JSON backend in that opt-in path.
+   Ordinary backends retain their existing selection and conversion behavior.
+diff --git a/incubator/codec/src/jolt/codec/experimental.clj b/incubator/codec/src/jolt/codec/experimental.clj
+index 29a8371..dbdffbf 100644
+--- a/incubator/codec/src/jolt/codec/experimental.clj
++++ b/incubator/codec/src/jolt/codec/experimental.clj
+@@ -12,7 +12,7 @@
+ (def ^:private backend
+   (delay
+     ;; Lexical definitions avoid process-global Scheme helper replacement.
+-    (let [[scalar project qualify fold]
++    (let [[scalar project qualify fold nested]
+           (scheme/eval-string
+             (str "(let () " traversal-source "\n" json-source
+                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
+@@ -21,15 +21,17 @@
+                  "      (eq? (record-type-uid (record-rtd v)) 'chez-pvec-v4)"
+                  "      (eq? (record-type-uid (record-rtd s)) 'chez-htable-v2)"
+                  "      (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1)"
+-                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold))"))]
++                 "      (eq? (record-type-uid (record-type-descriptor hcoll)) 'chez-hcoll-v1)"
++                 "      (equal? (record-type-field-names (record-type-descriptor hcoll)) '#(hash alist))"
++                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold ffc-json-nested-text))"))]
+       (when-not (and (qualify {} [] (sorted-map) (byte-array 0))
+                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
+         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
+-      [scalar project fold])))
++      [scalar project fold nested])))
+ 
+-(deftype ^:private Codec [tag scalar project fold])
++(deftype ^:private Codec [tag scalar project fold nested])
+ (defn open-codec []
+-  (let [[scalar project fold] @backend] (Codec. seal scalar project fold)))
++  (let [[scalar project fold nested] @backend] (Codec. seal scalar project fold nested)))
+ (defn- require-codec! [codec]
+   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
+     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
+@@ -50,6 +52,15 @@
+   (if (and (vector? value) (empty? value)) "[]"
+     (String. ((.-scalar codec) value 67108864 128) "UTF-8")))
+ 
++(defn prepare-nested-text
++  "Internal opaque JSON-text value for this codec's outer STRING encoding.
++  Eagerly encode once into private bytes, without an intermediate String.
++  Not raw JSON, a mutable byte array, or a replacement for write-nested."
++  [codec value]
++  (require-codec! codec)
++  (if (and (vector? value) (empty? value)) "[]"
++    ((.-nested codec) value 67108864 128)))
++
+ (defn encode-prefixed-records
+   "Return fresh ASCII bytes for prefix + projected JSON lines. Payload limit
+   excludes prefix but includes row newlines. Projection runs once per record;
+diff --git a/incubator/codec/src/jolt/codec/json.ss b/incubator/codec/src/jolt/codec/json.ss
+index 6b7d98f..9403a13 100644
+--- a/incubator/codec/src/jolt/codec/json.ss
++++ b/incubator/codec/src/jolt/codec/json.ss
+@@ -4,6 +4,7 @@
+ ;; and vectors. No custom JSONWriter dispatch, key/value hooks or sequences yet.
+ ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
+ ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
++(define-record-type ffc-json-text (fields bytes))
+ (define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix)
+   (unless (and (fixnum? limit) (fx>=? limit 0)
+                (fixnum? max-depth) (fx>=? max-depth 0))
+@@ -85,6 +86,24 @@
+                   (begin (set! used cursor) (escaped-char! cp)
+                          (loop (fx+ i 1) used))))))))
+       (byte! 34))
++    ;; This is encoded ASCII JSON used as a STRING field in outer JSON, not a
++    ;; raw JSON splice. Bytes come only from this backend's private encoder.
++    (define (encoded-text! bytes)
++      (byte! 34)
++      (let ((n (bytevector-length bytes)))
++        (let loop ((i 0) (cursor used))
++          (cond
++           ((fx=? i n) (set! used cursor))
++           ((fx=? cursor (bytevector-length tail))
++            (set! used cursor) (ensure-space!) (loop i used))
++           (else
++            (let ((cp (#3%bytevector-u8-ref bytes i)))
++              (if (and (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
++                  (begin (#3%bytevector-u8-set! tail cursor cp)
++                         (loop (fx+ i 1) (fx+ cursor 1)))
++                  (begin (set! used cursor) (escaped-char! cp)
++                         (loop (fx+ i 1) used))))))))
++      (byte! 34))
+     (define (integer! n)
+       ;; Bignums retain a correct but allocating fallback. No false no-allocation
+       ;; claim for arbitrary numeric sizes; telemetry's 64-bit range uses scratch.
+@@ -121,6 +140,7 @@
+        ((jolt-nil? x) (ascii! "null"))
+        ((boolean? x) (ascii! (if x "true" "false")))
+        ((string? x) (string! x))
++       ((ffc-json-text? x) (encoded-text! (ffc-json-text-bytes x)))
+        ((and (integer? x) (exact? x)) (integer! x))
+        ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
+        ((keyword? x) (string! (keyword-t-name x)))
+@@ -164,6 +184,8 @@
+   (ffc-json-encode rows limit max-depth #t #f #f ""))
+ (define (ffc-json-ascii-bytes value limit max-depth)
+   (ffc-json-encode value limit max-depth #f #t #f ""))
++(define (ffc-json-nested-text value limit max-depth)
++  (make-ffc-json-text (jolt-array-vec (ffc-json-ascii-bytes value limit max-depth))))
+ (define (ffc-json-ascii-lines-bytes rows limit max-depth)
+   (ffc-json-encode rows limit max-depth #t #t #f ""))
+ (define (ffc-json-project-ascii-lines-bytes rows project limit max-depth)
+diff --git a/incubator/codec/test/jolt/codec/experimental_test.clj b/incubator/codec/test/jolt/codec/experimental_test.clj
+index d9460d0..2617a30 100644
+--- a/incubator/codec/test/jolt/codec/experimental_test.clj
++++ b/incubator/codec/test/jolt/codec/experimental_test.clj
+@@ -6,6 +6,46 @@
+ (defn rejects? [f] (try (f) false (catch Throwable _ true)))
+ (defn text [bytes] (String. bytes "UTF-8"))
+ 
++(deftest hash-collision-bucket-keeps-source-sequence-order
++  (let [c (codec/open-codec)
++        input (into {"Aa" 1 "BB" 2}
++                    (map (fn [i] [(str "extra-" i) i]) (range 12)))
++        expected (str "{" (apply str (interpose "," (map (fn [[k v]]
++                                            (str (codec/write-nested c k) ":" v)) input))) "}")]
++    (is (= (hash "Aa") (hash "BB")))
++    (is (= expected (codec/write-nested c input)))))
++
++(deftest prepared-nested-text-is-a-string-not-a-json-splice
++  (let [c (codec/open-codec)]
++    (doseq [value [nil false 0 -9223372036854775808 1.25 "quote\"slash/\\\nλ😀"
++                  [] [false {"x" "é😀"}] {"x" [1 false nil]}]]
++      (let [ordinary (codec/write-nested c value)
++            prepared (codec/prepare-nested-text c value)
++            expected (codec/encode-prefixed-records c "SQL\n" [ordinary] vector 10000)
++            actual (codec/encode-prefixed-records c "SQL\n" [prepared] vector 10000)
++            size (- (alength expected) 4)]
++        (is (= (text expected) (text actual)))
++        (is (= (text expected)
++               (text (codec/encode-prefixed-records c "SQL\n" [prepared] vector size))))
++        (is (rejects? #(codec/encode-prefixed-records c "SQL\n" [prepared] vector (dec size))))))
++    ;; JSON string containing JSON null, not the JSON null value.
++    (is (= "[\"null\"]\n"
++           (text (codec/encode-prefixed-records c "" [(codec/prepare-nested-text c nil)] vector 100))))
++    (is (rejects? #(codec/prepare-nested-text c (Object.))))))
++
++(deftest prepared-nested-text-chunk-boundaries-and-reuse
++  (let [c (codec/open-codec)
++        source {"text" (str (apply str (repeat 70000 "x")) "\"/\\😀")}
++        prepared (codec/prepare-nested-text c source)
++        ordinary (codec/write-nested c source)
++        emit #(codec/encode-prefixed-records c "" [%] vector 200000)
++        a (emit prepared) expected (text (emit ordinary))]
++    (is (= expected (text a)))
++    (aset-byte a 1 (byte 0))
++    (System/gc)
++    (is (= expected (text (emit prepared))))
++    (is (= (str "[" (codec/write-nested c ordinary) "]\n") expected))))
++
+ (deftest explicit-wire-values-and-prefix-budget
+   (let [c (codec/open-codec)]
+     (is (= "{\"a\":false,\"z\":0}" (codec/write-nested c (sorted-map "z" 0 "a" false))))
+diff --git a/src/otel/exporter/chdb.clj b/src/otel/exporter/chdb.clj
+index 071c55c..11312ea 100644
+--- a/src/otel/exporter/chdb.clj
++++ b/src/otel/exporter/chdb.clj
+@@ -1255,7 +1255,7 @@
+     (require 'jolt.codec.experimental)
+     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
+           encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
+-          nested @(ns-resolve 'jolt.codec.experimental 'write-nested)
++          nested @(ns-resolve 'jolt.codec.experimental 'prepare-nested-text)
+           codec (open)
+           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
+           _ (require 'otel.exporter.chdb.native-attributes)

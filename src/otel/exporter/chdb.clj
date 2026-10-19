@@ -1255,7 +1255,7 @@
     (require 'jolt.codec.experimental)
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
           encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
-          nested @(ns-resolve 'jolt.codec.experimental 'write-nested)
+          nested @(ns-resolve 'jolt.codec.experimental 'prepare-nested-text)
           codec (open)
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
           _ (require 'otel.exporter.chdb.native-attributes)

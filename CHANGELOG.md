@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Keep nested event/link JSON in private encoded bytes inside the explicit
+  span codec, avoiding its intermediate String. Outer fields remain JSON
+  strings, not raw JSON splices; ordinary writers and Durable bytes are unchanged.
+
 - Share the experimental codec's library-owned map walker with attribute
   projection and avoid loading the old native JSON backend in that opt-in path.
   Ordinary backends retain their existing selection and conversion behavior.
