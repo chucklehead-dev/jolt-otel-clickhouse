@@ -80,6 +80,10 @@ jobs:
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)
+          # New SDK-owned plans must resolve the published library, not local
+          # incubator source. The gate checks both actual resource identities.
+          (cd ../.. && "$task_bin" -Srepro \
+            -M:stock-span-codec:stock-shape-plans-test)
           # Actual old/current Git components, not a mocked missing Var.
           (cd ../.. && for task_case in \
             '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \

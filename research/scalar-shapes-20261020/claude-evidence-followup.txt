@@ -1,0 +1,20 @@
+## Review: REQUEST_CHANGES
+
+**New issue — stale test-count claim in `incubator/codec/README.md`.**
+
+`incubator/codec/test/jolt/codec/standalone_smoke_test.clj:10,22-23` now requires `jolt.codec.scalar-text.experimental-test` and hard-asserts `(= 37 (:test result))` for the combined standalone binary. But `incubator/codec/README.md:263-266` ("Checks" section) still claims:
+
+> "a default Linux standalone binary runs **32 tests / 314 assertions**"
+
+That's the pre-shape-plan count. The task's own evidence tail states the real number is **37 tests / 435 assertions** for this binary, matching the code's `37` assertion. The README text was not updated alongside the `:deps/root` SHA bump (only the coordinate line was touched, per the stated scope), so it now contradicts the shipped test harness it describes. This is exactly the kind of evidence-tail drift the review is meant to catch: a documented provenance number that no longer matches what the gate actually checks, which could mislead someone auditing coverage without re-running the gate. Low severity (doc-only, one line), but it's a concrete, verifiable discrepancy and belongs in this PR's "evidence tail," not a follow-up — recommend fixing `32 tests / 314 assertions` → `37 tests / 435 assertions` before merge.
+
+**Everything else checked out:**
+
+- `deps.edn` pins (`io.github.casselc/otel@14f58e5a5...`, `io.github.chucklehead-dev/jolt-codec@6288a7c...` via `:deps/root incubator/codec`) match the SHAs asserted throughout the test/doc tail and the `:stock-shape-plans-test`/`:stock-span-codec` aliases consistently.
+- `test/otel/exporter/chdb_dependency_test.clj` has both positive acceptance and negative-rejection coverage for every pinned provider (crypto, otel SDK, data.json, chDB), including the specifically-requested `3366a332...` ("SDK before bounded shape plans") negative case — present and correctly wired at lines 142–145. No vacuous oracle: `exact-coordinate?`/`exact-concrete-root?` require singular, canonical-path resolution and are exercised against both correct and deliberately wrong coordinates.
+- `chdb_stock_published_codec_test.clj` resource-identity check (`published-resource?`) has real positive and three negative mutations (wrong SHA, wrong owner, wrong path) before running the 71-test suite — not vacuous.
+- `chdb_shape_plans_test.clj` adds a reasonable positive-only CLI resource check (SDK/codec resolved resources); negative-SHA rejection for this same pair is already covered by the dependency test above, so no gap.
+- `.github/workflows/experimental-codec-stock.yml` wires `:stock-span-codec:stock-shape-plans-test` with matching pinned SHA args — no alias/dependency-cycle issue, and correctly layered after the existing published-codec gate. Not claimed hosted-green, consistent with the stated scope.
+- `research/scalar-shapes-20261020/README.md` and `durable/summary.edn` cross-check cleanly: pooled 9852→11907 rows/s (+20.9%), control drift ~5.9%, allocation 20061→18531 B/row, `target-qualified`/`s3-qualified`/`tail-qualified`/`live-app-capture` all `false` in the EDN, matching the prose disclaimers. `sources.sha256` confirms the writer used explicitly-named local-root worktree candidates (not relabeled as published-dependency qualification), matching the README's explicit caveat at lines 99–102.
+
+No missing positive/negative pairs, no unresolved dependency-cycle/alias issue, and no re-litigation of the already-approved algorithm was needed. The one finding above is new and should be fixed before merge.

@@ -30,6 +30,8 @@ official stock Jolt0.8.23, without compiler/data.json changes. The earlier fixed
 schema component result is not evidence of actual Durable throughput for this
 new inferred-shape integration; qualify that independently.
 
+## JSON reader
+
 The optional [explicit JSON reader](READER.md) is now a separate namespace in
 this component. It has no data.json dependency or automatic parser registration;
 numeric conversion/fallback are supplied by the consumer. Its qualification is
@@ -94,7 +96,7 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The source and Linux standalone library gates run 32 tests / 314 assertions,
+The combined source and Linux standalone library gates run 37 tests / 435 assertions,
 including the leaf-resolution mechanism and nested-scope controls.
 
 ## Use as an independent Git dependency
@@ -106,7 +108,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "98e93e2a6726c435d9b55ada9a088c2dbf5b1c99"
+   :git/sha "6288a7ccd04087f01061275367f7dabffd39cdba"
    :deps/root "incubator/codec"}}}
 ```
 
@@ -258,12 +260,12 @@ experimental; component improvements do not establish the Durable targets.
 
 The `packaging` project supplies only library/test source roots and no external
 dependencies. On official stock Jolt 0.8.23, a default Linux standalone binary
-runs **32 tests / 314 assertions**, including dynamic sorted-map operation
+runs **37 tests / 435 assertions**, including dynamic sorted-map operation
 checks, nested calls and caches. A separate traversal-only binary runs
 **5 / 51**, with the JSON namespace absent. These are functional packaging
 checks, not throughput measurements or a stable collection-layout ABI.
 The stock-library CI workflow also builds and executes the combined binary;
-hosted gates passed at the published revision above. This is not full
+check hosted status for the exact candidate revision separately. This is not full
 exporter/application standalone qualification.
 
 For a local build through the required workspace wrapper, first create a

@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-shape-plans-test
   (:require [clojure.test :refer [deftest is run-tests]]
+            [clojure.java.io :as io] [clojure.string :as str]
             [otel.exporter.chdb :as exporter]
             [otel.any-value :as any] [jdbc.core :as jdbc]
             [jolt.codec.scalar-text.experimental :as shapes]
@@ -67,6 +68,10 @@
          (:type (ex-data (failure #(exporter/check-experimental-span-codec!
                                     {:experimental-span-shape-plans? true})))))))
 
-(defn -main [& _]
+(defn -main [& [expected-sdk expected-codec]]
+  (when (or expected-sdk expected-codec)
+    (assert (and expected-sdk expected-codec))
+    (assert (str/includes? (str (io/resource "otel/any_value.clj")) expected-sdk))
+    (assert (str/includes? (str (io/resource "jolt/codec/scalar_text/experimental.clj")) expected-codec)))
   (let [r (run-tests 'otel.exporter.chdb-shape-plans-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))
