@@ -24,8 +24,14 @@
   redundant callbacks. All other cases retain the ordered generic path."
   ([key-var contains-var] (load-declared-collector! key-var contains-var false))
   ([key-var contains-var original-key]
-   (let [collect (scheme/eval-string declared)
-         fast ((scheme/eval-string string-declared) key-var contains-var original-key)]
+   (load-declared-collector! key-var contains-var original-key nil))
+  ([key-var contains-var original-key folder]
+   (let [evaluate (fn [source]
+                    (if folder
+                      ((scheme/eval-string (str "(lambda (pmap-fold-seq-order) " source ")")) folder)
+                      (scheme/eval-string source)))
+         collect (evaluate declared)
+         fast ((evaluate string-declared) key-var contains-var original-key)]
      (fn [attributes wanted]
        (or (when original-key (fast attributes wanted))
            (collect attributes wanted key-var contains-var))))))

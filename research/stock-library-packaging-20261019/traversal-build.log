@@ -1,0 +1,3 @@
+jolt build: compiling jolt.traversal.experimental-test (release mode, self-contained)
+compiling /tmp/stock-traversal-build-20261019.lRVIILGe/traversal-test.build/runtime.ss with output to /tmp/stock-traversal-build-20261019.lRVIILGe/traversal-test.build/runtime.so
+jolt build: wrote /tmp/stock-traversal-build-20261019.lRVIILGe/traversal-test

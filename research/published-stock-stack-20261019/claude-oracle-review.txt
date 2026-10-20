@@ -1,0 +1,20 @@
+Reviewed `chdb_stock_published_codec_test.clj` (45 lines).
+
+**Verdict: sound, addresses the prior request.**
+
+`published-resource?` does a suffix check against `published-root` (owner/repo + SHA `05fa8b86...` + `incubator/codec/src/`). For each of the 4 resources (`jolt/codec/experimental.clj`, `jolt/codec/json.ss`, `jolt/traversal/experimental.clj`, `jolt/traversal/kernel.ss`), the oracle asserts:
+
+1. positive fixture path → true
+2. prior SHA (`62799376...`, matches the earlier commit) substituted in → false
+3. wrong owner/repo substituted in → false
+4. subproject root collapsed (`incubator/codec/src/`→`src/`) → false
+5. extra trailing suffix appended → false (guards against substring/prefix matching instead of exact-suffix matching)
+6. actual `(io/resource resource)` → true
+
+Each negative differs from the positive by exactly one token and is independently falsifiable — none are vacuously true/false, and the extra-suffix case specifically rules out a loose "contains" implementation masquerading as exact-suffix matching. Check 6 ties the synthetic oracle to real classpath resolution, so this isn't just asserting against itself.
+
+Failure propagation is correct: if provenance drifts (e.g., a local-source alias shadowing the published one), `io/resource` would return a mismatched or nil path, assertion 6 throws before `test/run-tests` is reached, and the process exits non-zero — matching the described behavior where the combined-alias process fails before running any of the 39 tests, versus the published-only process running 39/267 cleanly.
+
+Adjudication on the SHA/main point is correct: nothing here requires `05fa8b8` to be on `main`; the test only requires it be fetchable via `:deps/root` from GitHub, consistent with the described independent-consumer fetch.
+
+No concerns remaining from the prior review.

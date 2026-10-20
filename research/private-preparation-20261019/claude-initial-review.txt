@@ -1,0 +1,17 @@
+Write access isn't available in this session (even for the plan file), so I'll deliver the review directly as text.
+
+## Review: prepare/publish split of compact-row insertion (`chdb.clj`)
+
+**Verified against parent** (`exporter-flat-map-specialized-20261019` @ `81da9ab`):
+
+- **Ordering preserved byte-for-byte.** The old fused `execute-closed-compact-rows!` ran: initial `checked-snapshot!` → `require-order!` → build `sql` (realizing lazy rows) → second `checked-snapshot!` → `require-order!` → `execute-durable-sql!`. The split keeps the first three steps in `prepare-closed-compact-rows`, the last three in `publish-prepared-compact-insert!`. Since the new `execute-closed-compact-rows!` wrapper calls prepare then publish back-to-back with no intervening work, observed order/timing relative to the Durable executor is unchanged — confirmed by the event-ordering assertions in `chdb_preparation_test.clj`.
+- **Wrapper contract intact.** The 5/7/8-arg `execute-closed-compact-rows!` arities are unchanged and still used verbatim by `chdb_experimental_codec_test.clj` and every internal caller (metric/span/typed-span/log batch inserts) — no call-site changes required.
+- **Invalid-cap rejection before callbacks.** `publish-prepared-compact-insert!` checks `(instance? PreparedCompactInsert ...)` and seal identity *before* touching `checked-snapshot!` or any callback; `publisher-rejects-invalid-values-...` confirms zero snapshot calls on rejection.
+- **No data leak via the opaque value.** `PreparedCompactInsert`'s fixed `toString` means `pr-str` never surfaces row contents — confirmed by test.
+- **Fallback paths untouched.** Native byte-batch, owned-statement, and plain-String branches are copied verbatim, only relocated.
+- **Lazy failure short-circuits correctly.** `preparation-failure-stops-before-next-input-or-publication` confirms an invalid row throws before realizing the next lazy input and before any publish/execute work.
+- **CHANGELOG wording matches scope** — describes an internal seam, synchronous execution, revalidation at publication, and explicitly disclaims a new async/retry API, consistent with the diff.
+
+**Missing focused control (latent, not currently exercised):** `PreparedCompactInsert` is not single-use. The seal only proves *type identity* (created by `prepare-closed-compact-rows`), not that it hasn't already been published. Nothing in `publish-prepared-compact-insert!` consumes or invalidates the value after a successful publish, so a future caller could invoke it twice on the same prepared value and resubmit the same `sql`/owned bytes. Today this is safe only because the sole caller always prepares-then-publishes exactly once — no test exercises double-publish. This is sharper on the owned-statement branch: if `sql` holds a captured native byte buffer (`owned-statement/try-snapshot`), a second flush through `durable/execute-owned-and-flush!` is unspecified/untested here and could risk double-submission or a stale-buffer read if this seam is ever reused by a second caller. Not required by current scope, but worth either a consumed-flag guard or an explicit documented single-use constraint if this seam is extended.
+
+**Not evaluated (per scope):** no performance/concurrency claims assessed. `require-order!`'s recheck still functions only as a startup identity/order proof, not a concurrent-DDL freshness check — unchanged behavior, not a regression.

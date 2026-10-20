@@ -1,0 +1,5 @@
+{:arity 32, :result 7}
+{:arity 59, :result 7}
+{:arity 60, :result "fxlogbit?: 1152921504606846976 is not a fixnum"}
+{:arity 61, :result "fxlogbit?: 2305843009213693952 is not a fixnum"}
+{:arity 128, :result "fxlogbit?: 340282366920938463463374607431768211456N is not a fixnum"}

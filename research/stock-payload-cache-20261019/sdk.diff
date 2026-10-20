@@ -1,0 +1,211 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 910812d..6423be2 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,11 @@
+ 
+ ## Unreleased
+ 
++- Allow the optional payload scalar-map cache to receive a trusted native map
++  folder, avoiding a dependency on compiler-global traversal helpers. Existing
++  arities, policy-root checks, per-payload budgets and unsupported-host fallback
++  remain unchanged. No cache or exporter mode is enabled by default.
++
+ - Prototype optional `otel.any-value/scalar-string-map-payload-converter` for
+   repeated scalar attributes within one serial payload. Keep reuse bounded,
+   return fresh metadata-free map wrappers, recheck the defining SDK policy,
+diff --git a/deps.edn b/deps.edn
+index b4c0779..04e036f 100644
+--- a/deps.edn
++++ b/deps.edn
+@@ -15,7 +15,10 @@
+         org.clojure/tools.logging {:git/url "https://github.com/jolt-lang/logging"
+                                    :git/sha "ec6747e55583118d881faf4ab41e68d7e587ce4c"}}
+ 
+- :aliases {:sorted-scalar-map-native-test
++ :aliases {:stock-payload-cache-test
++           {:extra-paths ["test"]
++            :main-opts ["-m" "otel.stock-payload-cache-folder-test"]}
++           :sorted-scalar-map-native-test
+            {:extra-paths ["test"]
+             :main-opts ["-m" "otel.sorted-scalar-string-map-test"]}
+            :scalar-map-native-test
+diff --git a/src/otel/any_value.clj b/src/otel/any_value.clj
+index ebe5aa7..842e7ef 100644
+--- a/src/otel/any_value.clj
++++ b/src/otel/any_value.clj
+@@ -358,21 +358,23 @@
+    [#'try-scalar-string-map original-try-scalar-string-map]
+    [#'try-sorted-scalar-string-map original-try-sorted-scalar-string-map]])
+ 
+-(defn- load-scalar-string-map-payload-cache [bindings max-insertions max-chars]
++(defn- load-scalar-string-map-payload-cache [bindings max-insertions max-chars folder]
+   (try
+     (require 'otel.any-value-native)
+     ((ns-resolve 'otel.any-value-native 'load-scalar-string-map-payload-cache!)
+-     bindings max-insertions max-chars)
++     bindings max-insertions max-chars folder)
+     (catch Throwable _ nil)))
+ 
+ (defn scalar-string-map-payload-converter*
+   "Internal: parameterized constructor for focused bound tests. See
+   scalar-string-map-payload-converter for the public contract."
+-  [max-insertions max-chars]
+-  (let [bindings (scalar-string-map-payload-bindings)]
++  ([max-insertions max-chars]
++   (scalar-string-map-payload-converter* max-insertions max-chars nil))
++  ([max-insertions max-chars folder]
++   (let [bindings (scalar-string-map-payload-bindings)]
+     (when-let [{:keys [current? lookup store!]}
+                (load-scalar-string-map-payload-cache
+-                bindings max-insertions max-chars)]
++                bindings max-insertions max-chars folder)]
+       (fn [value]
+         (when (current?)
+           (or (lookup value)
+@@ -381,7 +383,7 @@
+                                       value))]
+                 ;; Store rechecks all eight live anchors before/after acceptance.
+                 ;; It charges admitted output without temporary map entries.
+-                (store! value result))))))))
++                (store! value result)))))))))
+ 
+ (defn scalar-string-map-payload-converter
+   "Return a fresh, caller-owned closure that converts the same bounded
+@@ -414,6 +416,12 @@
+   This closure is not safe for concurrent calls from multiple threads and
+   promises no cross-thread atomic-redefinition lock. It does not change
+   canonicalize's API, is never invoked by the original helpers, and is a
+-  PROTOTYPE: constructing it is not authorization for product adoption."
+-  []
+-  (scalar-string-map-payload-converter* 64 65536))
++  PROTOTYPE: constructing it is not authorization for product adoption.
++
++  Optional folder supplies native traversal without installing global helpers.
++  It is a trusted synchronous (map visitor initial) full fold; visitor receives
++  (key value accumulator). It must visit every entry once without mutation or
++  retaining a loan. This is not validation of arbitrary third-party callbacks.
++  Unsupported hosts/loaders still decline; existing no-argument use is unchanged."
++  ([] (scalar-string-map-payload-converter* 64 65536))
++  ([folder] (scalar-string-map-payload-converter* 64 65536 folder)))
+diff --git a/src/otel/any_value_native.clj b/src/otel/any_value_native.clj
+index bd61daa..54431ff 100644
+--- a/src/otel/any_value_native.clj
++++ b/src/otel/any_value_native.clj
+@@ -77,8 +77,11 @@
+          ;; the source separately checks the actual accessor forms compile.
+          "'((pvec-count 1) (pvec-nth! 2) (var-cell-deref 1) "
+          "(make-pmap 2) (jolt-ref-get 2) (make-weak-eq-hashtable 0) "
+-         "(hashtable-ref 3) (hashtable-set! 3) (pmap-fold-seq-order 3))) "
++         "(hashtable-ref 3) (hashtable-set! 3))) "
+          "(error 'payload-scalar-string-map-cache \"Unsupported runtime helpers\")) "
++         "(unless (and (procedure? pmap-fold-seq-order) "
++         "(bitwise-bit-set? (procedure-arity-mask pmap-fold-seq-order) 3)) "
++         "(error 'payload-scalar-string-map-cache \"Unsupported map traversal\")) "
+          (slurp url) ")")
+     (throw (ex-info "Missing native payload scalar-map cache resource" {}))))
+ 
+@@ -89,14 +92,26 @@
+     (try (scheme/eval-string payload-cache-converter-source)
+          (catch Throwable _ (constantly nil)))))
+ 
++(def ^:private scalar-string-map-payload-cache-injector
++  ;; Compile once, not once per payload. Applying the loader captures only the
++  ;; supplied folder; each factory call still allocates independent cache state.
++  (delay (scheme/eval-string
++           (str "(lambda (pmap-fold-seq-order) " payload-cache-converter-source ")"))))
++
+ (defn load-scalar-string-map-payload-cache!
+   "Internal: policy anchors and budget come from otel.any-value's defining
+   namespace. Returns fresh {:current? :lookup :store!} functions with independent cache
+-  state per call, or nil when the optional native capability is unavailable."
+-  [bindings max-insertions max-chars]
+-  (when-let [dispatch (@scalar-string-map-payload-cache-factory
+-                       bindings max-insertions max-chars)]
+-    {:current? (fn [] (dispatch 2 nil nil nil))
+-     :lookup (fn [value] (dispatch 0 value nil nil))
+-     ;; Chez's rejected `and` is #f; preserve the SDK's nil decline contract.
+-     :store! (fn [value result] (or (dispatch 1 value result nil) nil))}))
++  state per call, or nil when the optional native capability is unavailable.
++  Optional folder is a trusted synchronous (map visitor initial) full fold;
++  visitor receives (key value accumulator), with no mutation or retained loan."
++  ([bindings max-insertions max-chars]
++   (load-scalar-string-map-payload-cache! bindings max-insertions max-chars nil))
++  ([bindings max-insertions max-chars folder]
++   (let [factory (if folder
++                   (@scalar-string-map-payload-cache-injector folder)
++                   @scalar-string-map-payload-cache-factory)]
++     (when-let [dispatch (factory bindings max-insertions max-chars)]
++       {:current? (fn [] (dispatch 2 nil nil nil))
++        :lookup (fn [value] (dispatch 0 value nil nil))
++        ;; Chez's rejected `and` is #f; preserve the SDK's nil decline contract.
++        :store! (fn [value result] (or (dispatch 1 value result nil) nil))}))))
+diff --git a/test/otel/stock_payload_cache_folder_test.clj b/test/otel/stock_payload_cache_folder_test.clj
+new file mode 100644
+index 0000000..6c7b7c3
+--- /dev/null
++++ b/test/otel/stock_payload_cache_folder_test.clj
+@@ -0,0 +1,63 @@
++(ns otel.stock-payload-cache-folder-test
++  "Stock-Jolt cache gate with an injected folder; never installs global helpers."
++  (:require [clojure.test :as t :refer [deftest is]]
++            [jolt.scheme :as scheme]
++            [otel.any-value :as any]
++            [otel.payload-scalar-string-map-cache-test :as existing]))
++
++;; Independent correctness fixture, deliberately sequence-based. Actual library
++;; walker mode reuses the same tests but does not add a production SDK dependency.
++(def sequence-folder
++  (delay (scheme/eval-string
++           "(lambda (m visit initial)
++              (let loop ((s (jolt-seq m)) (a initial))
++                (if (jolt-nil? s) a
++                    (let ((entry (seq-first s)))
++                      (loop (seq-more s)
++                            (visit (jolt-nth entry 0) (jolt-nth entry 1) a))))))")))
++(def ^:dynamic *folder* nil)
++(def constructor any/scalar-string-map-payload-converter)
++(def budget-constructor any/scalar-string-map-payload-converter*)
++(defn global-folder? []
++  ((scheme/eval-string "(lambda () (top-level-bound? 'pmap-fold-seq-order))")))
++
++(deftest provided-folder-is-used-for-store-but-not-warm-hits
++  (let [calls (atom 0) folder *folder*
++        convert (constructor (fn [m visit initial]
++                               (swap! calls inc) (folder m visit initial)))
++        source (existing/plain-fixture 16)]
++    (is (some? convert))
++    (is (= (existing/oracle source) (convert source)))
++    (is (= (existing/oracle source) (convert source)))
++    (is (= 1 @calls))))
++
++(deftest bad-arity-and-noncallable-folders-decline-at-construction
++  (is (nil? (constructor (scheme/eval-string "(lambda (m) m)"))))
++  (is (nil? (constructor 42)))
++  (is (false? (global-folder?))))
++
++(deftest no-injection-retains-the-stock-optional-decline
++  (is (nil? (budget-constructor 64 65536 nil)))
++  (is (false? (global-folder?))))
++
++(defn -main [& [mode]]
++  (assert (false? (global-folder?)) "This gate must run on stock without a global folder")
++  (assert (nil? (constructor)))
++  (let [folder (if (= mode "library")
++                 (do (require 'jolt.codec.experimental)
++                     ((ns-resolve 'jolt.codec.experimental 'native-map-folder)
++                      ((ns-resolve 'jolt.codec.experimental 'open-codec))))
++                 @sequence-folder)]
++    (assert (some? (constructor folder)))
++    (binding [*folder* folder]
++      (with-redefs [any/scalar-string-map-payload-converter
++                    (fn ([] (budget-constructor 64 65536 folder))
++                      ([provided] (budget-constructor 64 65536 provided)))
++                    any/scalar-string-map-payload-converter*
++                    (fn ([n chars] (budget-constructor n chars folder))
++                      ([n chars provided] (budget-constructor n chars provided)))]
++        (let [r (t/run-tests 'otel.payload-scalar-string-map-cache-test
++                             'otel.stock-payload-cache-folder-test)]
++          (assert (= 19 (:test r)))
++          (assert (false? (global-folder?)))
++          (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))))))

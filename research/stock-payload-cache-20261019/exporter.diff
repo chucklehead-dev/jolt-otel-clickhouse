@@ -1,0 +1,369 @@
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index cf192da..cf3a8ea 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,12 @@
+ 
+ ## Unreleased
+ 
++- Add a separate opt-in payload scalar-map cache to the explicit span codec,
++  using the library-owned map folder and a compatible SDK. Keep cache state
++  local to each payload and retain live conversion-policy checks and fallback.
++  Ordinary paths, dependency pins and persistence confirmation are unchanged;
++  compiler-woven converter bodies remain unqualified.
++
+ - Prepare private WAL bytes before writer submission in the explicit span-codec
+   experiment. This moves pure encoding out of the serialized Durable worker;
+   ordinary backends and persistence confirmation remain unchanged. Requires the
+diff --git a/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj b/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj
+new file mode 100644
+index 0000000..62f06dc
+--- /dev/null
++++ b/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj
+@@ -0,0 +1,112 @@
++(ns otel.exporter.chdb-stock-payload-cache-test
++  (:require [clojure.test :refer [deftest is]]
++            [otel.exporter.chdb :as e]
++            [otel.exporter.chdb.compact-format :as compact]
++            [jdbc.chdb.owned-statement :as owned]
++            [jdbc.core :as jdbc]))
++
++(defn fixture []
++  (into {} (map (fn [i] [(str "key-" i) (case (mod i 3) 0 "λ" 1 false i)]) (range 16))))
++(defn oracle [m] (into {} (map (fn [[k v]] [k (#'e/value-string v)])) m))
++(def valid-options
++  {:experimental-span-codec? true :experimental-span-payload-cache? true
++   :signals #{:spans} :durable? true :insert-format :json-compact-each-row
++   :json-backend :native-guarded-byte-batch :owned-statement-output? true})
++(defn checked [] {:compact-plans :test :owned-statement-output? true})
++(defn cached-project [convert] (fn [m] [(convert m)]))
++
++(deftest explicit-payload-cache-is-fresh-per-payload-and-preserves-wire
++  (let [context (#'e/load-experimental-span-codec!) factories (atom 0) conversions (atom [])
++        cached (assoc context :payload-cache-factory
++                      (fn [] (let [id (swap! factories inc)]
++                               (fn [m] (swap! conversions conj id) (oracle m)))))
++        wire (atom []) source (fixture)]
++    (with-redefs-fn {#'compact/require-order! (fn [& _])
++                    #'e/execute-durable-sql! (fn [_ statement] (swap! wire conj (owned/text statement)))}
++      (fn []
++        (with-bindings {#'e/*json-backend* :native-guarded-byte-batch}
++          (doseq [codec [context cached cached]]
++            (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [source source]
++                                             checked codec (fn [m] [(#'e/attrs m)]) cached-project)))
++        (is (apply = @wire))
++        (is (= 2 @factories))
++        (is (= [1 1 2 2] @conversions))))))
++
++(deftest encoder-failure-does-not-reuse-the-failed-payload-cache
++  (let [context (#'e/load-experimental-span-codec!) fail? (atom true)
++        factories (atom 0) conversions (atom []) executed (atom 0) source (fixture)
++        context (assoc context
++                       :payload-cache-factory
++                       (fn [] (let [id (swap! factories inc)]
++                                (fn [m] (swap! conversions conj id) (oracle m))))
++                       :encode (fn [& args]
++                                 (if @fail? (throw (ex-info "injected" {:type ::injected}))
++                                     (apply (:encode context) args))))]
++    (with-redefs-fn {#'compact/require-order! (fn [& _])
++                    #'e/execute-durable-sql! (fn [& _] (swap! executed inc))}
++      (fn []
++        (is (= ::injected
++               (try (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [source source]
++                                                    checked context vector cached-project)
++                    nil (catch Throwable error (:type (ex-data error))))))
++        (is (zero? @executed))
++        (reset! fail? false)
++        (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [source source]
++                                         checked context vector cached-project)
++        (is (= 2 @factories))
++        (is (= [2 2] @conversions))
++        (is (= 1 @executed))))))
++
++(deftest nested-payloads-do-not-share-cache-state
++  (let [context (#'e/load-experimental-span-codec!) factories (atom 0) conversions (atom [])
++        nested? (atom false) executed (atom 0) source (fixture)
++        context (assoc context :payload-cache-factory
++                       (fn [] (let [id (swap! factories inc)]
++                                (fn [m] (swap! conversions conj id) (oracle m)))))]
++    (letfn [(projector [convert]
++              (fn [m]
++                (when (compare-and-set! nested? false true) (run-payload [m]))
++                [(convert m)]))
++            (run-payload [rows]
++              (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] rows
++                                               checked context vector projector))]
++      (with-redefs-fn {#'compact/require-order! (fn [& _])
++                      #'e/execute-durable-sql! (fn [& _] (swap! executed inc))}
++        (fn []
++          (run-payload [source source])
++          (is (= 2 @factories))
++          (is (= [2 1 1] @conversions))
++          (is (= 2 @executed)))))))
++
++(deftest live-entry-policy-is-checked-before-and-after-cache-conversion
++  (let [source (fixture) calls (atom 0) original @#'e/value-string
++        context (#'e/load-experimental-span-codec!)]
++    (with-bindings {#'e/*json-backend* :native-guarded-byte-batch
++                    #'e/*experimental-attribute-transform* (:attributes context)}
++      (let [convert (#'e/payload-attrs-converter
++                      (fn [_] (swap! calls inc) (throw (ex-info "must not call" {}))))]
++        (with-redefs [e/value-string (constantly "changed")]
++          (is (= (zipmap (keys source) (repeat "changed")) (convert source)))
++          (is (zero? @calls))))
++      (with-redefs [e/value-string original]
++        (let [convert (#'e/payload-attrs-converter
++                        (fn [m] (let [result (oracle m)]
++                                  (alter-var-root #'e/value-string (constantly (constantly "late")))
++                                  result)))]
++          (is (= (zipmap (keys source) (repeat "late")) (convert source))))))))
++
++(deftest invalid-or-unavailable-cache-rejects-before-storage
++  (let [opens (atom 0) resolve-var ns-resolve]
++    (with-redefs [jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "storage" {})))]
++      (doseq [options [{:experimental-span-payload-cache? true}
++                       (assoc valid-options :experimental-span-payload-cache? "true")
++                       (assoc valid-options :experimental-span-payload-cache? nil)]]
++        (is (= :otel.exporter.chdb/invalid-experimental-span-payload-cache
++               (try (e/exporter options) nil (catch Throwable error (:type (ex-data error)))))))
++      (with-redefs [ns-resolve (fn [namespace name]
++                                (when-not (= ['otel.any-value 'scalar-string-map-payload-converter]
++                                             [namespace name])
++                                  (resolve-var namespace name)))]
++        (is (= :otel.exporter.chdb/experimental-span-payload-cache-unavailable
++               (try (e/exporter valid-options) nil (catch Throwable error (:type (ex-data error)))))))
++      (is (zero? @opens)))))
+diff --git a/src/otel/exporter/chdb.clj b/src/otel/exporter/chdb.clj
+index 0586775..ea1364e 100644
+--- a/src/otel/exporter/chdb.clj
++++ b/src/otel/exporter/chdb.clj
+@@ -140,6 +140,17 @@
+               ((or *experimental-attribute-transform* @small-attribute-transform) m)))
+         (into {} (map (fn [[k v]] [(key-string k) (value-string v)])) (or m {})))))
+ 
++(defn- payload-attrs-converter [convert]
++  (fn [m]
++    (or (when (and (identical? key-string original-attribute-key-string)
++                   (identical? value-string original-attribute-value-string))
++          (let [result (convert m)]
++            (when (and (identical? key-string original-attribute-key-string)
++                       (identical? value-string original-attribute-value-string))
++              result)))
++        ;; Keep the default Var lookup late if conversion policy changed.
++        (attrs m))))
++
+ (defn- service-name [resource fallback]
+   (let [attributes (:attributes resource)]
+     (cond
+@@ -198,7 +209,8 @@
+ 
+ (defn- event-columns
+   ([events] (event-columns events false))
+-  ([events compact?]
++  ([events compact?] (event-columns events compact? nil))
++  ([events compact? attribute-converter]
+    ;; Empty immutable vectors have no row callbacks or seq realization to run.
+    ;; Keep generic/lazy inputs on the original traversal and EventsJSON encoding
+    ;; in span-row untouched, including live JSONWriter extensions.
+@@ -215,20 +227,23 @@
+      (let [event (nth events 0)
+            times [(timestamp (:timestamp-unix-nano event))]
+            names [(or (:name event) "")]
+-           attributes [(attrs (:attributes event))]]
++           attributes [(if attribute-converter (attribute-converter (:attributes event))
++                           (attrs (:attributes event)))]]
+        (if compact? [times names attributes]
+          {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes}))
+ 
+      :else
+      (let [times (mapv #(timestamp (:timestamp-unix-nano %)) events)
+          names (mapv #(or (:name %) "") events)
+-         attributes (mapv #(attrs (:attributes %)) events)]
++         attributes (mapv #(if attribute-converter (attribute-converter (:attributes %))
++                              (attrs (:attributes %))) events)]
+      (if compact? [times names attributes]
+        {"Events.Timestamp" times "Events.Name" names "Events.Attributes" attributes})))))
+ 
+ (defn- link-columns
+   ([links] (link-columns links false))
+-  ([links compact?]
++  ([links compact?] (link-columns links compact? nil))
++  ([links compact? attribute-converter]
+    (if (and (vector? links) (empty? links))
+      (if compact? [[] [] [] []]
+        {"Links.TraceId" [] "Links.SpanId" []
+@@ -236,7 +251,8 @@
+      (let [trace-ids (mapv #(or (get-in % [:span-context :trace-id]) "") links)
+          span-ids (mapv #(or (get-in % [:span-context :span-id]) "") links)
+          states (mapv #(trace-state-string (get-in % [:span-context :trace-state])) links)
+-         attributes (mapv #(attrs (:attributes %)) links)]
++         attributes (mapv #(if attribute-converter (attribute-converter (:attributes %))
++                              (attrs (:attributes %))) links)]
+      (if compact? [trace-ids span-ids states attributes]
+        {"Links.TraceId" trace-ids "Links.SpanId" span-ids
+         "Links.TraceState" states "Links.Attributes" attributes})))))
+@@ -257,6 +273,8 @@
+   ([span typed-projector compact?]
+    (span-row span typed-projector compact? nil))
+   ([span typed-projector compact? write-nested-json]
++   (span-row span typed-projector compact? write-nested-json nil))
++  ([span typed-projector compact? write-nested-json attribute-converter]
+   (let [context (:span-context span)
+         scope (:scope span)
+         resource (:resource span)
+@@ -270,9 +288,11 @@
+         trace-state (trace-state-string (:trace-state context))
+         span-name (:name span) kind (otel-enum-string (:kind span) :internal)
+         service (service-name resource "unknown_service:jolt")
+-        resource-attrs (attrs (:attributes resource))
++        resource-attrs (if attribute-converter (attribute-converter (:attributes resource))
++                           (attrs (:attributes resource)))
+         scope-name (or (:name scope) "") scope-version (or (:version scope) "")
+-        span-attrs (attrs (:attributes span))
++        span-attrs (if attribute-converter (attribute-converter (:attributes span))
++                       (attrs (:attributes span)))
+         duration (max 0 (- (:end-time-unix-nano span) (:start-time-unix-nano span)))
+         status (otel-enum-string (get-in span [:status :code]) :unset)
+         message (or (get-in span [:status :description]) "")
+@@ -288,8 +308,10 @@
+                   "ScopeVersion" scope-version "SpanAttributes" span-attrs
+                   "Duration" duration "StatusCode" status "StatusMessage" message
+                   "EventsJSON" events-json "LinksJSON" links-json})
+-        event-values (if compact? (event-columns events true) (event-columns events))
+-        link-values (if compact? (link-columns links true) (link-columns links))]
++        event-values (if attribute-converter (event-columns events compact? attribute-converter)
++                         (if compact? (event-columns events true) (event-columns events)))
++        link-values (if attribute-converter (link-columns links compact? attribute-converter)
++                        (if compact? (link-columns links true) (link-columns links)))]
+     (if compact?
+       [time trace-id span-id parent-id trace-state span-name kind service resource-attrs
+        scope-name scope-version span-attrs duration status message
+@@ -1250,7 +1272,9 @@
+      :histogram (vec (concat common ["Count" "Sum" "BucketCounts" "ExplicitBounds"]
+                              exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
+ 
+-(defn- load-experimental-span-codec! []
++(defn- load-experimental-span-codec!
++  ([] (load-experimental-span-codec! false))
++  ([payload-cache?]
+   (try
+     (require 'jolt.codec.experimental)
+     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
+@@ -1262,15 +1286,28 @@
+               (throw (ex-info "Experimental codec requires private WAL preparation" {})))
+           codec (open)
+           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
++          cache-var (when payload-cache?
++                      (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter))
++          cache-factory (when payload-cache?
++                          (when-not cache-var
++                            (throw (ex-info "Experimental payload cache requires its SDK capability" {})))
++                          (let [factory (fn [] (@cache-var folder))]
++                            (when-not (ifn? (factory))
++                              (throw (ex-info "Experimental payload cache is unavailable" {})))
++                            factory))
+           _ (require 'otel.exporter.chdb.native-attributes)
+           attributes ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
+                       #'key-string #'value-string original-attribute-key-string folder)]
+       {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
+        :nested (fn [value] (nested codec value))
+-       :folder folder :attributes attributes :prepare-statement prepare})
++       :folder folder :attributes attributes :prepare-statement prepare
++       :payload-cache-factory cache-factory})
+     (catch Throwable _
+-      (throw (ex-info "Experimental span codec requires its source alias and a qualified runtime"
+-                      {:type ::experimental-span-codec-unavailable})))))
++      (throw (ex-info (if payload-cache?
++                        "Experimental span payload cache requires a compatible SDK and qualified runtime"
++                        "Experimental span codec requires its source alias and a qualified runtime")
++                      {:type (if payload-cache? ::experimental-span-payload-cache-unavailable
++                                 ::experimental-span-codec-unavailable)}))))))
+ 
+ (defn- direct-metric-layout? [snapshot]
+   (and (:durable? snapshot)
+@@ -1283,6 +1320,8 @@
+   ([connection table columns rows checked-snapshot!]
+    (execute-closed-compact-rows! connection table columns rows checked-snapshot! nil nil))
+   ([connection table columns rows checked-snapshot! codec project]
++   (execute-closed-compact-rows! connection table columns rows checked-snapshot! codec project nil))
++  ([connection table columns rows checked-snapshot! codec project cached-projector]
+   (let [initial-snapshot (checked-snapshot!)]
+     (compact-format/require-order! (:compact-plans initial-snapshot) connection table columns)
+     (letfn [(checked [remaining]
+@@ -1296,7 +1335,12 @@
+       (let [query (compact-insert-query table columns)
+             prefix (str query " FORMAT JSONCompactEachRow\n")
+             sql (if codec
+-                  (let [bytes ((:encode codec) prefix rows
++                  (let [convert (when-let [factory (:payload-cache-factory codec)]
++                                  (when-not cached-projector
++                                    (throw (ex-info "Missing cached span projector" {:type ::invalid-cache-projector})))
++                                  (factory))
++                        project (if convert (cached-projector (payload-attrs-converter convert)) project)
++                        bytes ((:encode codec) prefix rows
+                                (fn [record]
+                                  (let [row (project record)]
+                                    (when-not (and (vector? row) (= (count columns) (count row)))
+@@ -1358,7 +1402,9 @@
+           (throw (ex-info "Direct compact span plan changed"
+                           {:type ::invalid-direct-span-plan})))
+         snapshot))
+-    codec (when codec #(span-row % nil true (:nested codec))))))
++    codec (when codec #(span-row % nil true (:nested codec)))
++    (when (:payload-cache-factory codec)
++      (fn [convert] (fn [span] (span-row span nil true (:nested codec) convert)))))))
+ 
+ (defn- direct-typed-span-layout? [snapshot]
+   (let [{:keys [map-projector vector-projector columns]} (:typed-span-vector-plan snapshot)]
+@@ -1394,7 +1440,10 @@
+                             {:type ::invalid-direct-typed-span-plan})))
+           snapshot))
+       codec (when codec
+-              (fn [span] (into (span-row span nil true (:nested codec)) (projector span)))))))
++              (fn [span] (into (span-row span nil true (:nested codec)) (projector span))))
++      (when (:payload-cache-factory codec)
++        (fn [convert]
++          (fn [span] (into (span-row span nil true (:nested codec) convert) (projector span))))))))
+ 
+ (def ^:private direct-log-columns
+   ["Timestamp" "TraceId" "SpanId" "TraceFlags" "SeverityText" "SeverityNumber"
+@@ -1809,17 +1858,26 @@
+   :experimental-span-codec? defaults false. True requires the source-only
+   :experimental-span-codec alias, spans-only native-byte compact Durable export
+   and owned output. Selects an explicit built-in-value codec, NOT JSONWriter
+-  extensions. Persistence and default encoding are unchanged."
++  extensions. Persistence and default encoding are unchanged.
++  :experimental-span-payload-cache? defaults false. True additionally requires
++  the explicit codec and a compatible SDK. Reuses bounded primitive-map
++  conversions within one payload only. Compiler-woven converter bodies remain
++  unqualified; no default or cross-thread cache is installed."
+   ([] (exporter {}))
+   ([{:keys [connection db-spec create-schema? signals durable?
+             persistence-barrier typed-span-descriptors typed-log-descriptors
+             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
+             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
+-            experimental-span-codec?]
++            experimental-span-codec? experimental-span-payload-cache?]
+      limit-override :max-insert-bytes
+      :or {db-spec "chdb::memory:" create-schema? true
+           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
+-          insert-format :json-each-row owned-statement-output? false experimental-span-codec? false}}]
++          insert-format :json-each-row owned-statement-output? false experimental-span-codec? false
++          experimental-span-payload-cache? false}}]
++   (when-not (and (boolean? experimental-span-payload-cache?)
++                  (or (not experimental-span-payload-cache?) experimental-span-codec?))
++     (throw (ex-info "Experimental span payload cache requires the explicit span codec"
++                     {:type ::invalid-experimental-span-payload-cache})))
+    (when-not (and (boolean? experimental-span-codec?)
+                   (or (not experimental-span-codec?)
+                       (and durable? owned-statement-output? (= #{:spans} (set signals))
+@@ -1848,7 +1906,8 @@
+                      {:type ::invalid-json-backend})))
+    ;; Resolve before database acquisition or DDL. Ordinary consumers never load
+    ;; the incubating namespace/resources; missing support is not a downgrade.
+-   (let [experimental-span-codec (when experimental-span-codec? (load-experimental-span-codec!))]
++   (let [experimental-span-codec (when experimental-span-codec?
++                                   (load-experimental-span-codec! experimental-span-payload-cache?))]
+    ;; Resolve an explicitly selected backend before opening a database or DDL.
+    ;; Never silently downgrade an unavailable native backend.
+    (when (and experimental-span-codec

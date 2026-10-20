@@ -1,0 +1,79 @@
+name: experimental-codec-stock
+
+on:
+  push:
+    paths:
+      - .github/workflows/experimental-codec-stock.yml
+      - incubator/codec/**
+      - deps.edn
+      - src/otel/exporter/**
+  pull_request:
+    paths:
+      - .github/workflows/experimental-codec-stock.yml
+      - incubator/codec/**
+      - deps.edn
+      - src/otel/exporter/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  stock-library:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check the independent library on official stock Jolt
+        working-directory: incubator/codec
+        shell: bash
+        env:
+          JOLT_NO_USER_DEPS: '1'
+          JOLT_AOT_CACHE: '0'
+        run: |
+          set -euo pipefail
+          task_tmp=$(mktemp -d "$RUNNER_TEMP/stock-codec.XXXXXXXX")
+          case "$task_tmp" in "$RUNNER_TEMP"/stock-codec.????????) ;; *) exit 91;; esac
+          trap 'rm -rf -- "$task_tmp"' EXIT
+          curl --fail --location --silent --show-error --retry 2 \
+            --connect-timeout 15 --max-time 90 \
+            https://github.com/jolt-lang/jolt/releases/download/v0.8.23/jolt-v0.8.23-x86_64-linux.tar.gz \
+            -o "$task_tmp/jolt.tar.gz"
+          printf '%s  %s\n' 90031be43241e61d0788a2f1bbd3da56d8f4324ae9fa87271f9637b43a6071f2 "$task_tmp/jolt.tar.gz" | sha256sum -c -
+          tar -xzf "$task_tmp/jolt.tar.gz" -C "$task_tmp"
+          task_bin="$task_tmp/jolt-v0.8.23-x86_64-linux/jolt"
+          printf '%s  %s\n' 7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94 "$task_bin" | sha256sum -c -
+          test "$("$task_bin" --version)" = 'jolt v0.8.23'
+          "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
+            -m jolt.traversal.experimental-test
+          "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
+            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'clojure.test)
+             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test)]
+               (assert (= 23 (:test r)))
+               (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+          # Build first: 0.8.23's launcher does not load the build driver when
+          # -Sdeps precedes `build`. The small packaging project supplies paths
+          # without changing consumer dependencies or using a compiler fork.
+          (cd packaging && "$task_bin" build -m jolt.codec.standalone-smoke-test \
+            -o "$task_tmp/codec-smoke")
+          # A checkout-relative resource lookup must not mask a missing embed.
+          (cd "$task_tmp" && "$task_tmp/codec-smoke")
+          # Dependency-root qualification: no checkout-local codec source alias.
+          (cd ../.. && "$task_bin" -Srepro \
+            -M:stock-span-codec:stock-span-codec-test)
+          # Actual old/current Git components, not a mocked missing Var.
+          (cd ../.. && for task_case in \
+            '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
+            '0af1008185cf84577298d3a0a0b2db87b97bddd5:present'; do
+              task_sha=${task_case%:*}
+              task_expected=${task_case#*:}
+              task_deps="{:paths [\"src\" \"incubator/codec/test\"] :deps {io.github.chucklehead-dev/jolt-codec {:git/url \"https://github.com/chucklehead-dev/jolt-otel-clickhouse.git\" :git/sha \"$task_sha\" :deps/root \"incubator/codec\"}}}"
+              "$task_bin" -Srepro -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-published-scope-capability-test "$task_expected"
+            done)
+          # Also check the checkout-local adapter; the published gate above
+          # includes the same scope/lifetime tests against the pinned library.
+          (cd ../.. && "$task_bin" -Srepro -A:test:experimental-span-codec-test \
+            -m otel.exporter.chdb-nested-fragments-test)

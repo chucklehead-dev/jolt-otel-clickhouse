@@ -1,0 +1,27 @@
+Note: the plan-mode harness expects a plan file, but the `Write` tool is disabled in this session, so I'm delivering the review directly as text instead.
+
+## Review: library-nested-byte-text (read-only, static)
+
+**Scope reviewed:** `json.ss`, `experimental.clj`, `chdb.clj` (`load-experimental-span-codec!` + its two call sites), `experimental_test.clj`, `CHANGELOG.md`. No commands run, no edits made.
+
+### Findings
+
+**1. Backend qualification smoke test doesn't exercise the new nested-text path (moderate).**
+`experimental.clj`'s `backend` delay gates whether the experimental codec is treated as supported on the current Jolt runtime. The whole point of that gate — per the `chdb.clj` comments at the `load-experimental-span-codec!` call site ("Resolve before database acquisition... missing support is not a downgrade" / "Never silently downgrade an unavailable native backend") — is to fail fast *before* opening the database. The qualification check only exercises `scalar` (`ffc-json-ascii-bytes`) and `qualify`:
+```
+(and (qualify {} [] (sorted-map) (byte-array 0))
+     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
+```
+It never calls `nested` (`ffc-json-nested-text`). The new `ffc-json-text` record construction (`make-ffc-json-text` + `jolt-array-vec`) and its `emit!`/`encoded-text!` consumer path are therefore unchecked at boot. If that path broke on some runtime variant, `open-codec` would still succeed, and the failure would only surface later, mid-export, on the first span carrying events/links — exactly the silent-late-failure mode the fail-fast design elsewhere is built to prevent. Suggest adding a round-trip smoke assertion to the qualify block (encode a small value via `nested`, push it through the project/encode path, compare against the `scalar`-only equivalent), mirroring what `prepared-nested-text-is-a-string-not-a-json-splice` already does in the test file.
+
+**2. No correctness bugs found in the escaping/limit/ownership logic itself.**
+- `encoded-text!` only re-escapes `"`, `\`, `/`, which is sound *because* its input is guaranteed pure-ASCII, control-free bytes (`escape-unicode?=#t`, `lines?=#f`). Traced the invariant: no path in `ffc-json-encode` emits a raw byte <32 or a bare newline outside the `lines?` records-fold, and `ffc-json-nested-text` never sets `lines?`.
+- Byte-budget enforcement for the embedded blob goes through the same `ensure-space!`/`byte!` as every other value, so there's no limit bypass — consistent with the chunk-boundary and off-by-one rejection tests already in `experimental_test.clj`.
+- `ffc-json-text` is a lexically private record type created once inside the single memoized `backend` delay; every `Codec` from `open-codec` shares that closure, so there's no cross-instance representation-fence mismatch, and no path exists to construct a counterfeit `ffc-json-text` outside `ffc-json-nested-text`.
+- In `chdb.clj`, `write-nested-json` (`(:nested codec)`) is only ever passed with `compact? = true`, at both call sites, so opaque `ffc-json-text` values can't leak into the non-compact `common`/merge map path that other JSON backends might treat as a plain `String`. Empty events/links still resolve to the literal `"[]"` string, matching `write-nested`'s fixed-spelling guarantee; the resulting per-row mix of `String`/`ffc-json-text` is intentional and harmless since each row encodes independently.
+- CHANGELOG entries for this change accurately describe the implementation.
+
+### Limitations
+- Did not read `traversal.ss` (not in the dirty-file set), so the hcoll UID/field-fence logic and the collision-order test's underlying walker are unverified by me beyond what's visible in `experimental.clj`'s `qualify` lambda.
+- Did not read `execute-closed-compact-rows!` or other `chdb.clj` code outside the two specified call sites, so I can't independently confirm how the compact-row vector (carrying embedded `ffc-json-text` values) is threaded through to the final encode call beyond those two sites.
+- Ran no commands. The reported "12/93 Codex tests passed" and the component32 digest-parity run are taken as given, not verified here; the separate Durable gate's outcome is unknown to me.

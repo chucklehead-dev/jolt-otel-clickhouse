@@ -2,12 +2,13 @@
  :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "3d766fa295b0e98c30f275d0a334db92e6dd998c"}
+         :git/sha "3314b79e8a234fafdf5231439a0323c878a40040"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "7878a2eb4340519d6843d13490a5a7c99ebade8a"
-         ;; Includes SDK-owned HAMT/sorted scalar conversion, ready-batch scheduling
-         ;; and batch<=queue validation.
+         :git/sha "26186ce79941e84e0cc67eb148dd8dd43b4e1880"
+         ;; Includes SDK-owned scalar conversion, ready-batch scheduling,
+         ;; batch<=queue validation and explicit traversal injection for the
+         ;; opt-in immutable payload cache on stock Jolt.
          ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
          ;; independent of dependency traversal order.
@@ -19,7 +20,20 @@
         org.clojure/data.json
         {:git/url "https://github.com/casselc/data.json.git"
          :git/sha "0f51b99101bc5e840f957c073f87b6f877309a25"}}
- :aliases {:event-columns-test
+ :aliases {:stock-span-codec
+           {:extra-deps
+            {io.github.chucklehead-dev/jolt-codec
+             {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+              :git/sha "0af1008185cf84577298d3a0a0b2db87b97bddd5"
+              :deps/root "incubator/codec"}}}
+           :stock-span-codec-test
+           {:extra-paths ["incubator/codec/test"]
+            :main-opts ["-m" "otel.exporter.chdb-stock-published-codec-test"]}
+           :experimental-span-codec
+           {:extra-paths ["incubator/codec/src"]}
+           :experimental-span-codec-test
+           {:extra-paths ["incubator/codec/src" "incubator/codec/test"]}
+           :event-columns-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-event-columns-test"]}
            :sdk-sorted-scalar-map-test

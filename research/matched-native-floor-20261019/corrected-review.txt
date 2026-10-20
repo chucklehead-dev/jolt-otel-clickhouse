@@ -1,0 +1,18 @@
+**Both asymmetries are corrected in V2.**
+
+**Asymmetry 1 (native bypassed the confirmed helper):** The original timed loop called `durable/execute-owned-and-flush!` directly, never touching `e/execute-durable-sql!`. V2 replaces that call with `(observed connection statement)`, where `observed` wraps the real `@#'e/execute-durable-sql!` via a shared `observed-executor`. The warmup redef is likewise routed through `observed`. A new assertion, `(ensure! (= 35 @observed-calls) :observed-confirmed-requests)`, confirms all 35 physical operations — 1 exporter warmup + 2 pre-timed direct warmups + 32 timed rounds — now pass through the production helper, matching the pre-existing 35-stream check.
+
+**Asymmetry 2 (SDK alone paid per-call observer cost):** Both arms now redef `e/execute-durable-sql!` with the identical `observed-executor` body (swap!, conditional reset!, execute). The SDK side is a verbatim `replace-once` swap of the original inline lambda text — same behavior, just shared implementation — satisfying "SDK refactor retains equivalent observer body."
+
+**Warmup breakdown:** `{:exporter 1 :direct 2}` for native matches the code trace (1 capture inside `export-spans!`, 2 from the pre-timed `dotimes 2 insert!`) and is cross-checked by the v2 validator. The `{:exporter 3 :direct 0}` label for SDK is hardcoded/asserted in the staging script rather than derived from a counted split — its correctness depends on the separately-loaded `flat-map-wire-cache-durable-arm-20261019.clj`, outside this file set.
+
+**Original ABBA preserved:** the v2 validator still requires `(:verified (edn/read-string old))` from the frozen original validator before layering its own checks, consistent with V2 being one additional native run, not a new ABBA.
+
+**Residual caveats (not defects, but unresolved from these two files alone):**
+1. The fix assumes `e/execute-durable-sql!`'s return value is status-compatible with `execute-owned-and-flush!`'s (`:status` ∈ `#{:committed :reconciled}`). Plausible, but not verifiable from source alone — a mismatch would only surface as a runtime `ensure!` failure if actually executed.
+2. Whether V2 was invoked only for the native arm (leaving the original SDK artifacts untouched) vs. also re-run for "sdk" can't be determined from source; it depends on invocation, which is outside these files.
+3. Full 175k-row readback, cross-process SQL/WAL hash/size matching, and any throughput/pipeline/tail/Rust qualification remain unaddressed and out of scope — the carried-over flags (`:target-qualified false`, `:tail-qualified false`, etc.) are unchanged.
+
+No other defects found in the diffs themselves.
+
+(Note: I was unable to write the plan file — the Write tool is disabled this session — so I'm delivering the review as direct text per your instruction rather than via the plan-mode file.)

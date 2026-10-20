@@ -2,6 +2,88 @@
 
 ## Unreleased
 
+- Refresh the optional published stock-Jolt codec pin to include vector leaf
+  traversal and nested-fragment scopes. Exercise the exact resolved component
+  through the combined exporter gate, including ownership/failure controls;
+  update setup documentation. Cache and codec options remain default-off.
+
+- Add a default-off nested-fragment cache to the explicit span codec. Reuse
+  bounded complete scalar-map fragments and scope-local scratch buffers across
+  nested JSON writes, with independent outputs and cleanup on return/throw.
+  Preserve byte/depth limits, conversion order and confirmed persistence;
+  scope/owner tests and independently recovered local SDK runs cover the path.
+
+- Add experimental explicit codec row builders and vector suffix views to
+  avoid constructing/extending persistent row vectors. A paired encoding
+  screen reduces estimated allocation by about 6%, without a median-time or
+  tail improvement. These are not yet used by production exporter code.
+
+- Walk persistent-vector leaf blocks directly in the incubating stock-Jolt
+  traversal library, avoiding repeated indexed lookup for each element.
+  Preserve sliced-vector order, full-fold and exception behavior. Native fold
+  microbenchmarks improve; the rich encoding screen establishes no overall
+  throughput or allocation improvement.
+
+- Update the SDK and driver pins for the explicit stock-Jolt codec path:
+  accept traversal injection into the opt-in immutable payload cache and the
+  driver's private prepared-WAL capability without local-root overrides.
+  Select the independent codec Git subproject with `:deps/root`; add a
+  published-component provenance/test alias and stock-Jolt CI coverage.
+  Defaults remain synchronous; this does not enable preparation overlap.
+
+- Exercise the independent traversal/codec library in a stock-Jolt Linux
+  standalone binary, with a dependency-free packaging project and CI gate.
+  This does not qualify complete exporter/application standalone builds.
+
+- Separate private compact-batch materialization from confirmed publication.
+  Keep execution synchronous, recheck the compact plan at publication, preserve
+  callback/limit/failure order, and return the same Durable receipt. This is
+  an internal seam for future bounded preparation, not async success or a new
+  public prepared-request/retry API.
+
+- Add an opt-in flat string-map byte cache to the experimental explicit codec.
+  Reuse complete encodings only within a record-encoding call, with fixed
+  entry/byte bounds and current output-size/depth checks. Scalar/nested APIs,
+  exporter defaults and persistence ordering are unchanged. The optional
+  exporter `:experimental-span-flat-map-cache?` flag composes with SDK map
+  conversion caching. Specialize plain/cached kernels from one Scheme body to
+  avoid allocating unused cache helpers on scalar/uncached paths.
+
+- Expose the experimental stock-Jolt traversal kernel as an independent
+  `jolt.traversal.experimental` namespace, without loading JSON or exporter
+  dependencies. The explicit codec captures its native folds once; no runtime
+  globals or per-element interop adapters are introduced.
+
+- Add a separate opt-in payload scalar-map cache to the explicit span codec,
+  using the library-owned map folder and a compatible SDK. Keep cache state
+  local to each payload and retain live conversion-policy checks and fallback.
+  Ordinary paths, dependency pins and persistence confirmation are unchanged;
+  compiler-woven converter bodies remain unqualified.
+
+- Prepare private WAL bytes before writer submission in the explicit span-codec
+  experiment. This moves pure encoding out of the serialized Durable worker;
+  ordinary backends and persistence confirmation remain unchanged. Requires the
+  matching experimental driver path; default dependency pins are not advanced.
+
+- Keep nested event/link JSON in private encoded bytes inside the explicit
+  span codec, avoiding its intermediate String. Outer fields remain JSON
+  strings, not raw JSON splices; ordinary writers and Durable bytes are unchanged.
+
+- Share the experimental codec's library-owned map walker with attribute
+  projection and avoid loading the old native JSON backend in that opt-in path.
+  Ordinary backends retain their existing selection and conversion behavior.
+
+- Add an opt-in, source-only explicit codec experiment for span-only, owned
+  compact Durable export. Keep normal encoding and persistence confirmation
+  unchanged; validate configuration before storage acquisition and retain
+  compact-plan checks around encoding. See `docs/EXPLICIT-CODEC-EXPERIMENT.md`
+  for tested scope and remaining gates; no default or protocol change.
+
+- Allow the internal span-row adapter to receive a per-call nested JSON writer
+  for explicit codec experiments. Existing callers keep the original writer,
+  including changes between event and link encoding. No backend, dependency,
+  schema or persistence default changes.
+
 - Build singleton-vector span event columns directly instead of running three
   generic `mapv` passes. Preserve timestamp/name/attribute conversion order,
   fresh output vectors, named/compact layouts and lazy-input behavior. Event

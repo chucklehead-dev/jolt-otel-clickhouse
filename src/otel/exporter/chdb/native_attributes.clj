@@ -23,10 +23,13 @@
          ;; Record forms are lexical syntax, not top-level procedures. The
          ;; nongenerative UID/field fence above pins their known image layout;
          ;; these checks separately fence callable helper presence and arity.
-         "'((make-pmap 2) (pmap-fold-seq-order 3) "
+         "'((make-pmap 2) "
          "(jolt-transient-new 1) (jolt-persistent! 1) (tmap-put! 3) "
          "(amap-index 3) (vec-copy-range 3) (var-cell-deref 1) (jolt-invoke1 2))) "
          "(error 'native-attributes \"Required runtime projection primitives are unavailable\")) "
+         "(unless (and (procedure? pmap-fold-seq-order) "
+         "(bitwise-bit-set? (procedure-arity-mask pmap-fold-seq-order) 3)) "
+         "(error 'native-attributes \"Map traversal is unavailable\")) "
          "(let ((clone " (slurp clone) ") (generic " (slurp generic) ")) "
          "(lambda (key-var value-var original-key) "
          "(lambda (m) "
@@ -43,7 +46,11 @@
    fully generic live converter path."
   ([key-var value-var] (load-transform! key-var value-var false))
   ([key-var value-var original-key]
-   (let [factory (scheme/eval-string transform-source)
+   (load-transform! key-var value-var original-key nil))
+  ([key-var value-var original-key folder]
+   (let [factory (if folder
+                   ((scheme/eval-string (str "(lambda (pmap-fold-seq-order) " transform-source ")")) folder)
+                   (scheme/eval-string transform-source))
          transform (factory key-var value-var original-key)]
      ;; Bind stable Var identities once, on the native side. Dereferencing the
      ;; Vars stays per entry. Keep a Clojure IFn facade while reducing each

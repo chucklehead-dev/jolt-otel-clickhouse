@@ -1,0 +1,5 @@
+d8fe75554c070f0896fccce362d7dba0d7b58133625e0e3125cb3544ea35ad1b  incubator/codec/src/jolt/codec/experimental.clj
+b6643ac0e62ac07f1ae2811a1264b2b0d4d6d36e1e1de90361775bb119040e87  incubator/codec/src/jolt/codec/json.ss
+442c438fe27598113df249c9228f570bc145bf55b4b7afd7fb268592f616c01e  incubator/codec/src/jolt/traversal/experimental.clj
+56dbb8f56b9aa6dcea162acfdcff9f6d3fa1892d7abf10912b35bae2389363d3  incubator/codec/src/jolt/traversal/kernel.ss
+7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94  /home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt

@@ -1,0 +1,13 @@
+## Review
+
+**Relative source paths.** `packaging/deps.edn` resolves `../src`/`../test` from `incubator/codec/packaging`, matching the workflow's `cd packaging` before `build`. Consistent and minimal — no dependencies, as claimed.
+
+**Build-before-deps ordering.** The workflow comment and README agree: 0.8.23's launcher drops the build driver when `-Sdeps` precedes `build`, so the dedicated `packaging` project (rather than an inline `-Sdeps` override) is the correct workaround — it supplies paths without touching consumer deps or patching the compiler. This matches the two preceding `-Srepro -Sdeps` invocations in the same job, which run the non-packaging gates first and only switch to the packaging flow for the standalone binary.
+
+**Failure propagation.** `set -euo pipefail` plus `&&`-free sequential `run:` lines means any failing step (checksum mismatch, build failure, or the exit code from `"$task_tmp/codec-smoke"`) aborts the job. The smoke test's `-main` uses `assert` and an explicit `System/exit` based on `(:fail + :error)`, so a test failure yields nonzero exit and fails CI — propagation looks correct.
+
+**Temporary artifact cleanup.** `task_tmp` is created via `mktemp -d` under `$RUNNER_TEMP`, validated with a `case` guard against the expected pattern (defense against a corrupted `RUNNER_TEMP`), and `trap 'rm -rf -- "$task_tmp"' EXIT` is set immediately after. The `codec-smoke` binary is built into `$task_tmp`, so it's covered by the same trap — no separate `.build` directory cleanup is visible in the workflow itself, though the README's local-build instructions mention retiring it manually (a documentation note for interactive use, not CI, since CI's `task_tmp` removal is unconditional).
+
+**Gating tests and claim scope.** The smoke test asserts `otel.exporter.chdb` is never loaded (before and after), asserts exactly 19 tests, and exits nonzero on any failure — matching README/CHANGELOG claims of "19 tests / 186 assertions" for the combined binary and keeping the claim scoped to the library only, not the exporter. Wording throughout (README, CHANGELOG, test docstring) is careful to call this a packaging/functional gate, not a performance or ABI qualification, and repeatedly disclaims exporter/cross-platform coverage — consistent with the stated no-runtime-change scope.
+
+No issues found; the design is internally consistent and conservatively scoped. CI execution itself is unobserved, per the task framing.

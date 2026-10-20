@@ -1,0 +1,29 @@
+I'll read the three files involved (the research script, the validator, and the relevant exporter code) to evaluate the isolation claims.
+## Review: matched-native-floor-20261019 research harness
+
+**Isolation claim — largely valid, with caveats.**
+
+The native arm correctly:
+- Captures exactly one real statement from a genuine SDK-shaped `export-spans!` call (`:capture-calls @captures` checked `= 1`), confirms it's an `owned/statement?` with `precompute-wal` already applied (identity-checked, so WAL bytes are frozen before the measured window) and that the prepared WAL satisfies `ByteRecord` — this substantiates "actually confirmed, prepared immutable statement."
+- Retires the borrowed exporter (`shutdown-exporter!`) in a `finally` before entering the direct `execute-owned-and-flush!` loop, so no exporter-level state leaks into the measured path.
+- Runs exactly 2 direct warmups + 32 measured calls (34 total direct executions) atop the 1 capture warmup, and independently counts native stream calls via a redef on `chdb-stream-insert-n`, asserting `= 35` — a real, code-level confirmation of "32 direct measured + 3 warmups" rather than an assumed count.
+- Confirms publication status each call against `#{:committed :reconciled}` — identical to `execute-durable-sql!`'s own `confirmed-durable-statuses` set in `chdb.clj:1534`, so the harness's acknowledgement bar matches production, not a weakened one.
+- Checks the table ends at 175,000 rows, matching the shared fixture (`reader.edn`: 175000/5000/625/35), so both arms work over the same rich dataset.
+
+**Defects/limitations that need explicit scope labels (some already present, some not):**
+
+1. **Missing `with-instrumentation-suppressed` wrapper.** `execute-durable-sql!` (chdb.clj:1567-1577) wraps `durable/execute-owned-and-flush!` in `context/with-instrumentation-suppressed`; the harness's measured `insert!` calls `execute-owned-and-flush!` directly, skipping that wrapper. If that macro does non-trivial dynamic-var binding or span suppression work, the native arm is measuring a cheaper code path than what `execute-durable-sql!`/the real exporter actually runs. This isn't labeled anywhere in the writer output and should be, or the wrapper should be included.
+
+2. **Conflated warmup categories.** `:warmups 3` is a single aggregate number bundling one SDK-shaped capture call and two direct `execute-owned-and-flush!` calls. The validator only checks the aggregate `3`; the "1 exporter + 2 direct" breakdown is reconstructable only by reading the writer source, not independently verifiable from persisted data.
+
+3. **Asymmetric instrumentation in the SDK arm.** The SDK arm's `with-redefs` wraps *every* one of the 35 `execute-durable-sql!` calls (incrementing `calls`, conditionally resetting `statement`) inside the delegated workload's own timed region, while the native arm's measured loop has zero such wrapper. This is a real (likely small) asymmetry between the two timed paths, undisclosed in the output.
+
+4. **Repeated execution of one frozen statement.** The 32 "measured" calls all re-execute the *same* captured SQL/WAL object rather than 32 independently prepared batches. This is consistent with the declared "native floor" scope (`:preencoded-native-floor? true`, `:encoding-and-wal-precompute-measured? false`) and is honestly labeled — but it means the number measures re-execution cost of one statement, not the cost of 32 distinct requests.
+
+**Properly scoped, not defects:**
+- `:target-qualified false`, `:tail-qualified false`, `:s3-qualified false`, `:sdk-queue-measured? false` are explicit and present in both writer and validator output — satisfies "no throughput/tail/architecture claims."
+- `:matched-across-processes-not-yet-checked true` is explicitly stated in the validator's final `prn`, satisfying the aggregate-hash-check deferral requirement.
+- The validator's native branch only asserts native-specific keys; it never references or invents SDK-arm statistics. The SDK branch purely delegates to the existing `validate-durable.clj` and asserts its `:verified` flag — no duplicated validation logic.
+- Cross-arm parity check (`= 35` durable calls in both arms against the same 175k-row fixture) is a genuine, code-enforced invariant, not asserted-by-assumption.
+
+**Bottom line:** the harness's core isolation (frozen prepared statement, confirmed acknowledgement, exporter retirement before direct calls, stream-count verification) is real and code-enforced, not just claimed in comments. The two notable gaps are the missing `with-instrumentation-suppressed` wrapper in the native arm and the asymmetric per-call wrapper overhead in the SDK arm — both should be called out as explicit limitations in the writer/validator output rather than left implicit in the source.
