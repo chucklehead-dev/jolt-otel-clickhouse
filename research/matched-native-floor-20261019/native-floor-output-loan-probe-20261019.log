@@ -1,0 +1,1 @@
+{:raw ["out-stream" 3 true true], :buffered ["out-stream" 3 true true], :same-object true, :raw-borrow-fast? true, :buffered-borrow-fast? true}

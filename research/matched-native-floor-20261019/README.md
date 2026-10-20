@@ -101,6 +101,17 @@ new Quint type/scope sketch before adding model logic. Do not bypass policy,
 sealed-spool, schema-plan, classification, lease/CAS or failure handling gates.
 Current compact-schema confirmation is startup-only, not concurrent-DDL proof.
 
+## Small follow-up probe: a suspected copy is not present
+
+The remaining~2.5KB/row allocation suggested checking whether the writer's
+BufferedOutputStream forced private WAL chunks onto the copying fallback.
+An isolated stock-Jolt probe disproves that hypothesis: raw and buffered streams
+are the same builtin object, and both take the synchronous borrow fast path.
+No buffered-stream bypass patch is justified. The small script/output are kept.
+The local POSIX copy helper already uses native FD read/write with a64KiB buffer;
+despite its name, it is not the Linux copy_file_range syscall. Further tuning
+would need a measured isolated case and short-write/failure controls, not guesswork.
+
 ## S3 / DSL constraint
 
 This payload needs~420.3Mbps of WAL upload alone at25k rows/s. The user's10Mbps
