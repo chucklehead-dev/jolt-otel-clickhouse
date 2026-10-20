@@ -1,6 +1,7 @@
 (ns otel.exporter.chdb-nested-fragments-test
   (:require [clojure.test :refer [deftest is]]
             [otel.exporter.chdb :as exporter]
+            [otel.exporter.chdb.compact-format :as compact]
             [jdbc.core :as jdbc]))
 
 (defn rejects? [f] (try (f) false (catch Throwable _ true)))
@@ -26,6 +27,11 @@
                            #((:encode other) "" [record]
                               (fn [value] [((:nested scoped) value)]) 100000)))
                      [((:nested scoped) record)]) 100000))))
+    (is (= expected
+           (text ((:encode scoped) "SQL\n" records
+                   (fn [record]
+                     (is (= expected (emit scoped)))
+                     [((:nested scoped) record)]) 100000))))
     (is (nil? @#'exporter/*experimental-nested-writer*))))
 
 (deftest failed-projection-retires-scope-with-original-error
@@ -38,6 +44,25 @@
     (is (= [1] @seen))
     (is (rejects? #((:nested context) [])))
     (is (nil? @#'exporter/*experimental-nested-writer*))))
+
+(deftest scope-is-closed-before-wal-preparation-and-publication
+  (let [context (#'exporter/load-experimental-span-codec! false false true)
+        calls (atom [])
+        prepare (:prepare-statement context)
+        context (assoc context :prepare-statement
+                  (fn [statement]
+                    (is (nil? @#'exporter/*experimental-nested-writer*))
+                    (is (rejects? #((:nested context) [])))
+                    (swap! calls conj :wal)
+                    (prepare statement)))]
+    (with-redefs-fn {#'compact/require-order! (fn [& _] (swap! calls conj :plan))
+                    #'exporter/execute-durable-sql! (fn [& _] (swap! calls conj :publish) :confirmed)}
+      (fn []
+        (is (= :confirmed
+               (#'exporter/execute-closed-compact-rows! :conn "otel_traces" ["EventsJSON"] [(fixture)]
+                 (fn [] {:compact-plans :test :owned-statement-output? true}) context
+                 (fn [value] (swap! calls conj :project) [((:nested context) value)]))))
+        (is (= [:plan :project :wal :plan :publish] @calls))))))
 
 (deftest option-and-capability-reject-before-storage
   (let [opens (atom 0) resolve-var ns-resolve
@@ -60,5 +85,5 @@
 
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'otel.exporter.chdb-nested-fragments-test)]
-    (assert (= 3 (:test r)))
+    (assert (= 4 (:test r)))
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

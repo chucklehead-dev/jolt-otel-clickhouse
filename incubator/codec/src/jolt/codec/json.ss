@@ -18,7 +18,10 @@
   (unless (ffc-json-row? row) (error 'ffc-json-row "expected a row"))
   (fx+ (vector-length (ffc-json-row-base row)) (pvec-count (ffc-json-row-suffix row))))
 (define-record-type ffc-fragments
-  (fields (mutable table) (mutable insertions) (mutable retained)))
+  (fields (mutable table) (mutable insertions) (mutable retained)
+          (mutable scratch) (mutable digits)))
+(define (ffc-new-fragments)
+  (make-ffc-fragments #f 0 0 (make-bytevector 1024) (make-bytevector 21)))
 (define ffc-fragment-count-key (keyword #f "cnt"))
 (define-syntax define-ffc-json-encoder
   (syntax-rules ()
@@ -39,9 +42,13 @@
       (error 'ffc-json "prefix must be ASCII text")))
   (let* ((budget (+ limit (string-length prefix)))
          (_ (unless (fixnum? budget) (error 'ffc-json "byte limit too large")))
-         (tail (make-bytevector (min (if lines? 65536 1024) budget)))
+         (tail (let ((capacity (min (if lines? 65536 1024) budget)))
+                 ;; Only scratch is reused. A short budget still gets a
+                 ;; clamped buffer: byte! relies on capacity to enforce it.
+                 (if (and shared-cache? (fx=? capacity 1024))
+                     (ffc-fragments-scratch shared-state) (make-bytevector capacity))))
         (used 0) (completed 0) (parts '()) (container-depth 0)
-        (digits (make-bytevector 21))
+        (digits (if shared-cache? (ffc-fragments-digits shared-state) (make-bytevector 21)))
         ;; Per-call weak roots; only independently copied, complete fragments.
         ;; Fixed bounds: 64 insertions, 128KiB retained, <=4KiB per fragment.
         (map-cache (if shared-cache? (ffc-fragments-table shared-state) #f))
@@ -308,7 +315,7 @@
   (ffc-json-encode/cached rows limit max-depth #t #t project prefix))
 
 (define (ffc-json-nested-scope)
-  (let ((fragments (make-ffc-fragments #f 0 0)) (active? #t))
+  (let ((fragments (ffc-new-fragments)) (active? #t))
     (jolt-vector
      (lambda (value limit max-depth)
        (unless active? (error 'ffc-json "nested-text scope is closed"))
@@ -320,4 +327,6 @@
        (set! active? #f)
        (ffc-fragments-table-set! fragments #f)
        (ffc-fragments-insertions-set! fragments 0)
-       (ffc-fragments-retained-set! fragments 0)))))
+       (ffc-fragments-retained-set! fragments 0)
+       (ffc-fragments-scratch-set! fragments #f)
+       (ffc-fragments-digits-set! fragments #f)))))

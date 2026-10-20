@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a default-off nested-fragment cache to the explicit span codec. Reuse
+  bounded complete scalar-map fragments and scope-local scratch buffers across
+  nested JSON writes, with independent outputs and cleanup on return/throw.
+  Preserve byte/depth limits, conversion order and confirmed persistence;
+  scope/owner tests and independently recovered local SDK runs cover the path.
+
 - Add experimental explicit codec row builders and vector suffix views to
   avoid constructing/extending persistent row vectors. A paired encoding
   screen reduces estimated allocation by about 6%, without a median-time or

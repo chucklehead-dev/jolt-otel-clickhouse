@@ -20,15 +20,23 @@
                          "       (hashtable-set! (lambda (h k v) (set! stores (+ stores 1))"
                          "                         (set! charged (+ charged (bytevector-length v))) (real-set! h k v))))"
                          " (let () " @#'codec/json-source
+                         " (define observed #f)"
+                         " (define original-new ffc-new-fragments)"
+                         " (set! ffc-new-fragments (lambda () (let ((cache (original-new)))"
+                         "   (set! observed cache) cache)))"
                          " (jolt-vector ffc-json-nested-scope"
                          "  (lambda () (jolt-vector walks stores charged))"
                          "  (lambda (value)"
-                         "    (ffc-json-encode/shared value 100000 128 #f #f #f \"\" (make-ffc-fragments #f 0 0)))"
-                         "  (lambda (value) (ffc-json-ascii-bytes value 100000 128)))))))"))]
+                         "    (ffc-json-encode/shared value 100000 128 #f #f #f \"\" (ffc-new-fragments)))"
+                         "  (lambda (value) (ffc-json-ascii-bytes value 100000 128))"
+                         "  (lambda () (jolt-vector (hashtable? (ffc-fragments-table observed))"
+                         "    (ffc-fragments-insertions observed) (ffc-fragments-retained observed)"
+                         "    (bytevector? (ffc-fragments-scratch observed))"
+                         "    (bytevector? (ffc-fragments-digits observed)))))))))"))]
       (apply factory (traversal/native-kernels (traversal/open-traversal))))))
 
 (deftest maps-share-only-complete-scalar-fragments
-  (let [[open stats _ render] @instrumented
+  (let [[open stats _ render state] @instrumented
         [write close] (open) c (codec/open-codec) m (fixture)
         before (stats) first (write m 100000 128)
         second (write (with-meta m {:source :test}) 100000 128)]
@@ -37,7 +45,11 @@
     (is (= [1 1] (mapv - (subvec (stats) 0 2) (subvec before 0 2))))
     (let [changed (assoc m "key-0" true)]
       (is (not= (text (render first)) (text (render (write changed 100000 128))))))
+    (is (every? true? [(nth (state) 0) (pos? (nth (state) 1)) (pos? (nth (state) 2))
+                       (nth (state) 3) (nth (state) 4)]))
     (close)
+    (is (= [false 0 0 false false] (state)))
+    (is (= (codec/write-nested c (codec/prepare-nested-text c m)) (text (render first))))
     (doseq [value [m [] nil false]] (is (rejects? #(write value 100000 128))))
     (let [[_ _ bad-mode] @instrumented] (is (rejects? #(bad-mode m))))))
 
@@ -54,7 +66,12 @@
                nil (catch Throwable error error))))
     (is (rejects? #(@retained (fixture))))
     (is (rejects? #(codec/with-nested-text-writer nil identity)))
-    (is (rejects? #(codec/with-nested-text-writer c nil)))))
+    (is (rejects? #(codec/with-nested-text-writer c nil)))
+    (let [values [-9223372036854775808 0 18446744073709551615 1 -9 nil false 1.25]
+          encoded (codec/with-nested-text-writer c (fn [write] (mapv write values)))]
+      (doseq [[value output] (map vector values encoded)]
+        (is (= (codec/write-nested c (codec/prepare-nested-text c value))
+               (codec/write-nested c output)))))))
 
 (deftest shared-hits-retain-current-depth-size-and-stock-map-guards
   (let [[open _ _ render] @instrumented [write close] (open) m (fixture)
@@ -63,6 +80,8 @@
     (write m 100000 128)
     (is (= (codec/write-nested c expected) (text (render (write m limit 128)))))
     (is (rejects? #(write m (dec limit) 128)))
+    (is (rejects? #(write (assoc m "novel" "longer") (dec limit) 128)))
+    (is (rejects? #(write "x" 0 128)))
     (is (rejects? #(write (nth (iterate vector m) 128) 100000 128)))
     (is (= (codec/write-nested c (codec/prepare-nested-text c (nth (iterate vector m) 127)))
            (text (render (write (nth (iterate vector m) 127) 100000 128)))))
@@ -105,7 +124,16 @@
     (is (= expected (text (encode))))
     (is (= expected
            (text (codec/encode-prefixed-records c ""
-                   [(codec/prepare-nested-text c m) (codec/prepare-nested-text c m)] vector 100000))))))
+                   [(codec/prepare-nested-text c m) (codec/prepare-nested-text c m)] vector 100000))))
+    (codec/with-nested-text-writer c
+      (fn [write]
+        (let [first (write m)
+              large {"text" (apply str (repeat 70000 "y"))}
+              second (write large)]
+          (is (rejects? #(write [m (Object.)])))
+          (is (= (codec/write-nested c (codec/prepare-nested-text c m)) (codec/write-nested c first)))
+          (is (= (codec/write-nested c (codec/prepare-nested-text c large)) (codec/write-nested c second)))
+          (is (= (codec/write-nested c first) (codec/write-nested c (write m)))))))))
 
 (defn -main [& _]
   (let [r (clojure.test/run-tests 'jolt.codec.nested-fragment-test)]

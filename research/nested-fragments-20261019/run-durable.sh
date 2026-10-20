@@ -7,7 +7,7 @@ task_old_sdk=/home/chuck/ai-src/worktrees/otel-batch-threshold-wakeup-20261017
 task_old_json=/home/chuck/ai-src/worktrees/data-json-qualified-8d557cc-20261017
 task_binary=/home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt
 task_wrapper=/home/chuck/ai-src/tools/jolt-with-chez-10.4.1
-task_out=/home/chuck/ai-src/evidence/nested-fragments-durable-abba-20261019
+task_out=${1:-/home/chuck/ai-src/evidence/nested-fragments-durable-abba-20261019}
 test ! -e "$task_out"
 for task_entry in "$task_reader:473edbb06fa11070968de35f8b953f62cb4b6cd3" "$task_fixture:3fd96c4691c5db49ed4d3ef55622aaa6b9074127" "$task_old_sdk:37c684a2c370fc82fde82331635973bce87a52b3" "$task_old_json:8d557cc18eb9526ed29ae5613089c3793d5973fa"; do
   task_path=${task_entry%:*}
@@ -26,7 +26,7 @@ task_writer_deps="{:paths [\"src\" \"test\" \"bench\" \"$task_fixture/test\" \"$
 task_reader_deps="{:paths [\"src\" \"test\" \"bench\" \"$task_fixture/test\" \"$task_fixture/bench\"] :deps {org.clojure/data.json {:local/root \"$task_old_json\"} io.github.casselc/otel {:local/root \"$task_old_sdk\"}}}"
 mkdir -p "$task_out"
 cd "$task_candidate"
-sha256sum src/otel/exporter/chdb.clj incubator/codec/src/jolt/codec/experimental.clj incubator/codec/src/jolt/codec/json.ss incubator/codec/src/jolt/traversal/kernel.ss \
+sha256sum deps.edn incubator/codec/deps.edn src/otel/exporter/chdb.clj incubator/codec/src/jolt/codec/experimental.clj incubator/codec/src/jolt/codec/json.ss incubator/codec/src/jolt/traversal/kernel.ss \
   research/nested-fragments-20261019/durable-arm.clj research/nested-fragments-20261019/independent-reader.clj \
   research/library-nested-text-20261019/rich-sdk-scaling-screen-20261019.clj \
   research/library-nested-text-20261019/nested-sorted-sdk-physical-reader-20261018.clj \
@@ -56,6 +56,9 @@ for task_arm in off on on off; do
   bb research/library-nested-text-20261019/validate-rich-sdk-scaling-20261019.clj "$task_report" 1 \
     > "$task_report.validation.edn"
   sha256sum -c "$task_out/sources.sha256" > "$task_report.source-after.log"
+  for task_path in "$task_reader" "$task_fixture" "$task_old_sdk" "$task_old_json"; do
+    git -C "$task_path" diff --quiet HEAD
+  done
   du -sk "$task_store" > "$task_report.retired-kib.txt"
   case "$task_store" in /tmp/nested-fragments-durable.????????) ;; *) exit 91;; esac
   test ! -L "$task_store"

@@ -92,3 +92,75 @@ still allocates a temporary 1KiB buffer/digit scratch before copying its fresh
 result. Reuse must never expose scratch storage, retain stale output, bypass
 small byte budgets or weaken the exclusive synchronous-use contract. Initial
 results above must remain retained rather than be overwritten by later results.
+
+## V2: scope-local scratch reuse
+
+V1 is committed at `d687e36`. V2 keeps a private 1KiB initial buffer and digit
+scratch per scope; each invocation still copies its result into fresh storage.
+Buffers grow locally when necessary. A budget below 1KiB gets a freshly clamped
+buffer instead: reusing the larger buffer there would bypass the old capacity
+guard. Close clears scratch as well as the cache. Tests now inspect actual
+cleared cache fields, retain old results across later large/failed writes, and
+alternate full-range integers/zero/nil/Boolean/double through reused scratch.
+No plain/outer-encoding buffer is pooled. No concurrent-use support is added.
+
+The same paired component screen, rerun only because the encoder changed:
+
+| Rich 5k-row shape | Scope off p50 | Scope on p50 | Estimated B/row off/on |
+| --- | ---: | ---: | ---: |
+| Shared |118.50ms|102.72ms|9,297 / 8,322|
+| Unshared |201.59ms|201.51ms|12,856 / 11,982|
+
+Shared median is about 13% lower; unshared median is flat. Estimated allocation
+falls about 10.5% / 6.8% respectively. The complete output hash remains equal
+in all arms and changed-event controls differ. Both old/new raw results remain
+retained; absolute timings from different runs are not paired comparisons.
+
+Fresh V2 SDK/local-Durable off/on/on/off, otherwise the same workload/reader:
+
+| Arm | Confirmed window rows/s | Estimated B/row | Callback p50 / p99 ms |
+| --- | ---: | ---: | ---: |
+| Off |11,650|17,230|416.89 / 562.34|
+| On |14,145|16,235|340.97 / 479.55|
+| On |15,450|16,230|308.45 / 400.49|
+| Off |12,711|17,222|381.87 / 496.91|
+
+Pooled 12,158 -> 14,769 rows/s (+21.5%), with 9.1% control drift. Both enabled
+arms are faster than both controls and allocation consistently falls about
+1KiB/row. This is a stronger observed local result, not proof of a population
+tail, the target or deployment-wide throughput. Only two processes per mode;
+process/runtime/native-engine variation remains. Do not compare just the best
+enabled arm with the slowest control or discard V1. All four quantiles, raw
+samples, CPU/resource counters, source hashes and receipts are retained.
+
+Another 700,000 rows independently recovered with every field/multiplicity
+checked; every exact owned store retired after successful validation. Across
+V1 and V2, 1.4 million rows were checked; no native database is retained.
+No S3 performance, Langfuse, actual app ingestion or Rust-relative target is
+qualified here. The 25k p50 / 20k p99 confirmed-throughput objective is unmet.
+
+Final library source gate: 28 tests / 287 assertions. Other final functional,
+packaging and independent review gates are recorded below as they finish.
+
+## Final functional/review gates
+
+- Library source and actual stock-Jolt Linux binary from a neutral directory:
+  **28 tests / 287 assertions** each.
+- Combined exporter/cache/codec gate: **43 / 300**, including the new exporter
+  namespace's **4 / 24**. Same-codec and cross-codec reentry are both covered.
+- Older independently published component compatibility: **39 / 276**.
+- The causal trace checks scope exit at the actual WAL-precompute seam and
+  `plan -> project -> WAL -> plan -> publish`. Metadata/publication are stubbed
+  in that unit test; native persistence comes from the independent recovered
+  rows above, not from its fabricated `:confirmed` return.
+- Claude main review and targeted test follow-up: no blocking findings.
+  Reviews are retained. Codex owns the executed gate results and counters;
+  the read-only reviewer did not independently rerun measurements.
+
+The main review's count question is resolved by the workflow's separate
+traversal **5 / 51** plus codec **23 / 236** calls: these sum to library28/287.
+The older published-component and exporter gates are additional, not part of
+that library total. Per-value nested text still has the old fixed64MiB/depth128
+limit, separate from the outer payload limit; no memory-budget guarantee is
+inferred from either. Source/WAL/classification/lease/publication semantics
+have not changed. No new model logic or manual exhaustive run was introduced.

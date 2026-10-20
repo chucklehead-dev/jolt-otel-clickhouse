@@ -143,6 +143,36 @@ than wire bytes. Neither option changes admission or persistence acknowledgement
 Missing requested capabilities reject before database acquisition; defaults do
 not require the incubating library.
 
+### Candidate nested-text scopes
+
+This newer checkout capability is **not present in the earlier published
+`05fa8b8` coordinate above**. Use the checkout-local alias for candidate tests;
+do not enable the option with an older library pin and expect a fallback.
+
+```clojure
+(codec/with-nested-text-writer encoder
+  (fn [prepare]
+    ;; Each value is JSON TEXT for an outer string field, not raw JSON insertion.
+    (codec/encode-prefixed-records encoder "" [{"enabled" false}]
+      (fn [value] [(prepare value)]) 1000)))
+```
+
+The synchronous scope reuses complete ASCII fragments from immutable ordinary
+or stock sorted maps with String keys and scalar values. It retains at most
+64 insertions / 128KiB fragment bytes, at most 4KiB per fragment, with weak root
+keys; table overhead is additional. A 1KiB buffer and digit scratch are also
+reused privately. Every result has independent storage. Small output budgets
+still use clamped buffers, and hits retain current depth/byte checks.
+The callback must not use its writer concurrently or across fibers. On return
+or throw, cache/scratch are cleared and retained writers reject even empty
+inputs. This is not a hard RSS bound or a global telemetry cache.
+
+The exporter option `:experimental-span-nested-fragment-cache? true` requires
+the explicit codec. It opens one scope per synchronous payload, fences the
+writer to that codec owner, and closes it before WAL preparation. Defaults and
+acknowledgement semantics are unchanged; Oscope does not enable it.
+See [paired component and recovered SDK results](../../research/nested-fragments-20261019/README.md).
+
 The byte limit excludes the ASCII prefix and includes newlines. Failure returns
 no partial byte array and stops before asking for another record. Projection
 and an input sequence can have their own effects; those effects are not rolled

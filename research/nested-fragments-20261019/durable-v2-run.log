@@ -1,0 +1,9 @@
+start index=0 arm=off owned_store=/tmp/nested-fragments-durable.OTLkj3t5
+verified-and-retired index=0 arm=off
+start index=1 arm=on owned_store=/tmp/nested-fragments-durable.Psda5nd5
+verified-and-retired index=1 arm=on
+start index=2 arm=on owned_store=/tmp/nested-fragments-durable.f0mbVMUo
+verified-and-retired index=2 arm=on
+start index=3 arm=off owned_store=/tmp/nested-fragments-durable.tvKqmqpI
+verified-and-retired index=3 arm=off
+terminal0: four arms independently recovered and owned stores retired
