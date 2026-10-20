@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Walk persistent-vector leaf blocks directly in the incubating stock-Jolt
+  traversal library, avoiding repeated indexed lookup for each element.
+  Preserve sliced-vector order, full-fold and exception behavior. Native fold
+  microbenchmarks improve; the rich encoding screen establishes no overall
+  throughput or allocation improvement.
+
 - Update the SDK and driver pins for the explicit stock-Jolt codec path:
   accept traversal injection into the opt-in immutable payload cache and the
   driver's private prepared-WAL capability without local-root overrides.

@@ -49,9 +49,9 @@ jobs:
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
             -m jolt.traversal.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
-            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'clojure.test)
-             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test)]
-               (assert (= 14 (:test r)))
+            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'clojure.test)
+             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test)]
+               (assert (= 15 (:test r)))
                (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
           # Build first: 0.8.23's launcher does not load the build driver when
           # -Sdeps precedes `build`. The small packaging project supplies paths

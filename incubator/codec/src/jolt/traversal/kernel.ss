@@ -55,7 +55,15 @@
   (let ((n (pvec-count v)))
     (let loop ((i 0) (a acc))
       (if (fx=? i n) a
-          (loop (fx+ i 1) (visit (pvec-nth! v i) a))))))
+          ;; Resolve once per leaf, not once per element. Use the runtime's
+          ;; resolver so sliced/relaxed vectors retain their actual leaf
+          ;; offsets; assuming every leaf starts at i mod 32 is incorrect.
+          (let-values (((chunk offset) (pv-leaf-for v i)))
+            (let ((run (fxmin (fx- (vector-length chunk) offset) (fx- n i))))
+              (let leaf ((j 0) (a a))
+                (if (fx=? j run) (loop (fx+ i run) a)
+                    (leaf (fx+ j 1)
+                          (visit (vector-ref chunk (fx+ offset j)) a))))))))))
 
 ;; Vector SDK batches keep the allocation-free cursor. Other sequential sources
 ;; are consumed lazily: request next only after visit returned successfully.
