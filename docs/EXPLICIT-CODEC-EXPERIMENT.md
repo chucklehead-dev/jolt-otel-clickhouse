@@ -31,6 +31,11 @@ For an existing chDB 26.9.0 Durable writer connection:
 ```
 
 Supply installer-confirmed typed descriptors as usual if using typed storage.
+To export all signals through this same owner, select
+`:signals #{:spans :logs :metrics}`. Spans use the explicit codec; logs and
+metrics retain the configured JSON writer, callback behavior and String SQL
+path. The span backend setting does not install the separate legacy native
+writer for those signals. All physical writes still await confirmation.
 The three cache flags are optional, default-off optimizations. The last reuses
 bounded complete scalar-map fragments and private scratch storage only within
 one synchronous payload. Outputs remain independent and the scope closes on
@@ -74,5 +79,5 @@ earlier inconclusive results, all p50/p90/p95/p99 samples and cleanup receipts.
 
 This is not population-tail, S3, real-application/Langfuse, Rust-relative or
 throughput-target qualification. The ~25k p50 / ~20k p99 objective remains
-unmet. Oscope defaults are unchanged; selecting this published library alone
+unmet. Oscope defaults/configuration are unchanged; selecting this published library alone
 does not enable the codec or its caches in an application.

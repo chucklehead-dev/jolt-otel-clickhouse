@@ -77,3 +77,17 @@ jobs:
           # includes the same scope/lifetime tests against the pinned library.
           (cd ../.. && "$task_bin" -Srepro -A:test:experimental-span-codec-test \
             -m otel.exporter.chdb-nested-fragments-test)
+          # Real mixed-signal storage, separate writer/fresh-reader processes.
+          # The dependency-free library smoke above remains a separate claim.
+          (cd ../.. &&
+            export JOLT_CHDB_CACHE_DIR="$task_tmp/chdb-native" &&
+            "$task_bin" -Srepro -m jdbc.chdb.install &&
+            export JOLT_CHDB_LIB="$JOLT_CHDB_CACHE_DIR/libchdb.so" &&
+            task_deps='{:paths ["src" "bench" "incubator/codec/test"]}' &&
+            for task_wire in raw-ticks auto; do
+              task_store=$(mktemp -d "$task_tmp/mixed-native.XXXXXXXX")
+              "$task_bin" -Srepro -A:stock-span-codec -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-mixed-codec-native writer "$task_store" "$task_wire"
+              "$task_bin" -Srepro -A:stock-span-codec -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-mixed-codec-native reader "$task_store"
+            done)

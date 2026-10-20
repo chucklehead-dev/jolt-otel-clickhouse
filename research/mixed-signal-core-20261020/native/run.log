@@ -1,0 +1,5 @@
+wire=raw-ticks owned_store=/tmp/mixed-codec-qualified.zSPaze2p
+verified-and-retired wire=raw-ticks
+wire=auto owned_store=/tmp/mixed-codec-qualified.AP6BepVv
+verified-and-retired wire=auto
+terminal0: raw-ticks and auto full native mixed-signal gates passed
