@@ -20,6 +20,6 @@
                              'jolt.codec.nested-fragment-test
                              'jolt.codec.record-test
                              'jolt.codec.scalar-text.experimental-test)]
-    (assert (= 37 (:test result)))
+    (assert (= 39 (:test result)))
     (assert (nil? (find-ns 'otel.exporter.chdb)))
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

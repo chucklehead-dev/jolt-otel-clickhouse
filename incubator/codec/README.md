@@ -96,7 +96,7 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The combined source and Linux standalone library gates run 37 tests / 435 assertions,
+The combined source and Linux standalone library gates run 39 tests / 468 assertions,
 including the leaf-resolution mechanism and nested-scope controls.
 
 ## Use as an independent Git dependency
@@ -108,7 +108,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "6288a7ccd04087f01061275367f7dabffd39cdba"
+   :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
    :deps/root "incubator/codec"}}}
 ```
 
@@ -260,7 +260,7 @@ experimental; component improvements do not establish the Durable targets.
 
 The `packaging` project supplies only library/test source roots and no external
 dependencies. On official stock Jolt 0.8.23, a default Linux standalone binary
-runs **37 tests / 435 assertions**, including dynamic sorted-map operation
+runs **39 tests / 468 assertions**, including dynamic sorted-map operation
 checks, nested calls and caches. A separate traversal-only binary runs
 **5 / 51**, with the JSON namespace absent. These are functional packaging
 checks, not throughput measurements or a stable collection-layout ABI.
