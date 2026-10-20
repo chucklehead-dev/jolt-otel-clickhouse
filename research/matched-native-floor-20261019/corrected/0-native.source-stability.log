@@ -1,0 +1,10 @@
+/home/chuck/ai-src/evidence/matched-native-floor-writer-20261019.clj: OK
+/home/chuck/ai-src/evidence/validate-matched-native-floor-20261019.bb: OK
+/home/chuck/ai-src/worktrees/exporter-flat-map-specialized-20261019/src/otel/exporter/chdb.clj: OK
+/home/chuck/ai-src/worktrees/exporter-flat-map-specialized-20261019/incubator/codec/src/jolt/codec/json.ss: OK
+/home/chuck/ai-src/worktrees/exporter-flat-map-specialized-20261019/incubator/codec/src/jolt/codec/experimental.clj: OK
+/home/chuck/ai-src/worktrees/otel-stock-payload-cache-folder-20261019/src/otel/any_value.clj: OK
+/home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt: OK
+/home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so: OK
+/home/chuck/ai-src/evidence/matched-native-floor-writer-v2-20261019.clj: OK
+/home/chuck/ai-src/evidence/validate-matched-native-floor-v2-20261019.bb: OK
