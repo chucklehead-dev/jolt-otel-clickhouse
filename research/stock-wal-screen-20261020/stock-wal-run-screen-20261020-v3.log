@@ -1,0 +1,3 @@
+:boundary-and-all-ascii-controls-passed
+:large-shapes-byte-identical
+{[:old :rich] {:samples 24, :bytes 840050, :ms {:p50 2.42497, :p90 4.448847, :p95 4.509596, :p99 4.547449}}, [:old :long-clean] {:samples 24, :bytes 800000, :ms {:p50 2.210327, :p90 3.93179, :p95 3.966163, :p99 4.025526}}, [:old :escape-heavy] {:samples 24, :bytes 800000, :ms {:p50 2.592561, :p90 4.756913, :p95 4.773498, :p99 4.791725}}, [:candidate :rich] {:samples 24, :bytes 840050, :ms {:p50 2.710329, :p90 3.62748, :p95 4.813151, :p99 4.856097}}, [:candidate :long-clean] {:samples 24, :bytes 800000, :ms {:p50 0.921156, :p90 1.538013, :p95 1.546056, :p99 1.573151}}, [:candidate :escape-heavy] {:samples 24, :bytes 800000, :ms {:p50 2.633133, :p90 4.567735, :p95 4.711224, :p99 4.727277}}}

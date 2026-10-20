@@ -1,0 +1,1 @@
+{:scope :instrumented-whole-process-json-read-str, :includes-startup-and-close true, :timing-overhead-included true, :stock-jolt "0.8.23", :json-reader :ordinary, :rows 160000, :confirmed-window-nanos 13099927647, :profile {:calls 217, :characters 293816, :nanos 109872495, :max-characters 4875}, :whole-process-reader-nanos-over-window 0.008387259682702276}
