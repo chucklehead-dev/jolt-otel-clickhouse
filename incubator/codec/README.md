@@ -33,6 +33,12 @@ walk. Ordinary maps retain their seq order (including hash collisions); stock
 sorted maps retain tree order without invoking comparators. The kernel builds
 no entries or seq cursors for maps/vectors. This does not make callbacks or
 vector indexing allocation-free, and collision traversal uses recursion stack.
+Ordinary defrecords retain declared field order followed by extension-map seq
+order, with no intermediate map copy. Runtime accessors handle inline/spilled
+fields. Custom `seq` implementations, deftypes and unsupported extension
+representations reject rather than being bypassed. Record fields/dispatch must
+remain unchanged during traversal. Record values are not fragment-cache keys;
+metadata and native type bookkeeping are not JSON fields.
 `fold-records` also accepts sequential sources, which may allocate or realize
 chunks according to their own semantics; it asks for no next record after a
 callback throws. Inputs must remain immutable throughout each call.
@@ -181,7 +187,7 @@ are consumed incrementally, subject to their own realization behavior.
 
 Output uses ASCII JSON with correct surrogate-pair escapes for non-BMP text.
 Supported values are nil, Boolean, strings, names, integers, finite doubles,
-ordinary persistent maps, stock sorted maps, and vectors. Unknown value types,
+ordinary persistent maps, stock sorted maps, ordinary defrecords, and vectors. Unknown value types,
 non-string/name object keys, and replaced sorted-map operations reject rather
 than silently dropping data. Third-party JSONWriter extensions are not part of
 this explicit API. Existing exporter defaults continue to honor their old path.

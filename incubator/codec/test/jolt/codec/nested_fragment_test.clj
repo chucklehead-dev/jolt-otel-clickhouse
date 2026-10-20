@@ -14,7 +14,7 @@
 (def instrumented
   (delay
     (let [factory (scheme/eval-string
-                    (str "(lambda (real-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?)"
+                    (str "(lambda (real-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map? ffc-stock-record?)"
                          " (let ((walks 0) (stores 0) (charged 0) (real-set! hashtable-set!))"
                          " (let ((ffc-map-fold (lambda (m v a) (set! walks (+ walks 1)) (real-fold m v a)))"
                          "       (hashtable-set! (lambda (h k v) (set! stores (+ stores 1))"

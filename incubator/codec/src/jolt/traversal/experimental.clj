@@ -13,10 +13,10 @@
 (def ^:private backend
   (delay
     ;; Definitions are lexical; loading this library installs no runtime helpers.
-    (let [[map-fold vector-fold records-fold pmap-fold sorted-map? qualify]
+    (let [[map-fold vector-fold records-fold pmap-fold sorted-map? record? qualify]
           (scheme/eval-string
             (str "(let () " source
-                 "\n(jolt-vector ffc-map-fold ffc-vector-fold ffc-records-fold ffc-pmap-fold ffc-stock-sorted-map?"
+                 "\n(jolt-vector ffc-map-fold ffc-vector-fold ffc-records-fold ffc-pmap-fold ffc-stock-sorted-map? ffc-stock-record?"
                  " (lambda (m v s)"
                  " (and (eq? (record-type-uid (record-rtd m)) 'chez-pmap-v6)"
                  "      (equal? (record-type-field-names (record-rtd m)) '#(root cnt hasheq meta))"
@@ -28,14 +28,14 @@
                  "      (equal? (record-type-field-names (record-rtd empty-hnode)) '#(bm arr))))) )"))]
       (when-not (qualify {} [] (sorted-map))
         (throw (ex-info "Unsupported experimental traversal runtime" {:type ::unavailable})))
-      [map-fold vector-fold records-fold pmap-fold sorted-map?])))
+      [map-fold vector-fold records-fold pmap-fold sorted-map? record?])))
 
-(deftype ^:private Traversal [tag map-fold vector-fold records-fold pmap-fold sorted-map?])
+(deftype ^:private Traversal [tag map-fold vector-fold records-fold pmap-fold sorted-map? record?])
 (defn open-traversal
   "Return a stateless traversal capability. No native resources need closing.
   Calls have independent accumulators; callbacks own any mutable state they use."
   []
-  (let [[m v r p s] @backend] (Traversal. seal m v r p s)))
+  (let [[m v r p s r?] @backend] (Traversal. seal m v r p s r?)))
 (defn- checked [traversal]
   (when-not (and (instance? Traversal traversal) (identical? seal (.-tag traversal)))
     (throw (ex-info "Invalid experimental traversal" {:type ::invalid-traversal})))
@@ -43,7 +43,7 @@
 
 (defn fold-map
   "Visit (key value accumulator) in seq order for ordinary persistent maps or
-  stock sorted maps, without constructing entries/sequences. No comparator is
+  stock sorted maps or ordinary defrecords, without constructing entries/sequences. No comparator is
   called. Unsupported representations reject; callback exceptions stop the fold.
   Callback allocations/effects are not prevented or rolled back. Reduced is an
   ordinary accumulator, not an early-return instruction. Inputs must stay immutable."
@@ -67,13 +67,13 @@
   ((.-records-fold traversal) values visit initial))
 
 (defn native-kernels
-  "Internal bridge: [map-fold vector-fold records-fold stock-sorted-map?]. Capture
+  "Internal bridge: [map-fold vector-fold records-fold stock-sorted-map? stock-record?]. Capture
   these once in a Scheme kernel, not through per-element Clojure adapters.
   Same full-fold contracts as the public functions; version-sensitive, trusted."
   [traversal]
   (checked traversal)
   [(.-map-fold traversal) (.-vector-fold traversal) (.-records-fold traversal)
-   (.-sorted-map? traversal)])
+   (.-sorted-map? traversal) (.-record? traversal)])
 
 (defn native-pmap-folder
   "Internal trusted (ordinary-pmap visitor initial) full fold for SDK injection.
