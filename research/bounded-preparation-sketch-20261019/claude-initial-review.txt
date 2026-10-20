@@ -1,0 +1,15 @@
+## Bounded design critique
+
+**Ownership-state gaps that could leave invariants vacuous**
+
+The "at most two reserved slots" property depends entirely on which `Stage` values count as slot-occupying, but that mapping isn't typed — it's only in prose (reserved-preparing, prepared, publishing, awaiting-retirement). If the eventual model's occupancy predicate silently excludes `AwaitingRetirement` (easy to miss, since retirement sounds terminal but the batch is explicitly listed as still holding a slot until settlement), the two-slot bound becomes vacuously true against a predicate that no longer matches the stated intent. Fix: name the occupancy set explicitly now (`{Preparing, Prepared, Publishing, AwaitingRetirement}`) rather than deferring it to the executable model.
+
+`PipelineState.workers : Worker -> WorkerPhase` is the right shape for "both workers terminal before release," but it has no correspondence check against `lifecycle.clj`. `owned-settlement`/`await-owned-worker!` (lifecycle.clj:68-90, 164-208) are hard-coded to a single `worker` field and a single `.isAlive` check. Promoting to two SDK-owned workers is a real structural change to `BatchSpanProcessor`, not a label change — the correspondence section should name this as a concrete follow-on gate, not leave it implied by the type map alone.
+
+**Hidden memory-bound assumption**
+
+The claim "encoded-byte budget must account for retained SQL AND precomputed WAL" matches only the codec branch with `:prepare-statement` (chdb.clj:1353-1371), where `owned-statement/try-snapshot` may wrap bytes with WAL. The no-codec paths (native-guarded-byte-batch / plain `json-each-row-payload`, chdb.clj:1372-1375) retain only a String — no WAL at all, and potentially two live copies (`bytes` then `(String. bytes ...)`) during the charge window. The sketch's single "SQL + WAL" budget formula doesn't fit this branch; the eventual charge function needs a per-representation-kind case, not one formula.
+
+**Is SDK cooperation actually necessary, or just a confirmed-only return?**
+
+The correctness property only requires that `export-spans!` block until the batch's publication is confirmed — a confirmed-only synchronous return is sufficient by itself, matching `export.clj`'s current contract where the exporter's boolean return *is* the delivery signal. The sketch instead makes the SDK own both workers ("one SDK processor owns one preparer and one serialized publisher"), which drags the two-worker termination/join problem into `lifecycle.clj`. That's heavier than the correctness property demands: the prepare/publish pipelining could live entirely inside the exporter, invisible to the SDK, with the SDK keeping its existing single-worker contract and simply not returning until confirmed. Worth resolving before the next gate — whether SDK-owned dual workers are required, or whether exporter-internal pipelining plus confirmed-only return achieves the same property with no `lifecycle.clj` changes at all.
