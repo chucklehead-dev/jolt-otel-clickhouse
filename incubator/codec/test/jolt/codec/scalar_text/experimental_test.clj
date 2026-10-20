@@ -1,5 +1,6 @@
 (ns jolt.codec.scalar-text.experimental-test
   (:require [clojure.test :refer [deftest is run-tests]]
+            [clojure.string :as str]
             [jolt.codec.scalar-text.experimental :as shapes]
             [jolt.host :as host] [jolt.scheme :as scheme]))
 
@@ -73,6 +74,44 @@
 (deftest invalid-options-reject
   (doseq [[count chars] [[-1 1] [9 1] [1 -1] [1 8193] [1.0 1]]]
     (is (thrown? Throwable (planner count chars)))))
+
+(deftest checked-node-access-avoids-repeated-public-index-validation
+  ;; Count actual generic indexing in an isolated kernel, not wall time. The
+  ;; old implementation is the non-vacuity control: four reads per tree node.
+  ;; Every candidate node retains its pvec/count guards before native access.
+  (doseq [n [0 1 17 128] old? [false true]]
+    (let [source (if old?
+                   (reduce (fn [s [name index]]
+                             (str/replace s (str "(" name " node)")
+                               (str "(pvec-nth! node " index ")")))
+                     @#'shapes/source
+                     [["sc-nd-key" 1] ["sc-nd-val" 2] ["sc-nd-left" 3] ["sc-nd-right" 4]])
+                   @#'shapes/source)
+          [factory reset-count! reads]
+          (scheme/eval-string
+            (str "(let ((reads 0) (original-nth pvec-nth!))"
+                 " (let ((pvec-nth! (lambda (v i) (set! reads (+ reads 1)) (original-nth v i))))"
+                 " (let ((factory " source "))"
+                 " (jolt-vector factory (lambda () (set! reads 0)) (lambda () reads)))))"))
+          p (factory [[#'policy original-policy]] 100 prototype 8 8192)
+          m (fixture n)]
+      (is (true? (p 1 m)))
+      (reset-count!)
+      (is (= (oracle m) (p 0 m)))
+      (is (= (if old? (* 4 n) 0) (reads))))))
+
+(deftest learned-lookups-keep-node-guards-and-vector-view-semantics
+  (let [p (planner) original (sorted-map "a" 1)]
+    (is (true? (p 1 original)))
+    (doseq [tree [nil [] [nil "a" 1 nil] [nil "a" 1 :bad nil]
+                 [nil "wrong-key" 1 nil nil] [nil "a" [1] nil nil]]]
+      (let [m (sorted-map "a" 1)]
+        (host/ref-put! m :tree tree)
+        (is (false? (p 0 m)))))
+    (let [m (sorted-map "a" 1)]
+      (host/ref-put! m :tree (subvec [0 nil "a" 1 nil nil 0] 1 6))
+      (is (= {"a" "1"} (p 0 m))))
+    (is (= [1 1] (p 2 nil)))))
 
 (defn -main [& _]
   (let [r (run-tests 'jolt.codec.scalar-text.experimental-test)]
