@@ -3,7 +3,8 @@
             [otel.exporter.chdb :as e]
             [otel.exporter.chdb.compact-format :as compact]
             [jdbc.chdb.owned-statement :as owned]
-            [jdbc.core :as jdbc]))
+            [jdbc.core :as jdbc]
+            [jolt.codec.experimental :as codec]))
 
 (defn fixture []
   (into {} (map (fn [i] [(str "key-" i) (case (mod i 3) 0 "λ" 1 false i)]) (range 16))))
@@ -109,4 +110,37 @@
                                   (resolve-var namespace name)))]
         (is (= :otel.exporter.chdb/experimental-span-payload-cache-unavailable
                (try (e/exporter valid-options) nil (catch Throwable error (:type (ex-data error)))))))
+      (is (zero? @opens)))))
+
+(deftest flat-map-byte-cache-composes-with-real-sdk-conversion
+  (let [source (fixture) wire (atom [])]
+    (with-redefs-fn {#'compact/require-order! (fn [& _])
+                    #'e/execute-durable-sql! (fn [_ statement] (swap! wire conj (owned/text statement)))}
+      (fn []
+        (with-bindings {#'e/*json-backend* :native-guarded-byte-batch}
+          (doseq [enabled? [false true]]
+            (let [context (#'e/load-experimental-span-codec! true enabled?)]
+              (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [source source source]
+                                               checked context vector cached-project))))
+        (is (= 2 (count @wire)))
+        (is (apply = @wire))))))
+
+(deftest invalid-flat-map-byte-cache-rejects-before-storage
+  (let [opens (atom 0)]
+    (with-redefs [jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "storage" {})))]
+      (doseq [options [{:experimental-span-flat-map-cache? true}
+                      (assoc valid-options :experimental-span-flat-map-cache? nil)
+                      (assoc valid-options :experimental-span-flat-map-cache? "yes")]]
+        (is (= :otel.exporter.chdb/invalid-experimental-span-flat-map-cache
+               (try (e/exporter options) nil (catch Throwable error (:type (ex-data error)))))))
+      (is (zero? @opens)))))
+
+(deftest unavailable-flat-map-byte-cache-rejects-before-storage
+  (let [opens (atom 0)]
+    ;; Simulate a legacy codec with only its old zero-argument constructor.
+    (with-redefs [codec/open-codec (fn [] (throw (ex-info "legacy constructor" {})))
+                  jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "storage" {})))]
+      (is (= :otel.exporter.chdb/experimental-span-flat-map-cache-unavailable
+             (try (e/exporter (assoc valid-options :experimental-span-flat-map-cache? true))
+               nil (catch Throwable error (:type (ex-data error))))))
       (is (zero? @opens)))))

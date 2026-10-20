@@ -5,7 +5,10 @@
 ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
 ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
 (define-record-type ffc-json-text (fields bytes))
-(define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix flat-cache?)
+(define-syntax define-ffc-json-encoder
+  (syntax-rules ()
+    ((_ encode-name flat-cache?)
+     (define (encode-name value limit max-depth lines? escape-unicode? project prefix)
   (unless (and (fixnum? limit) (fx>=? limit 0)
                (fixnum? max-depth) (fx>=? max-depth 0))
     (error 'ffc-json "invalid byte/depth limit"))
@@ -192,7 +195,16 @@
        ((keyword? x) (string! (keyword-t-name x)))
        ((symbol-t? x) (string! (symbol-t-name x)))
        ((or (pmap? x) (ffc-stock-sorted-map? x))
-        (map! x depth))
+        ;; Macro specialization keeps cache state/closures out of scalar and
+        ;; uncached calls. Both variants share this one algorithm definition.
+        (if flat-cache? (map! x depth)
+            (begin
+              (byte! 123)
+              (let ((previous container-depth))
+                (set! container-depth depth)
+                (ffc-map-fold x map-entry! #f)
+                (set! container-depth previous))
+              (byte! 125))))
        ((pvec? x)
         (byte! 91)
         (let ((previous container-depth))
@@ -217,21 +229,29 @@
               (loop (cdr remaining) (fx+ offset (bytevector-length part))))))
       ;; Stock runtime constructor, not the fork's na-owned-bv->bytearray.
       ;; out is newly allocated and no encoder alias survives this call.
-      (make-jolt-array out 'byte))))
+      (make-jolt-array out 'byte)))))))
+
+(define-ffc-json-encoder ffc-json-encode/plain #f)
+(define-ffc-json-encoder ffc-json-encode/cached #t)
+;; Private dispatcher for mechanism tests. Public facades select a specialized
+;; entry point directly, not a per-map mode switch in the disabled path.
+(define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix flat-cache?)
+  ((if flat-cache? ffc-json-encode/cached ffc-json-encode/plain)
+   value limit max-depth lines? escape-unicode? project prefix))
 
 (define (ffc-json-bytes value limit max-depth)
-  (ffc-json-encode value limit max-depth #f #f #f "" #f))
+  (ffc-json-encode/plain value limit max-depth #f #f #f ""))
 (define (ffc-json-lines-bytes rows limit max-depth)
-  (ffc-json-encode rows limit max-depth #t #f #f "" #f))
+  (ffc-json-encode/plain rows limit max-depth #t #f #f ""))
 (define (ffc-json-ascii-bytes value limit max-depth)
-  (ffc-json-encode value limit max-depth #f #t #f "" #f))
+  (ffc-json-encode/plain value limit max-depth #f #t #f ""))
 (define (ffc-json-nested-text value limit max-depth)
   (make-ffc-json-text (jolt-array-vec (ffc-json-ascii-bytes value limit max-depth))))
 (define (ffc-json-ascii-lines-bytes rows limit max-depth)
-  (ffc-json-encode rows limit max-depth #t #t #f "" #f))
+  (ffc-json-encode/plain rows limit max-depth #t #t #f ""))
 (define (ffc-json-project-ascii-lines-bytes rows project limit max-depth)
-  (ffc-json-encode rows limit max-depth #t #t project "" #f))
+  (ffc-json-encode/plain rows limit max-depth #t #t project ""))
 (define (ffc-json-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
-  (ffc-json-encode rows limit max-depth #t #t project prefix #f))
+  (ffc-json-encode/plain rows limit max-depth #t #t project prefix))
 (define (ffc-json-cached-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
-  (ffc-json-encode rows limit max-depth #t #t project prefix #t))
+  (ffc-json-encode/cached rows limit max-depth #t #t project prefix))

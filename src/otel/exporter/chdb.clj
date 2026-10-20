@@ -1273,8 +1273,10 @@
                              exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
 
 (defn- load-experimental-span-codec!
-  ([] (load-experimental-span-codec! false))
+  ([] (load-experimental-span-codec! false false))
   ([payload-cache?]
+   (load-experimental-span-codec! payload-cache? false))
+  ([payload-cache? flat-map-cache?]
   (try
     (require 'jolt.codec.experimental)
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
@@ -1284,7 +1286,7 @@
           prepare (when prepare-var @prepare-var)
           _ (when-not (ifn? prepare)
               (throw (ex-info "Experimental codec requires private WAL preparation" {})))
-          codec (open)
+          codec (if flat-map-cache? (open {:flat-map-cache? true}) (open))
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
           cache-var (when payload-cache?
                       (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter))
@@ -1303,11 +1305,14 @@
        :folder folder :attributes attributes :prepare-statement prepare
        :payload-cache-factory cache-factory})
     (catch Throwable _
-      (throw (ex-info (if payload-cache?
+      (throw (ex-info (if flat-map-cache?
+                        "Experimental span flat-map cache requires compatible codec/SDK capabilities"
+                        (if payload-cache?
                         "Experimental span payload cache requires a compatible SDK and qualified runtime"
-                        "Experimental span codec requires its source alias and a qualified runtime")
-                      {:type (if payload-cache? ::experimental-span-payload-cache-unavailable
-                                 ::experimental-span-codec-unavailable)}))))))
+                        "Experimental span codec requires its source alias and a qualified runtime"))
+                      {:type (cond flat-map-cache? ::experimental-span-flat-map-cache-unavailable
+                                   payload-cache? ::experimental-span-payload-cache-unavailable
+                                   :else ::experimental-span-codec-unavailable)}))))))
 
 (defn- direct-metric-layout? [snapshot]
   (and (:durable? snapshot)
@@ -1862,18 +1867,25 @@
   :experimental-span-payload-cache? defaults false. True additionally requires
   the explicit codec and a compatible SDK. Reuses bounded primitive-map
   conversions within one payload only. Compiler-woven converter bodies remain
-  unqualified; no default or cross-thread cache is installed."
+  unqualified; no default or cross-thread cache is installed.
+  :experimental-span-flat-map-cache? defaults false. True requires the explicit
+  codec and enables bounded complete-map byte reuse within each record encoding.
+  It can compose with the SDK payload cache but changes no persistence contract."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
-            experimental-span-codec? experimental-span-payload-cache?]
+            experimental-span-codec? experimental-span-payload-cache? experimental-span-flat-map-cache?]
      limit-override :max-insert-bytes
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
           insert-format :json-each-row owned-statement-output? false experimental-span-codec? false
-          experimental-span-payload-cache? false}}]
+          experimental-span-payload-cache? false experimental-span-flat-map-cache? false}}]
+   (when-not (and (boolean? experimental-span-flat-map-cache?)
+                  (or (not experimental-span-flat-map-cache?) experimental-span-codec?))
+     (throw (ex-info "Experimental span flat-map cache requires the explicit span codec"
+                     {:type ::invalid-experimental-span-flat-map-cache})))
    (when-not (and (boolean? experimental-span-payload-cache?)
                   (or (not experimental-span-payload-cache?) experimental-span-codec?))
      (throw (ex-info "Experimental span payload cache requires the explicit span codec"
@@ -1907,7 +1919,8 @@
    ;; Resolve before database acquisition or DDL. Ordinary consumers never load
    ;; the incubating namespace/resources; missing support is not a downgrade.
    (let [experimental-span-codec (when experimental-span-codec?
-                                   (load-experimental-span-codec! experimental-span-payload-cache?))]
+                                   (load-experimental-span-codec! experimental-span-payload-cache?
+                                                                  experimental-span-flat-map-cache?))]
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (and experimental-span-codec

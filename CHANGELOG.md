@@ -5,7 +5,10 @@
 - Add an opt-in flat string-map byte cache to the experimental explicit codec.
   Reuse complete encodings only within a record-encoding call, with fixed
   entry/byte bounds and current output-size/depth checks. Scalar/nested APIs,
-  exporter defaults and persistence ordering are unchanged.
+  exporter defaults and persistence ordering are unchanged. The optional
+  exporter `:experimental-span-flat-map-cache?` flag composes with SDK map
+  conversion caching. Specialize plain/cached kernels from one Scheme body to
+  avoid allocating unused cache helpers on scalar/uncached paths.
 
 - Expose the experimental stock-Jolt traversal kernel as an independent
   `jolt.traversal.experimental` namespace, without loading JSON or exporter
