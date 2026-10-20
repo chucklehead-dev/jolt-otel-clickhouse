@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Add experimental explicit codec row builders and vector suffix views to
+  avoid constructing/extending persistent row vectors. A paired encoding
+  screen reduces estimated allocation by about 6%, without a median-time or
+  tail improvement. These are not yet used by production exporter code.
+
 - Walk persistent-vector leaf blocks directly in the incubating stock-Jolt
   traversal library, avoiding repeated indexed lookup for each element.
   Preserve sliced-vector order, full-fold and exception behavior. Native fold

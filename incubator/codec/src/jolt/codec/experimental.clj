@@ -1,7 +1,7 @@
 (ns jolt.codec.experimental
   "Incubating explicit ASCII JSON codec. Not a data.json backend. Source-mode
   qualified on stock Jolt 0.8.23 and selected runtime7098; AOT is not qualified."
-  (:require [clojure.java.io :as io] [jolt.scheme :as scheme]
+  (:require [clojure.java.io :as io] [clojure.string :as str] [jolt.scheme :as scheme]
             [jolt.traversal.experimental :as traversal]))
 
 (def ^:private seal (Object.))
@@ -25,15 +25,18 @@
             (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?) (let () " json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
-                 " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes)))"))
-          [scalar project qualify nested cached-project] (apply factory (traversal/native-kernels walk))]
+                 " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes"
+                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width)))"))
+          [scalar project qualify nested cached-project row-box row-append row-width]
+          (apply factory (traversal/native-kernels walk))]
       (when-not (and (qualify (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
-      [scalar project (traversal/native-pmap-folder walk) nested cached-project])))
+      [scalar project (traversal/native-pmap-folder walk) nested cached-project
+       row-box row-append row-width])))
 
-(deftype ^:private Codec [tag scalar project fold nested])
+(deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width])
 (defn open-codec
   "Open a stateless explicit codec. Optional :flat-map-cache? (default false)
   enables bounded, per-invocation String->String pmap byte reuse in record
@@ -44,12 +47,42 @@
    (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
                   (boolean? (get options :flat-map-cache? false)))
      (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
-   (let [[scalar project fold nested cached-project] @backend]
-     (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested))))
+   (let [[scalar project fold nested cached-project row-box row-append row-width] @backend]
+     (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested
+             row-box row-append row-width))))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
   codec)
+
+(defn row-builder
+  "Compile a fixed-arity constructor for an explicit codec row (0..32 fields).
+  Capture once per schema, not per record. It evaluates supplied fields eagerly
+  and creates private native storage instead of a persistent vector. Rows encode
+  as JSON arrays with normal depth/size/value rules. This is not raw JSON or a
+  mutable buffer; referenced input values must remain immutable during use."
+  [codec width]
+  (require-codec! codec)
+  (when-not (and (integer? width) (<= 0 width 32))
+    (throw (ex-info "Invalid experimental row width" {:type ::invalid-row-width})))
+  (let [arguments (str/join " " (map #(str "field" %) (range width)))
+        factory (scheme/eval-string
+                  (str "(lambda (box) (lambda (" arguments ") (box (vector " arguments "))))"))]
+    (factory (.-row-box codec))))
+
+(defn append-row-fields
+  "Return a row view referencing its base and an immutable vector suffix.
+  No base/suffix values are copied. Only a row without a nonempty suffix is
+  accepted; this does not build unbounded chains or invoke value converters."
+  [codec row suffix]
+  (require-codec! codec)
+  ((.-row-append codec) row suffix))
+
+(defn row-width
+  "Return the explicit row's field count; rejects ordinary vectors/non-rows."
+  [codec row]
+  (require-codec! codec)
+  ((.-row-width codec) row))
 
 (defn native-map-folder
   "Internal synchronous Scheme visitor bridge for ordinary persistent maps.

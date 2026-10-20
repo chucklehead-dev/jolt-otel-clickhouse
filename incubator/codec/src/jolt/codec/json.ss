@@ -5,6 +5,18 @@
 ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
 ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
 (define-record-type ffc-json-text (fields bytes))
+;; Explicit row view: a private fixed-width native vector plus an immutable
+;; persistent suffix. Neither native storage nor a mutable output alias escapes.
+(define-record-type ffc-json-row (fields base suffix))
+(define (ffc-json-row-box fields) (make-ffc-json-row fields empty-pvec))
+(define (ffc-json-row-append row suffix)
+  (unless (and (ffc-json-row? row) (pvec? suffix)
+               (fx=? (pvec-count (ffc-json-row-suffix row)) 0))
+    (error 'ffc-json-row "expected a row without suffix and a persistent vector"))
+  (make-ffc-json-row (ffc-json-row-base row) suffix))
+(define (ffc-json-row-width row)
+  (unless (ffc-json-row? row) (error 'ffc-json-row "expected a row"))
+  (fx+ (vector-length (ffc-json-row-base row)) (pvec-count (ffc-json-row-suffix row))))
 (define-syntax define-ffc-json-encoder
   (syntax-rules ()
     ((_ encode-name flat-cache?)
@@ -194,6 +206,16 @@
        ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
        ((keyword? x) (string! (keyword-t-name x)))
        ((symbol-t? x) (string! (symbol-t-name x)))
+       ((ffc-json-row? x)
+        (byte! 91)
+        (let ((previous container-depth) (base (ffc-json-row-base x)))
+          (set! container-depth depth)
+          (let loop ((i 0) (printed? #f))
+            (if (fx=? i (vector-length base))
+                (ffc-vector-fold (ffc-json-row-suffix x) vector-entry! printed?)
+                (loop (fx+ i 1) (vector-entry! (vector-ref base i) printed?))))
+          (set! container-depth previous))
+        (byte! 93))
        ((or (pmap? x) (ffc-stock-sorted-map? x))
         ;; Macro specialization keeps cache state/closures out of scalar and
         ;; uncached calls. Both variants share this one algorithm definition.

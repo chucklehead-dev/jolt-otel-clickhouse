@@ -106,6 +106,24 @@ or a whole-application standalone qualification.
 ;; fresh byte[] containing "[1]\n[2]\n"
 ```
 
+The row-construction prototype avoids an intermediate persistent row vector:
+
+```clojure
+(def build-row (codec/row-builder encoder 2)) ; capture once per schema
+(codec/write-nested encoder
+  (codec/append-row-fields encoder (build-row "value" 42) [false]))
+;; => "[\"value\",42,false]"
+```
+
+Fixed constructors support 0..32 arguments; an immutable vector suffix can
+make the complete row wider. The row owns private native base storage but
+references its field values and suffix; keep these immutable during use.
+This is not a Clojure collection or raw JSON, and does not invoke converters.
+Normal value, depth, output-size and fresh-output ownership rules apply.
+This prototype is not wired into the exporter. Its rich encoding screen
+reduces estimated allocation by about 6%, but establishes no median-time or
+tail improvement; see [the paired result](../../research/stock-row-view-20261019/README.md).
+
 For record batches with repeated immutable String->String maps, opt in with
 `(codec/open-codec {:flat-map-cache? true})`. The cache belongs to each
 `encode-prefixed-records` invocation, not the codec object. It copies complete
