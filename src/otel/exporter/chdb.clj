@@ -1893,8 +1893,8 @@
   Explicit :raw-ticks requires 26.9.0 and Durable; each INSERT carries its
   fixed raw-tick input setting into WAL without a connection/session toggle.
   Explicit :iso-utc selects the 26.9.0 alternative. Unknown choices fail closed.
-  :experimental-span-codec? defaults false. True requires the source-only
-  :experimental-span-codec alias, spans-only native-byte compact Durable export
+  :experimental-span-codec? defaults false. True requires the explicit codec
+  dependency (or checkout-local alias), spans-only native-byte compact Durable export
   and owned output. Selects an explicit built-in-value codec, NOT JSONWriter
   extensions. Persistence and default encoding are unchanged.
   :experimental-span-payload-cache? defaults false. True additionally requires

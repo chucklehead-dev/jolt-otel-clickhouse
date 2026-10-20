@@ -5,10 +5,14 @@ on:
     paths:
       - .github/workflows/experimental-codec-stock.yml
       - incubator/codec/**
+      - deps.edn
+      - src/otel/exporter/**
   pull_request:
     paths:
       - .github/workflows/experimental-codec-stock.yml
       - incubator/codec/**
+      - deps.edn
+      - src/otel/exporter/**
   workflow_dispatch:
 
 permissions:
@@ -17,7 +21,7 @@ permissions:
 jobs:
   stock-library:
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v4
         with:
@@ -55,3 +59,6 @@ jobs:
           (cd packaging && "$task_bin" build -m jolt.codec.standalone-smoke-test \
             -o "$task_tmp/codec-smoke")
           "$task_tmp/codec-smoke"
+          # Dependency-root qualification: no checkout-local codec source alias.
+          (cd ../.. && "$task_bin" -Srepro \
+            -M:stock-span-codec:stock-span-codec-test)

@@ -49,6 +49,44 @@ To use only traversal as a local dependency, point `:local/root` at this
 Neither the exporter project nor its SDK/driver/data.json dependencies are
 needed. Public distribution and standalone/AOT builds remain separate gates.
 
+## Use as an independent Git dependency
+
+On stock Jolt 0.8.23, `:deps/root` selects this subproject without resolving
+the parent exporter's dependencies:
+
+```clojure
+{:deps
+ {io.github.chucklehead-dev/jolt-codec
+  {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+   :git/sha "05fa8b86f38b0d1872322822fe68bf729b483613"
+   :deps/root "incubator/codec"}}}
+```
+
+This is a separately selectable library component in the existing repository,
+not a newly created repository. That exact published revision has the same
+traversal/codec kernels; its resolved tree contains only this dependency.
+An isolated consumer successfully folds a map and encodes JSON without
+loading exporter or SDK namespaces. Requiring only traversal still does not
+load JSON. It remains experimental and qualified for the named stock runtime,
+not a stable collection-layout ABI or all future nightlies.
+
+In the parent exporter checkout, `:stock-span-codec` selects this published
+component; `:experimental-span-codec` instead selects the local source for
+development. Do not combine them in a provenance check: local source would
+shadow the published component. Application Git dependencies do not inherit
+these aliases; declare the component above in the application's own deps.
+
+The combined exporter check is:
+
+```sh
+jolt -M:stock-span-codec:stock-span-codec-test
+```
+
+Local workspace runs must prefix that command with the required Chez 10.4.1
+wrapper. This gate checks the exact component resource paths before running
+the 39 exporter/cache/codec/traversal tests. It is not actual Durable throughput
+or a whole-application standalone qualification.
+
 ## API
 
 ```clojure

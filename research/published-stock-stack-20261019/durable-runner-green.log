@@ -1,0 +1,8 @@
+/home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt: OK
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1: OK
+/home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so: OK
+/home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/chdb.h: OK
+EVIDENCE_ROOT=/tmp/exporter-durable-native.IoUVX5
+fa98cab8cf77bfb21d66e6c21a307709f69f8ed2136acbfd8a0803c887774560  /tmp/exporter-durable-native.IoUVX5/writer.log
+6536f5691b2a4d012dcbac4d7f7e48f059b59da959a00a59b07e04123e7d4ba9  /tmp/exporter-durable-native.IoUVX5/reader.log
+durable-typed-native-qualified

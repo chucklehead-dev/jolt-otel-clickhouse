@@ -136,6 +136,35 @@ Jolt 0.8.22 or standalone/AOT builds. For the focused real-encoder tests:
 
 No new end-to-end throughput result is claimed by this selection API.
 
+### Experimental encoding on stock Jolt
+
+The explicit span codec is available as an independent Git subproject on stock
+Jolt **0.8.23**; it does not need our compiler fork or replace data.json's
+global writer. Applications can declare the [codec dependency](incubator/codec/README.md#use-as-an-independent-git-dependency)
+alongside this exporter. It brings no exporter/SDK/driver dependencies of its
+own. From this checkout, use `-A:stock-span-codec` instead.
+
+For a chDB 26.9.0 Durable writer connection, the opt-in exporter options are:
+
+```clojure
+(chdb-export/exporter
+ {:connection conn :durable? true :signals #{:spans}
+  :datetime64-wire :raw-ticks
+  :insert-format :json-compact-each-row
+  :json-backend :native-guarded-byte-batch
+  :owned-statement-output? true
+  :experimental-span-codec? true
+  :experimental-span-payload-cache? true
+  :experimental-span-flat-map-cache? true})
+```
+
+The cache options are also experimental and may be omitted. This path uses an
+explicit built-in-value encoder, not custom JSONWriter extensions. It remains
+synchronous and returns success only after confirmed publication; it does not
+enable preparation overlap. SDK/driver/data.json ecosystem forks are still
+selected by the exporter's exact pins. This is not a fully upstream-only
+dependency stack, complete Oscope qualification or a throughput-target claim.
+
 ### Durable acknowledgement
 
 An explicit `:insert-format :json-compact-each-row` selects schema-ordered
@@ -290,11 +319,14 @@ queryable.
 
 Durable also requires byte-exact writer ranges. Official Jolt 0.8.6 and 0.8.8
 do not provide that capability; the driver rejects them before storage effects.
-The ordinary exporter remains qualified separately on official 0.8.6. For
-Durable, select a reviewed compiler artifact containing casselc/jolt#73, not
-just a newer version string or a moving branch.
+The current SDK/driver pins pass the canonical exporter suite and a separate
+two-process typed Durable write/readback gate on official Jolt **0.8.23**, with
+chDB 26.9.0 and explicit raw-tick timestamps, without local-root overrides.
+Use exact qualified versions; a moving branch or newer version string alone
+does not establish compatibility. The ordinary 26.7.3 native path is checked
+separately. These functional gates do not establish throughput/tail targets.
 
-The initial shared artifact supports Linux X64, not every platform supported
+The historical shared compiler artifact supports Linux X64, not every platform supported
 by the ordinary exporter. `scripts/fetch-qualified-durable-runtime.sh` accepts
 only explicit producer run, attempt, workflow commit, artifact ID, archive and binary checksum
 pins. It checks the successful producer run and exact artifact, validates the
