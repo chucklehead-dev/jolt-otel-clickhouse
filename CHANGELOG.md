@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Expose an explicit span-codec capability check for applications that acquire
+  their own connection. Validate optional codec/SDK/owned-statement support
+  before storage; preserve constructor checks, defaults and confirmation.
+
 - Allow the opt-in stock-Jolt span codec in a multi-signal Durable exporter.
   Keep logs/metrics on configured JSON rather than loading the separate legacy
   native writer; preserve per-signal bindings, limits and confirmed publication.

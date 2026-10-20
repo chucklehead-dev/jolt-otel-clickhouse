@@ -1339,6 +1339,33 @@
                                    payload-cache? ::experimental-span-payload-cache-unavailable
                                    :else ::experimental-span-codec-unavailable)}))))))
 
+(defn check-experimental-span-codec!
+  "Check optional codec/SDK/owned-statement capabilities without opening JDBC.
+  Options are the three experimental span cache Boolean flags (default false).
+  Returns true or throws; never installs the legacy native JSON writer.
+  Applications can call this before acquiring their own storage. This checks
+  the current runtime, not chDB version, schema, delivery or future nightlies.
+  Exporter construction repeats its checks; this is not a transferable proof."
+  ([] (check-experimental-span-codec! {}))
+  ([options]
+   (let [flags [:experimental-span-payload-cache? :experimental-span-flat-map-cache?
+                :experimental-span-nested-fragment-cache?]]
+     (when-not (and (map? options) (every? (set flags) (keys options))
+                   (every? #(boolean? (get options % false)) flags))
+       (throw (ex-info "Invalid experimental span codec preflight options"
+                       {:type ::invalid-experimental-span-codec-preflight})))
+     (load-experimental-span-codec! (:experimental-span-payload-cache? options false)
+                                    (:experimental-span-flat-map-cache? options false)
+                                    (:experimental-span-nested-fragment-cache? options false))
+     (when-not (try
+                 (and (ifn? durable/execute-owned-and-flush!)
+                      (owned-statement/statement?
+                        (owned-statement/try-snapshot (byte-array 0))))
+                 (catch Throwable _ false))
+       (throw (ex-info "Owned statement stack unavailable"
+                       {:type ::owned-statement-unavailable})))
+     true)))
+
 (defn- direct-metric-layout? [snapshot]
   (and (:durable? snapshot)
        (= :json-compact-each-row (:insert-format snapshot))
