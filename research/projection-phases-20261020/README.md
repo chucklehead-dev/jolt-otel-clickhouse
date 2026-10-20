@@ -48,6 +48,10 @@ Run `screen.clj OUTPUT_EDN` from this exporter checkout, through the workspace
 Chez wrapper and checksum-qualified stock binary. Use `-Srepro`,
 `JOLT_AOT_CACHE=0`, source paths `src`, `test`, then that support checkout's
 `test` and `bench`; explicitly select the SDK and codec pins above via `-Sdeps`.
+The later driver also requires `research/shape-projection-20261020` on the path
+for the optional fixed-schema comparison; its default remains the baseline
+conversion path. For the exact original driver/results, use research commit
+`5af0db3` rather than silently treating a later driver as identical source.
 The codec uses `:deps/root "incubator/codec"`. Preserve the root SDK coordinate's
 `:exclusions [jolt-lang/jolt-crypto]`. Source hashes were recorded before and
 verified after the successful run; no local build or review ran concurrently.

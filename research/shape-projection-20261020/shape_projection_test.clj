@@ -116,6 +116,18 @@
       (with-redefs-fn {root (Object.)} #(is (nil? (convert m)))))
     (is (= (oracle m) (convert m)))))
 
+(deftest no-per-miss-seq-dispatch-and-plain-fallback-first
+  (let [m (fixture 16) p (plan m) expected (oracle m)
+        cache {:current? (constantly true) :lookup (constantly nil)
+               :store! (fn [_ result] result)}
+        sorted-convert (shape/cached-converter cache [p] (constantly nil) (constantly nil))
+        plain {"plain" "unchanged"}
+        plain-convert (shape/cached-converter cache [(fn [_] (throw (ex-info "must-not-probe" {})))]
+                        (fn [_] plain) (constantly nil))]
+    (with-redefs [clojure.core/some (fn [& _] (throw (ex-info "must-not-build-seq-dispatch" {})))]
+      (is (= expected (sorted-convert m)))
+      (is (= plain (plain-convert plain))))))
+
 (defn -main [& _]
   (let [result (run-tests 'shape-projection-test)]
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

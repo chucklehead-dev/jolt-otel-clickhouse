@@ -24,8 +24,8 @@ for task_arm in baseline candidate; do
     task_sdk='{:local/root "'"$task_candidate"'" :exclusions [jolt-lang/jolt-crypto]}'
     task_marker=$task_candidate
   fi
-  task_deps='{:paths ["src" "test" "'"$task_fixture"'/test" "'"$task_fixture"'/bench"] :deps {io.github.casselc/otel '"$task_sdk"' io.github.chucklehead-dev/jolt-codec {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git" :git/sha "7ab2bedcb2e1845efdf6ed5c55ae9d2164338a8d" :deps/root "incubator/codec"}}}'
-  bb -e '(let [d (clojure.edn/read-string (first *command-line-args*))] (assert (= 2 (count (:deps d)))) (assert (= 4 (count (:paths d)))))' "$task_deps"
+  task_deps='{:paths ["src" "test" "research/shape-projection-20261020" "'"$task_fixture"'/test" "'"$task_fixture"'/bench"] :deps {io.github.casselc/otel '"$task_sdk"' io.github.chucklehead-dev/jolt-codec {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git" :git/sha "7ab2bedcb2e1845efdf6ed5c55ae9d2164338a8d" :deps/root "incubator/codec"}}}'
+  bb -e '(let [d (clojure.edn/read-string (first *command-line-args*))] (assert (= 2 (count (:deps d)))) (assert (= 5 (count (:paths d)))))' "$task_deps"
   timeout --signal=TERM --kill-after=5s 240s "$task_wrapper" "$task_bin" -Srepro -Sdeps "$task_deps" \
     research/projection-phases-20261020/screen.clj "$task_out/$task_arm.edn" "$task_marker" > "$task_out/$task_arm.log" 2>&1
   sha256sum -c "$task_out/sources.sha256" > "$task_out/$task_arm.source-after.log"

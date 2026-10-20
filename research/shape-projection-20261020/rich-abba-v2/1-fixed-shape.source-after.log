@@ -1,0 +1,12 @@
+research/projection-phases-20261020/screen.clj: OK
+research/shape-projection-20261020/shape_projection.ss: OK
+research/shape-projection-20261020/shape_projection.clj: OK
+research/shape-projection-20261020/shape_projection_test.clj: OK
+research/shape-projection-20261020/run-rich-abba.sh: OK
+src/otel/exporter/chdb.clj: OK
+src/otel/exporter/chdb/attribute_projection.clj: OK
+/home/chuck/ai-src/worktrees/exporter-stock-nested-fragments-20261019/bench/otel/exporter/chdb_ordinary_transport_benchmark.clj: OK
+/home/chuck/ai-src/worktrees/exporter-stock-nested-fragments-20261019/bench/otel/exporter/chdb_benchmark.clj: OK
+/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/3366a3322c3ea4024057f6278e50c999864171e8/resources/otel/scalar_string_map.ss: OK
+/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/3366a3322c3ea4024057f6278e50c999864171e8/resources/otel/sorted_scalar_string_map.ss: OK
+/home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/3366a3322c3ea4024057f6278e50c999864171e8/resources/otel/payload_scalar_string_map_cache.ss: OK

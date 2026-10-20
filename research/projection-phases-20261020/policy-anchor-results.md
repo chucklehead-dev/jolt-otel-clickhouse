@@ -50,7 +50,11 @@ This has no native database/Durable I/O and does not advance the 25k/20k claim.
 The first diagnostic result in `result.edn` remains unchanged, produced by the
 earlier script at exporter research commit `0aef6a1`. The subsequent script adds
 an explicit SDK-source marker and records resource URIs; both comparison arms
-use that same updated script. Reproduce with `run-anchor-pair.sh NEW_ABSOLUTE_DIR`.
+use that same updated script. The exact historical script is preserved at
+research commit `5af0db3`. The current script/path also supports the subsequent
+fixed-schema experiment; it is not the historical source identity. Reproduce
+the historical comparison from that commit, or use the current
+`run-anchor-pair.sh NEW_ABSOLUTE_DIR` for a separately identified new run.
 
 ## Next higher-leverage experiment
 

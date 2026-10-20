@@ -21,7 +21,7 @@ points; this is not a supported cross-library integration API yet.
 
 ## Correctness
 
-`shape-projection-test`: **6 tests / 110 assertions**, zero failures/errors.
+`shape-projection-test`: **7 tests / 112 assertions**, zero failures/errors.
 Includes widths 0/1/8/9/16/32/128, hash collisions, descending comparator without
 calling it, exact output kind/order, metadata removal, fresh wrappers, changed
 values, malformed/count/ops/cyclic tree rejection, unsupported values, policy
@@ -87,11 +87,63 @@ establish an isolated overall improvement or regression. Shared timing is
 unacceptable for promotion regardless. All p50/p90/p95/p99/CPU/GC observations
 are in `rich-abba-v1/`; p95/p99 are maxima, not tail qualifications.
 
-The research wrapper currently allocates a `some` visitor/cursor on every cache
-miss, even for ordinary-map fallbacks. Next: remove that avoidable dispatch
-allocation and preserve the original plain-map-first ordering, then remeasure.
+At the V1 snapshot (`eb8f69e`) the research wrapper allocated a `some` visitor/
+cursor on every cache miss, even for ordinary-map fallbacks. The current wrapper
+uses a native vector loop compiled once per payload, and preserves the original
+plain-map-first ordering. The mechanism control rejects the old implementation
+(`native-dispatch-red.log`) and passes on the current one
+(`native-dispatch-green.log`). The first red attempt evaluated its oracle inside
+the global `some` replacement; the retained corrected control computes the
+oracle beforehand, isolating dispatch. It is not a general allocation proof.
 Retain this v1 evidence rather than rerunning it unchanged or claiming the
 isolated 2.5-2.8x improvement applies to the full pipeline.
+
+Claude's read-only source review (`claude-review.txt`) **APPROVE** covered the
+native-dispatch tail, original SDK converters/cache, shape algorithm, tests and
+both component drivers. It found no blocking correctness issue and requested
+the test-count update above. It did not run tests or qualify throughput. Codex
+ran the actual stock-runtime gate. No app pin/default is changed by this work.
+
+## Rich exporter ABBA v2: native dispatch
+
+Same four-process order, fixture, SDK/codec pins, 12 samples per cell, complete
+output digest and source checks. The change from V1 is the reviewed native
+dispatch loop and original plain-map-first fallback order, not a new codec,
+compiler or producer representation. All **288** observations match the same
+full output above; each arm terminates successfully. Raw reports and post-source
+checks are in `rich-abba-v2/`. Existing V1 reports remain unchanged.
+
+| Cell | Baseline p50 (first / last) | Template p50 (first / second) |
+|---|---:|---:|
+| Shared projection | 74.22 / 56.34ms | 52.54 / 58.35ms |
+| Shared prepared encoding | 42.20 / 39.61ms | 35.01 / 35.73ms |
+| Shared combined | 139.09 / 105.67ms | 98.97 / 105.28ms |
+| Distinct projection | 159.02 / 135.02ms | 101.28 / 95.18ms |
+| Distinct prepared encoding | 63.61 / 62.95ms | 52.75 / 54.72ms |
+| Distinct combined | 255.35 / 206.86ms | 156.09 / 158.77ms |
+
+Distinct projection allocation is about 9,262 -> 7,752 B/row (**16.3% less**);
+combined projection/encoding is 12,685 -> 11,176 B/row (**11.9% less**).
+Shared combined allocation stays effectively unchanged at about 9,026 B/row,
+removing the V1 dispatch penalty. Both candidate distinct combined medians are
+below both control medians; shared combined medians show no regression in this
+screen. These are observed component results, not Durable throughput claims.
+
+Do not quote one precise causal time gain: the first baseline is materially
+slower than the final baseline, and unchanged prepared-row encoding is also
+faster in candidate processes. For distinct prepared encoding, median CPU/wall
+are approximately 63.6/63.6, 52.8/52.8, 54.7/54.7, 62.9/63.0ms; total GC wall
+across 12 samples is 12.5, 11.7, 21.4, 25.3ms. Those counters do not establish
+descheduling or GC alone as the cause. No environmental cause is asserted.
+Small-sample p95/p99 remain maxima, not population-tail qualification.
+
+The concrete next step is an SDK-owned, bounded plan/compiler integration using
+this independent mechanism, then actual writer/independent Durable reader
+qualification. Preserve the original SDK's live anchors and cache budgets;
+don't make applications reach into private SDK Vars as this research driver
+does. Consider eliminating the remaining map materialization through an explicit
+codec projection view only after that baseline is preserved. No app pin/default,
+new concurrent publication mechanism or persistence contract is changed here.
 
 ## Run
 

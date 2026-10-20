@@ -1,0 +1,7 @@
+
+ERROR in (no-per-miss-seq-dispatch-and-plain-fallback-first) (:)
+Uncaught exception, not in assertion.
+expected: nil
+  actual: clojure.lang.ExceptionInfo: must-not-build-seq-dispatch {}
+
+Ran 7 tests. 110 assertions passed, 0 failures, 1 errors.
