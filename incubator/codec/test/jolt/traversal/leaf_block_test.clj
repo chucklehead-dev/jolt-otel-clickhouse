@@ -5,10 +5,17 @@
             [clojure.string :as str]
             [jolt.scheme :as scheme]))
 
+(defmacro ^:private embedded-kernel []
+  (if-let [resource (io/resource "jolt/traversal/kernel.ss")]
+    (slurp resource)
+    (throw (ex-info "Missing traversal mechanism-test kernel" {}))))
+
+(def ^:private kernel-source (embedded-kernel))
+
 (deftest one-resolution-per-leaf-not-per-element
   ;; Instrument a lexical copy only, never a runtime-global procedure. Keep
   ;; this gate separate from the compatibility tests for older published pins.
-  (let [source (slurp (io/resource "jolt/traversal/kernel.ss"))
+  (let [source kernel-source
         counted (str/replace source "(pv-leaf-for v i)" "(counted-leaf v i)")
         make-fold (scheme/eval-string
                     (str "(let ((calls 0))"

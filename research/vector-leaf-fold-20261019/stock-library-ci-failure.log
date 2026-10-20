@@ -1,0 +1,52 @@
+stock-library	Check the independent library on official stock Jolt	﻿2026-10-20T03:07:25.3829301Z ##[group]Run set -euo pipefail
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3830362Z ^[[36;1mset -euo pipefail^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3831528Z ^[[36;1mtask_tmp=$(mktemp -d "$RUNNER_TEMP/stock-codec.XXXXXXXX")^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3833289Z ^[[36;1mcase "$task_tmp" in "$RUNNER_TEMP"/stock-codec.????????) ;; *) exit 91;; esac^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3834729Z ^[[36;1mtrap 'rm -rf -- "$task_tmp"' EXIT^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3835940Z ^[[36;1mcurl --fail --location --silent --show-error --retry 2 \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3837213Z ^[[36;1m  --connect-timeout 15 --max-time 90 \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3838903Z ^[[36;1m  https://github.com/jolt-lang/jolt/releases/download/v0.8.23/jolt-v0.8.23-x86_64-linux.tar.gz \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3840730Z ^[[36;1m  -o "$task_tmp/jolt.tar.gz"^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3842721Z ^[[36;1mprintf '%s  %s\n' 90031be43241e61d0788a2f1bbd3da56d8f4324ae9fa87271f9637b43a6071f2 "$task_tmp/jolt.tar.gz" | sha256sum -c -^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3844814Z ^[[36;1mtar -xzf "$task_tmp/jolt.tar.gz" -C "$task_tmp"^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3846104Z ^[[36;1mtask_bin="$task_tmp/jolt-v0.8.23-x86_64-linux/jolt"^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3848081Z ^[[36;1mprintf '%s  %s\n' 7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94 "$task_bin" | sha256sum -c -^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3850038Z ^[[36;1mtest "$("$task_bin" --version)" = 'jolt v0.8.23'^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3851349Z ^[[36;1m"$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3852746Z ^[[36;1m  -m jolt.traversal.experimental-test^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3854107Z ^[[36;1m"$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3856312Z ^[[36;1m  "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'clojure.test)^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3859573Z ^[[36;1m   (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test)]^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3861628Z ^[[36;1m     (assert (= 15 (:test r)))^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3863127Z ^[[36;1m     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3865278Z ^[[36;1m# Build first: 0.8.23's launcher does not load the build driver when^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3866897Z ^[[36;1m# -Sdeps precedes `build`. The small packaging project supplies paths^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3868533Z ^[[36;1m# without changing consumer dependencies or using a compiler fork.^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3870208Z ^[[36;1m(cd packaging && "$task_bin" build -m jolt.codec.standalone-smoke-test \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3871542Z ^[[36;1m  -o "$task_tmp/codec-smoke")^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3872477Z ^[[36;1m"$task_tmp/codec-smoke"^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3873854Z ^[[36;1m# Dependency-root qualification: no checkout-local codec source alias.^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3875239Z ^[[36;1m(cd ../.. && "$task_bin" -Srepro \^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.3876320Z ^[[36;1m  -M:stock-span-codec:stock-span-codec-test)^[[0m
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.4095737Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.4096887Z env:
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.4097606Z   JOLT_NO_USER_DEPS: 1
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.4098368Z   JOLT_AOT_CACHE: 0
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.4099084Z ##[endgroup]
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.7167039Z /home/runner/work/_temp/stock-codec.6ny9sRhb/jolt.tar.gz: OK
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:25.9564255Z /home/runner/work/_temp/stock-codec.6ny9sRhb/jolt-v0.8.23-x86_64-linux/jolt: OK
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:26.3886828Z
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:26.3888083Z Ran 5 tests. 51 assertions passed, 0 failures, 0 errors.
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:27.0661433Z
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:27.0662192Z Ran 15 tests. 148 assertions passed, 0 failures, 0 errors.
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:28.6384673Z jolt build: compiling jolt.codec.standalone-smoke-test (release mode, self-contained)
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:28.8890805Z compiling /home/runner/work/_temp/stock-codec.6ny9sRhb/codec-smoke.build/runtime.ss with output to /home/runner/work/_temp/stock-codec.6ny9sRhb/codec-smoke.build/runtime.so
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.5550897Z jolt build: wrote /home/runner/work/_temp/stock-codec.6ny9sRhb/codec-smoke
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9530477Z
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9531483Z ERROR in (one-resolution-per-leaf-not-per-element) (:)
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9543731Z Uncaught exception, not in assertion.
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9544311Z expected: nil
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9544789Z   actual: java.lang.IllegalArgumentException: Cannot open <nil> as a Reader.
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9545220Z
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:41.9545363Z Ran 20 tests. 195 assertions passed, 0 failures, 1 errors.
+stock-library	Check the independent library on official stock Jolt	2026-10-20T03:07:42.0027016Z ##[error]Process completed with exit code 1.

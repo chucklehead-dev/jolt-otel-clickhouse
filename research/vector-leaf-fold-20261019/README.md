@@ -84,6 +84,26 @@ The reviewer was not given `exporter-tests.log` in its bounded file list;
 its source review does not independently verify that receipt. The retained
 terminal local log, not the review, is the evidence for the 39 / 276 claim.
 
+### Hosted packaging failure and correction
+
+At `45cf9cf`, hosted stock-library run `39362613214` passed source tests and
+the build, but the executable failed the new mechanism test: its runtime
+`io/resource` could not find `kernel.ss`. The initial local executable run
+was made inside a checkout and masked this test-source dependency. It did
+not establish self-contained execution for the newly added probe.
+
+The production kernel was already embedded. The correction embeds the test's
+kernel text at compile time as well. The workflow now executes the binary
+from its temporary build directory rather than the checkout. A new actual
+stock-Jolt build, run from that neutral directory, passes **20 / 199**;
+`portable-build.log` and `portable-run.log` are the corrected portability
+receipts. No production algorithm or benchmark arm changed, so the component
+screen was not rerun. The initial hosted failure is retained, not concealed
+or converted into a skip. Hosted qualification of the fix remains pending.
+The targeted follow-up Claude review found no blocking issue and confirmed
+the test assertions are unchanged; see `portability-claude-review.txt`.
+The saved hosted transcript has only trailing horizontal whitespace removed.
+
 From the repository root:
 
 ```sh

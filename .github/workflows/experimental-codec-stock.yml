@@ -58,7 +58,8 @@ jobs:
           # without changing consumer dependencies or using a compiler fork.
           (cd packaging && "$task_bin" build -m jolt.codec.standalone-smoke-test \
             -o "$task_tmp/codec-smoke")
-          "$task_tmp/codec-smoke"
+          # A checkout-relative resource lookup must not mask a missing embed.
+          (cd "$task_tmp" && "$task_tmp/codec-smoke")
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)
