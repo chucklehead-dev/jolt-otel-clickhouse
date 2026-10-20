@@ -1,0 +1,1 @@
+{:passed true, :wire :raw-ticks, :routing [:owned :string :string :string :string], :rows 12, :native-version "26.9.0", :scope :direct-exporter-not-sdk-or-http}

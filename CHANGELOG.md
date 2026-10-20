@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Allow the opt-in stock-Jolt span codec in a multi-signal Durable exporter.
+  Keep logs/metrics on configured JSON rather than loading the separate legacy
+  native writer; preserve per-signal bindings, limits and confirmed publication.
+  Defaults and the explicit codec's supported span values remain unchanged.
+
 - Refresh the optional published stock-Jolt codec pin to include vector leaf
   traversal and nested-fragment scopes. Exercise the exact resolved component
   through the combined exporter gate, including ownership/failure controls;

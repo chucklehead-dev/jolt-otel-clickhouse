@@ -159,6 +159,11 @@ For a chDB 26.9.0 Durable writer connection, the opt-in exporter options are:
   :experimental-span-nested-fragment-cache? true})
 ```
 
+For a mixed-signal exporter, use `:signals #{:spans :logs :metrics}` with the
+same options. The explicit codec applies to spans only; logs and metrics use
+the configured JSON writer and String SQL path, not the old optional native
+JSON backend. Their byte limits, typed fields and confirmed ACKs are unchanged.
+
 The cache options are also experimental and may be omitted. The nested cache
 reuses bounded fragments and scratch storage within one synchronous payload;
 it does not retain telemetry in a global cache. The pinned published codec

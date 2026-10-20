@@ -77,3 +77,27 @@ jobs:
           # includes the same scope/lifetime tests against the pinned library.
           (cd ../.. && "$task_bin" -Srepro -A:test:experimental-span-codec-test \
             -m otel.exporter.chdb-nested-fragments-test)
+          # Real mixed-signal storage, separate writer/fresh-reader processes.
+          # The dependency-free library smoke above remains a separate claim.
+          (cd ../.. &&
+            # The driver installer still pins 26.7.3. This qualified gate
+            # deliberately selects 26.9.0 without changing dependency pins.
+            curl --fail --location --silent --show-error --retry 2 \
+              --connect-timeout 15 --max-time 300 \
+              https://github.com/chdb-io/chdb-core/releases/download/v26.9.0/linux-x86_64-libchdb.tar.gz \
+              -o "$task_tmp/native.tar.gz" &&
+            printf '%s  %s\n' c6398bcc71dc58d12fb81548540aacd5d8248830ec81cec537f51c114670543b "$task_tmp/native.tar.gz" | sha256sum -c - &&
+            task_member=$(tar -tzf "$task_tmp/native.tar.gz" | grep -E '(^|/)libchdb\.so$') &&
+            test "$(printf '%s\n' "$task_member" | wc -l)" = 1 &&
+            tar --extract --gzip --to-stdout --file "$task_tmp/native.tar.gz" -- "$task_member" > "$task_tmp/libchdb.so" &&
+            printf '%s  %s\n' a7d22ade86e1de82b187adf572b569a6034600ce932c52b0acb8c97b82430557 "$task_tmp/libchdb.so" | sha256sum -c - &&
+            rm -- "$task_tmp/native.tar.gz" &&
+            export JOLT_CHDB_LIB="$task_tmp/libchdb.so" &&
+            task_deps='{:paths ["src" "bench" "incubator/codec/test"]}' &&
+            for task_wire in raw-ticks auto; do
+              task_store=$(mktemp -d "$task_tmp/mixed-native.XXXXXXXX")
+              "$task_bin" -Srepro -A:stock-span-codec -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-mixed-codec-native writer "$task_store" "$task_wire"
+              "$task_bin" -Srepro -A:stock-span-codec -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-mixed-codec-native reader "$task_store"
+            done)

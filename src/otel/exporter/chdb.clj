@@ -1748,6 +1748,14 @@
            (await-shutdown-completion! state completion)
            true))))
 
+(defn- non-span-json-backend [snapshot]
+  ;; The explicit codec is a span capability, not an installation of the old
+  ;; native data.json backend. Other signals keep configured JSON semantics,
+  ;; including their existing callbacks, limits and String SQL ownership path.
+  (if (:experimental-span-codec snapshot)
+    :configured
+    (:json-backend snapshot :configured)))
+
 (defrecord ChdbExporter [connection owned? expected-signals state]
   export/SpanExporter
   (export-spans! [_ spans]
@@ -1830,7 +1838,9 @@
       false
       (try
         (binding [*insert-byte-limit* (:max-insert-bytes @state)
-                  *json-backend* (:json-backend @state :configured)
+                  *experimental-attribute-transform* (if (:experimental-span-codec @state) nil *experimental-attribute-transform*)
+                  *experimental-nested-writer* (if (:experimental-span-codec @state) nil *experimental-nested-writer*)
+                  *json-backend* (non-span-json-backend @state)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (let [snapshot @state
               direct? (direct-metric-layout? snapshot)
@@ -1854,7 +1864,9 @@
       false
       (try
         (binding [*insert-byte-limit* (:max-insert-bytes @state)
-                  *json-backend* (:json-backend @state :configured)
+                  *experimental-attribute-transform* (if (:experimental-span-codec @state) nil *experimental-attribute-transform*)
+                  *experimental-nested-writer* (if (:experimental-span-codec @state) nil *experimental-nested-writer*)
+                  *json-backend* (non-span-json-backend @state)
                   *timestamp-wire* (:timestamp-wire @state :unix-nanos)]
         (when (seq records)
           (insert-untyped-log-records! connection state records))
@@ -1919,9 +1931,11 @@
   fixed raw-tick input setting into WAL without a connection/session toggle.
   Explicit :iso-utc selects the 26.9.0 alternative. Unknown choices fail closed.
   :experimental-span-codec? defaults false. True requires the explicit codec
-  dependency (or checkout-local alias), spans-only native-byte compact Durable export
-  and owned output. Selects an explicit built-in-value codec, NOT JSONWriter
-  extensions. Persistence and default encoding are unchanged.
+  dependency (or checkout-local alias), spans enabled, native-byte compact Durable
+  export and owned output. Selects an explicit built-in-value SPAN codec, NOT
+  JSONWriter extensions. With this option, logs/metrics keep configured JSON
+  and their String SQL path; no legacy native writer is installed for them.
+  Persistence and default encoding are unchanged.
   :experimental-span-payload-cache? defaults false. True additionally requires
   the explicit codec and a compatible SDK. Reuses bounded primitive-map
   conversions within one payload only. Compiler-woven converter bodies remain
@@ -1960,10 +1974,12 @@
                      {:type ::invalid-experimental-span-payload-cache})))
    (when-not (and (boolean? experimental-span-codec?)
                   (or (not experimental-span-codec?)
-                      (and durable? owned-statement-output? (= #{:spans} (set signals))
+                      (and durable? owned-statement-output?
+                           (contains? (set signals) :spans)
+                           (every? #{:spans :logs :metrics} (set signals))
                            (= :native-guarded-byte-batch json-backend)
                            (= :json-compact-each-row insert-format))))
-     (throw (ex-info "Experimental span codec requires spans-only owned compact Durable export"
+     (throw (ex-info "Experimental span codec requires spans in owned compact Durable export"
                      {:type ::invalid-experimental-span-codec})))
    (when-not (or (nil? limit-override)
                  (and (integer? limit-override) (pos? limit-override)
