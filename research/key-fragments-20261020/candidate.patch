@@ -1,0 +1,149 @@
+diff --git a/incubator/codec/src/jolt/codec/experimental.clj b/incubator/codec/src/jolt/codec/experimental.clj
+index 8929f90..cdad548 100644
+--- a/incubator/codec/src/jolt/codec/experimental.clj
++++ b/incubator/codec/src/jolt/codec/experimental.clj
+@@ -27,15 +27,16 @@
+                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
+                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
+                  " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes"
+-                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width ffc-json-nested-scope)))"))
+-          [scalar project qualify nested cached-project row-box row-append row-width nested-scope]
++                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width ffc-json-nested-scope"
++                 " ffc-json-key-project-prefixed-ascii-lines-bytes ffc-json-key-cached-project-prefixed-ascii-lines-bytes)))"))
++          [scalar project qualify nested cached-project row-box row-append row-width nested-scope key-project key-cached-project]
+           (apply factory (traversal/native-kernels walk))]
+       (when-not (and (qualify (byte-array 0))
+                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
+         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
+       (qualify-nested-text! scalar nested)
+       [scalar project (traversal/native-pmap-folder walk) nested cached-project
+-       row-box row-append row-width nested-scope])))
++       row-box row-append row-width nested-scope key-project key-cached-project])))
+ 
+ (deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width nested-scope])
+ (defn open-codec
+@@ -45,11 +46,14 @@
+   cache or raw JSON input; source collections/strings must remain immutable."
+   ([] (open-codec {}))
+   ([options]
+-   (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
+-                  (boolean? (get options :flat-map-cache? false)))
++   (when-not (and (map? options) (every? #{:flat-map-cache? :key-fragment-cache?} (keys options))
++                  (boolean? (get options :flat-map-cache? false))
++                  (boolean? (get options :key-fragment-cache? false)))
+      (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
+-   (let [[scalar project fold nested cached-project row-box row-append row-width nested-scope] @backend]
+-     (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested
++   (let [[scalar project fold nested cached-project row-box row-append row-width nested-scope key-project key-cached-project] @backend]
++     (Codec. seal scalar (if (:key-fragment-cache? options)
++                          (if (:flat-map-cache? options) key-cached-project key-project)
++                          (if (:flat-map-cache? options) cached-project project)) fold nested
+              row-box row-append row-width nested-scope))))
+ (defn- require-codec! [codec]
+   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
+diff --git a/incubator/codec/src/jolt/codec/json.ss b/incubator/codec/src/jolt/codec/json.ss
+index bc69200..5330dd0 100644
+--- a/incubator/codec/src/jolt/codec/json.ss
++++ b/incubator/codec/src/jolt/codec/json.ss
+@@ -28,6 +28,8 @@
+     ((_ encode-name flat-cache?)
+      (define-ffc-json-encoder encode-name flat-cache? #f () #f))
+     ((_ encode-name flat-cache? shared-cache? (extra-argument ...) shared-state)
++     (define-ffc-json-encoder encode-name flat-cache? shared-cache? #f (extra-argument ...) shared-state))
++    ((_ encode-name flat-cache? shared-cache? key-cache? (extra-argument ...) shared-state)
+      (define (encode-name value limit max-depth lines? escape-unicode? project prefix extra-argument ...)
+   (unless (and (fixnum? limit) (fx>=? limit 0)
+                (fixnum? max-depth) (fx>=? max-depth 0))
+@@ -54,7 +56,10 @@
+         (map-cache (if shared-cache? (ffc-fragments-table shared-state) #f))
+         (map-insertions (if shared-cache? (ffc-fragments-insertions shared-state) 0))
+         (map-retained (if shared-cache? (ffc-fragments-retained shared-state) 0))
+-        (map-flat? #f))
++        (map-flat? #f)
++        ;; Key text only, never map wrappers/values. Per-call, monotonic bounds:
++        ;; 64 insertions, 8KiB encoded bytes, <=4KiB per complete quoted key.
++        (key-table #f) (key-insertions 0) (key-retained 0))
+     (define (ensure-space!)
+       (when (fx=? used (bytevector-length tail))
+         (when (fx>=? (fx+ completed used) budget) (error 'ffc-json "byte limit exceeded"))
+@@ -158,10 +163,39 @@
+                       (do ((j start (fx+ j 1))) ((fx=? j 21))
+                         (byte! (bytevector-u8-ref digits j))))
+                     (loop q (fx- i 1))))))))
++    (define (copy-fragment! bytes)
++      (let ((n (bytevector-length bytes)))
++        (when (fx>? n (fx- budget (fx+ completed used)))
++          (error 'ffc-json "byte limit exceeded"))
++        (let loop ((offset 0))
++          (unless (fx=? offset n)
++            (ensure-space!)
++            (let ((take (fxmin (fx- n offset) (fx- (bytevector-length tail) used))))
++              (bytevector-copy! bytes offset tail used take)
++              (set! used (fx+ used take))
++              (loop (fx+ offset take)))))))
++    (define (key-string! text)
++      (if (and key-cache? (fx<=? (string-length text) 4094))
++          (let ((cached (and key-table (hashtable-ref key-table text #f))))
++            (if cached (copy-fragment! cached)
++                (let ((start-tail tail) (start used))
++                  ;; Original write once, then capture only complete literals.
++                  (string! text)
++                  (when (and (fx<? key-insertions 64) (eq? start-tail tail))
++                    (let ((charge (fx- used start)))
++                      (when (and (fx<=? charge 4096)
++                                 (fx<=? (fx+ key-retained charge) 8192))
++                        (let ((bytes (make-bytevector charge)))
++                          (bytevector-copy! tail start bytes 0 charge)
++                          (unless key-table (set! key-table (make-weak-eq-hashtable)))
++                          (hashtable-set! key-table text bytes)
++                          (set! key-insertions (fx+ key-insertions 1))
++                          (set! key-retained (fx+ key-retained charge)))))))))
++          (string! text)))
+     (define (key! k)
+-      (cond ((string? k) (string! k))
+-            ((keyword? k) (string! (keyword-t-name k)))
+-            ((symbol-t? k) (string! (symbol-t-name k)))
++      (cond ((string? k) (key-string! k))
++            ((keyword? k) (key-string! (keyword-t-name k)))
++            ((symbol-t? k) (key-string! (symbol-t-name k)))
+             (else (error 'ffc-json "unsupported object key"))))
+     ;; One visitor per invocation, not a closure for every nested map/vector.
+     ;; Recursive emit restores the parent's depth before this visitor resumes.
+@@ -183,16 +217,7 @@
+       ;; Every eligible map is nonempty and its scalar values are one level
+       ;; below it. Reusing bytes must not bypass the current call's limits.
+       (when (fx>=? depth max-depth) (error 'ffc-json "depth limit exceeded"))
+-      (let ((n (bytevector-length bytes)))
+-        (when (fx>? n (fx- budget (fx+ completed used)))
+-          (error 'ffc-json "byte limit exceeded"))
+-        (let loop ((offset 0))
+-          (unless (fx=? offset n)
+-            (ensure-space!)
+-            (let ((take (fxmin (fx- n offset) (fx- (bytevector-length tail) used))))
+-              (bytevector-copy! bytes offset tail used take)
+-              (set! used (fx+ used take))
+-              (loop (fx+ offset take)))))))
++      (copy-fragment! bytes))
+     (define (map! m depth)
+       (let* ((candidate? (and flat-cache?
+                              (if (pmap? m) (fx>=? (pmap-cnt m) 8)
+@@ -290,6 +315,8 @@
+ 
+ (define-ffc-json-encoder ffc-json-encode/plain #f)
+ (define-ffc-json-encoder ffc-json-encode/cached #t)
++(define-ffc-json-encoder ffc-json-encode/key-only #f #f #t () #f)
++(define-ffc-json-encoder ffc-json-encode/key-cached #t #f #t () #f)
+ (define-ffc-json-encoder ffc-json-encode/shared #t #t (fragments) fragments)
+ ;; Private dispatcher for mechanism tests. Public facades select a specialized
+ ;; entry point directly, not a per-map mode switch in the disabled path.
+@@ -313,6 +340,10 @@
+   (ffc-json-encode/plain rows limit max-depth #t #t project prefix))
+ (define (ffc-json-cached-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
+   (ffc-json-encode/cached rows limit max-depth #t #t project prefix))
++(define (ffc-json-key-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
++  (ffc-json-encode/key-only rows limit max-depth #t #t project prefix))
++(define (ffc-json-key-cached-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
++  (ffc-json-encode/key-cached rows limit max-depth #t #t project prefix))
+ 
+ (define (ffc-json-nested-scope)
+   (let ((fragments (ffc-new-fragments)) (active? #t))
