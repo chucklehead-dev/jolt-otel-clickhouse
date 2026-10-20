@@ -13,7 +13,9 @@
 (defn quantile [samples q]
   (nth (vec (sort samples)) (dec (long (Math/ceil (* q (count samples)))))))
 
-(let [c (codec/open-codec {:flat-map-cache? true})
+(let [expected-sdk (or (second *command-line-args*) "3366a3322c3ea4024057f6278e50c999864171e8")
+      _ (assert (not (str/blank? expected-sdk)))
+      c (codec/open-codec {:flat-map-cache? true})
       context (#'exporter/load-experimental-span-codec! true true true)
       target (Object.)
       installation (#'installed/installed (fixture/approved) target)
@@ -82,6 +84,9 @@
               :rows 5000 :samples-per-cell 12 :runtime :official-stock-0.8.23
               :exporter-source (str (io/resource "otel/exporter/chdb.clj"))
               :sdk-source (str (io/resource "otel/any_value.clj"))
+              :expected-sdk-marker expected-sdk
+              :scalar-kernel-source (str (io/resource "otel/scalar_string_map.ss"))
+              :sorted-kernel-source (str (io/resource "otel/sorted_scalar_string_map.ss"))
               :codec-source (str (io/resource "jolt/codec/experimental.clj"))
               :fixture-source (str (io/resource "otel/exporter/chdb_ordinary_transport_benchmark.clj"))
               :counter-source (str (io/resource "otel/exporter/chdb_benchmark.clj"))
@@ -102,7 +107,9 @@
                              :p99-ms (/ (quantile (map :nanos xs) 0.99) 1e6)
                              :median-estimated-bytes-per-row
                              (/ (quantile (map #(get-in % [:counters :scheme-heap-bytes-allocated]) xs) 0.5) 5000.0)}])))}]
-  (assert (str/includes? (:sdk-source result) "3366a3322c3ea4024057f6278e50c999864171e8"))
+  (assert (str/includes? (:sdk-source result) expected-sdk))
+  (assert (str/includes? (:scalar-kernel-source result) expected-sdk))
+  (assert (str/includes? (:sorted-kernel-source result) expected-sdk))
   (assert (str/includes? (:codec-source result) "7ab2bedcb2e1845efdf6ed5c55ae9d2164338a8d"))
   (spit (first *command-line-args*) (pr-str result))
   (prn (:summary result)))
