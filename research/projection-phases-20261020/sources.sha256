@@ -1,0 +1,5 @@
+51a61044566504e6ddf2c523ae66751d25af7ac6c5201582e8d74d9550ffd7a2  research/projection-phases-20261020/screen.clj
+ceabca924af9a3316d0e4a7c7f5236d0d46c9e9f4ab49faefc45d9c00d8c0847  src/otel/exporter/chdb.clj
+e1ebbac25cafc8bf93b5ef5bae040991583177eadc64464c6f9e765d5d108b6b  src/otel/exporter/chdb/attribute_projection.clj
+8fea3cc8c9cac0aedcdeb8761ddae8dcd6f0059b8a8a5372493a6b6fb96b8e86  /home/chuck/ai-src/worktrees/exporter-stock-nested-fragments-20261019/bench/otel/exporter/chdb_ordinary_transport_benchmark.clj
+b4f6c67d75692c21a2c6bfe7d0050320153dde389d61bae8126fec8166cefe07  /home/chuck/ai-src/worktrees/exporter-stock-nested-fragments-20261019/bench/otel/exporter/chdb_benchmark.clj
