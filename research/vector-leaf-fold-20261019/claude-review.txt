@@ -1,0 +1,25 @@
+## Review: `ffc-vector-fold` leaf-block loop (incubator/codec/src/jolt/traversal/kernel.ss:53–66)
+
+### Blocking findings
+None.
+
+### Correctness
+- The replacement loop resolves `pv-leaf-for` once per leaf and visits `chunk[offset..offset+run)`, where `run = min(len(chunk)-offset, n-i)`. This never reads past the chunk or past the logical count, and correctly truncates the final partial leaf.
+- Visit order is preserved: the outer loop advances `i` by `run`, and the inner leaf loop visits offsets in ascending order — matching the original strictly-ascending per-index walk.
+- Exceptions: no try/catch wraps the leaf loop, so a `visit` throw propagates immediately after already-called visits, with no partial/duplicate visits. This is confirmed by `experimental_test.clj`'s `exceptions-stop-before-later-callbacks-or-records` (seen = `(vec (range 33))` after throwing at x=32) and by `leaf_block_test.clj`'s call-count assertions.
+- Reentry: the implementation uses only local `let`/named-`let` bindings, no shared mutable state, so nested/reentrant folds (`nested-folds-and-native-composition-are-isolated`) are safe — a `visit` that recursively drives another fold can't corrupt the outer loop's state.
+- `n = 0` short-circuits before calling `pv-leaf-for`, matching `leaf_block_test.clj`'s "0 resolutions for empty vector" expectation.
+- Fragility worth naming (not a regression, contingent on the stated trust in `pv-leaf-for`): if the resolver ever returned an offset equal to the chunk length for a valid `i`, `run` would be 0 and the outer loop would re-enter at the same `i` forever — a silent hang rather than an error. This sits entirely inside the declared trust boundary on the runtime primitive, so it's not a defect under that assumption, just a place where a future resolver contract violation fails worse (hang vs. index error) than the old per-element code did.
+
+### Count-test separation from the published pin
+`leaf_block_test.clj` is explicitly scoped ("mechanism gate for the checkout-local kernel, not an older published pin"), and both the CI workflow and `standalone_smoke_test.clj` keep its 20-test/199-assertion total separate from the previously pinned published-component gate (`:stock-span-codec:stock-span-codec-test`), which keeps its own count. `source-tests.log` and `standalone-run.log` both independently report 20 tests / 199 assertions, consistent with README/CHANGELOG — receipts line up correctly. The leaf-counting test instruments a *textual copy* of the source via `str/replace` and asserts the replace actually changed the text, so silent drift (e.g. reformatting `(pv-leaf-for v i)`) that would defeat the instrumentation is caught rather than passing vacuously. The 39-test/276-assertion exporter receipt mentioned in your prompt isn't substantiated by any log in this bounded file set (none was provided) — out of scope here, but flagging that this particular number wasn't independently checked.
+
+### Baseline/candidate equivalence and honest interpretation
+`screen.clj` builds the "indexed" baseline by splicing the exact prior `ffc-vector-fold` body back into the *current* file text (not a separately maintained copy), isolating the comparison to this one function while both arms share identical JSON/codec code and SDK normalization caching. Output equivalence is checked via SHA-256 of full encoded bytes, with a changed-event negative control applied to both arms to prove the harness would catch a wrong-output regression, not just measure blind timings. ABBA ordering is used for both the micro and rich screens.
+
+The written interpretation is appropriately honest: the micro fold speeds up consistently (~5x at 1057/5000/32769 elements per the table in `research/.../README.md`), while the rich 5,000-row projection/nested-JSON/outer-encoding screen is flat-to-slightly-worse on p50 and allocation (133.27ms→136.84ms, ~11,356B→11,357B/row) with only p99 improving. Both the CHANGELOG and research README state plainly that no overall rich-encoding throughput or allocation win is established, and explicitly warn against rerunning for a favorable median or quoting the micro result in isolation. No overclaiming found.
+
+### Meaningful missing tests
+1. All boundary coverage (1024/1057/32768/32801, several subvec/concat shapes) varies one dimension (size, or slice offset) at a time; no case combines a nested subvec-of-subvec with a final leaf of length 1 at a non-32-aligned offset, which is the kind of input most likely to expose a leaf-width/offset-arithmetic error if one existed.
+2. No test (nor a code comment) records the `run == 0` degenerate-resolver risk noted above as a known assumption; since it can't be tested without faking the trusted primitive, a one-line comment at the loop site would help future maintainers recognize the hang failure mode quickly if `pv-leaf-for`'s contract is ever violated.
+3. The exporter-side 39-test/276-assertion claim referenced in the task has no corresponding log file among the reviewed artifacts — if that receipt is meant to be part of this change's evidence trail, it's currently unverified within this bounded set.

@@ -19,9 +19,18 @@
 
 (deftest vector-boundaries-and-invalid-inputs
   (let [w (walk/open-traversal) calls (atom 0)]
-    (doseq [n [0 1 31 32 33 1024 1057]]
+    (doseq [n [0 1 31 32 33 1024 1057 32768 32801]]
       (let [v (vec (range n))]
         (is (= v (walk/fold-vector w v (fn [x a] (conj a x)) [])))))
+    ;; Subvec and concatenation may create relaxed trees with short leaves.
+    ;; Include nil/false, metadata, assoc, conj and pop; none changes visit order.
+    (doseq [v [(with-meta [nil false 0] {:source :test})
+               (subvec (vec (range 1100)) 17 1077)
+               (into (subvec (vec (range 1100)) 31 1058) [nil false])
+               (pop (conj (assoc (vec (range 1057)) 32 false) nil))
+               (vec (concat (subvec (vec (range 1100)) 17 1040)
+                            (subvec (vec (range 1200)) 23 1111)))]]
+      (is (= v (walk/fold-vector w v (fn [x a] (conj a x)) []))))
     (doseq [value [nil [] '(1) #{1}]]
       (is (rejects? #(walk/fold-map w value (fn [& _] (swap! calls inc)) nil))))
     (doseq [value [nil {} '(1) #{1}]]
@@ -47,6 +56,14 @@
                                 (fn [x _] (swap! seen conj x) (throw error)) nil)
                                (catch Throwable x x))))
     (is (= [1] @seen))
+    (reset! seen [])
+    (is (identical? error
+                    (try (walk/fold-vector w (vec (range 1057))
+                           (fn [x a]
+                             (swap! seen conj x)
+                             (if (= x 32) (throw error) a)) nil)
+                         (catch Throwable x x))))
+    (is (= (vec (range 33)) @seen))
     (reset! seen [])
     (is (identical? error (try (walk/fold-map w (sorted-map "a" 1 "b" 2)
                                 (fn [k _ _] (swap! seen conj k) (throw error)) nil)

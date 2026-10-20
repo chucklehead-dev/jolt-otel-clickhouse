@@ -49,6 +49,14 @@ To use only traversal as a local dependency, point `:local/root` at this
 Neither the exporter project nor its SDK/driver/data.json dependencies are
 needed. Public distribution and standalone/AOT builds remain separate gates.
 
+Vector folds resolve and visit one leaf block at a time, including sliced
+vectors, rather than doing indexed lookup for every element. This improves
+native fold microbenchmarks but establishes no rich-encoding throughput or
+allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
+The source and Linux standalone gates now run 20 tests / 199 assertions,
+including the checkout-local leaf-resolution mechanism control. The separately
+pinned published component below retains its own earlier gate counts.
+
 ## Use as an independent Git dependency
 
 On stock Jolt 0.8.23, `:deps/root` selects this subproject without resolving

@@ -1,0 +1,13 @@
+## Review: vector-leaf fix (read-only, scoped to the 5 named files)
+
+**Blocking: none.**
+
+**Fix mechanism — sound.** `leaf_block_test.clj:8-13` moves the `kernel.ss` read into a macro (`embedded-kernel`), so `io/resource`+`slurp` run at macroexpansion/compile time, not when the compiled test runs. The resulting `kernel-source` is a literal string baked into the artifact — matching the "production kernel was already embedded" claim in the README. This correctly explains the original failure in `stock-library-ci-failure.log` (`Cannot open <nil> as a Reader` from a runtime `io/resource` call against a resource absent from the standalone binary's classpath) and is empirically confirmed by `portable-run.log` (20 tests / 199 assertions, 0 failures/errors) run from a neutral temp directory.
+
+**Test strength preserved.** The assertion logic is untouched — same substitution check (`not= source counted`), same resolution-count expectations (`[558096 34]`, `[0 0]`, `[276 1]`). Only the *source* of `kernel-source` changed, not what's being tested. If the embed is ever missing at compile time, the macro now throws `ex-info` (fail-closed) instead of silently producing `nil` that surfaces later as a cryptic runtime error — strictly tighter, not weaker.
+
+**Workflow matches the stated fix.** `experimental-codec-stock.yml:61-62` explicitly `cd`s into `$task_tmp` before invoking `codec-smoke`, with a comment calling out that a checkout-relative lookup must not mask a missing embed — consistent with the README's account of the earlier masking.
+
+**Documentation — accurate.** README lines 87-102 plainly state the hosted run (`39362613214`) failed despite the source gate passing, call out that the initial *local* binary run was inside a checkout and masked the dependency, and explicitly say "Hosted qualification of the fix remains pending" — not overstated as already proven on CI. No production algorithm/benchmark claims changed.
+
+No unrelated reads, edits, or commands performed.
