@@ -48,6 +48,8 @@ jobs:
           test "$("$task_bin" --version)" = 'jolt v0.8.23'
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
             -m jolt.traversal.experimental-test
+          "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
+            -m jolt.codec.reader.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
             "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test 'clojure.test)
              (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test)]
@@ -60,6 +62,19 @@ jobs:
             -o "$task_tmp/codec-smoke")
           # A checkout-relative resource lookup must not mask a missing embed.
           (cd "$task_tmp" && "$task_tmp/codec-smoke")
+          # Reader-only standalone gate must not load data.json, traversal,
+          # the encoder or exporter to mask an undeclared dependency.
+          (cd packaging && "$task_bin" build -m jolt.codec.reader.experimental-test \
+            -o "$task_tmp/reader-smoke")
+          (cd "$task_tmp" && "$task_tmp/reader-smoke")
+          (cd ../.. && "$task_bin" -Srepro \
+            -Sdeps '{:paths ["incubator/codec/src" "incubator/codec/test"]}' \
+            -m jolt.codec.reader.data-json-adapter-test)
+          # No data.json/time forks: stock Maven numeric/fallback adapter smoke.
+          # The canonical time provider is needed to load data.json's formatter.
+          (cd packaging && "$task_bin" -Srepro \
+            -Sdeps '{:deps {org.clojure/data.json {:mvn/version "2.5.2"} io.github.jolt-lang/time {:git/url "https://github.com/jolt-lang/time.git" :git/sha "a28ab100111050356957eb42b7ec89a4065de754"}}}' \
+            -m jolt.codec.reader.stock-json-smoke)
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)

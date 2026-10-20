@@ -1,5 +1,10 @@
 # Experimental explicit JSON codec
 
+The optional [explicit JSON reader](READER.md) is now a separate namespace in
+this component. It has no data.json dependency or automatic parser registration;
+numeric conversion/fallback are supplied by the consumer. Its qualification is
+separate from the encoding and exporter results below.
+
 This is an incubating library, not a data.json replacement. It walks ordinary
 Jolt data directly in Chez and writes to private byte buffers. It does not
 replace JSONWriter methods or register global Scheme helpers.

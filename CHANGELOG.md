@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an experimental, separately loadable stock-Jolt JSON reader in the
+  dependency-free codec component. Numeric conversion and fallback are explicit
+  caller adapters; no parser registration, application default or exporter
+  dependency pin changes. Include selection reporting, compatibility tests and
+  an independent reader-only standalone gate.
+
 - Traverse ordinary defrecords directly in the optional codec, preserving field
   and extension order without map copies. This supports real SDK SpanContext
   records in linked spans; custom seq/deftype shapes still reject, and record
