@@ -21,9 +21,9 @@
   ;; capture failures are validated after the actual writer finishes.
   (try
     (if (and (< (count @events) 1024) started ended before after)
-      (swap! events conj {:batch id :phase phase :status status}
+      (swap! events conj {:batch id :phase phase :status status
                          :start-nanos started :end-nanos ended :nanos (- ended started)
-                         :counters (#'bench/counter-delta before after))
+                         :counters (#'bench/counter-delta before after)})
       (reset! diagnostic-error? true))
     (catch Throwable _ nil)))
 (defn- measured [id phase f]

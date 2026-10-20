@@ -66,7 +66,7 @@ for task_arm in on; do
   bb "$task_support/research/library-nested-text-20261019/validate-rich-sdk-scaling-20261019.clj" "$task_report" 1 > "$task_report.validation.edn"
   sha256sum -c "$task_out/sources.sha256" > "$task_report.source-after.log"
   du -sk "$task_store" > "$task_report.retired-kib.txt"
-  case "$task_store" in /tmp/scalar-shapes-durable.????????) ;; *) exit 91;; esac
+  case "$task_store" in /tmp/matched-phases-durable.????????) ;; *) exit 91;; esac
   test ! -L "$task_store"
   test "$(realpath "$task_store")" = "$task_store"
   # Exact owned synthetic store only, after terminal writer/reader, full row
