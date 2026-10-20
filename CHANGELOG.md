@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add opt-in bounded scalar-text key-shape plans to the independent stock-Jolt
+  codec component. Reuse hash geometry across distinct sorted maps with equal
+  fields, retaining only bounded schema keys and preserving owner policy guards.
+  The exporter can select this through a compatible SDK payload converter with
+  `:experimental-span-shape-plans?`; defaults and Durable confirmation are unchanged.
+
 - Add an experimental, separately loadable stock-Jolt JSON reader in the
   dependency-free codec component. Numeric conversion and fallback are explicit
   caller adapters; no parser registration, application default or exporter

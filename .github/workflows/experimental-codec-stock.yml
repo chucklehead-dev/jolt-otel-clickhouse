@@ -50,6 +50,8 @@ jobs:
             -m jolt.traversal.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
             -m jolt.codec.reader.experimental-test
+          "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
+            -m jolt.codec.scalar-text.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
             "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test 'clojure.test)
              (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test)]

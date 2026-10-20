@@ -1,5 +1,35 @@
 # Experimental explicit JSON codec
 
+## Optional bounded scalar-text shape plans
+
+`jolt.codec.scalar-text.experimental` supplies an independent trusted native
+factory for an SDK/policy owner. It learns at most eight ordered key schemas /
+8192 retained key characters per serial payload (128 keys/schema), then reuses
+their hash geometry for distinct stock sorted maps with the same fields. Plans
+retain static keys/indexes, not telemetry values or input wrappers/trees. The
+owner supplies ORIGINAL live policy anchors, scalar limits and trusted prototype;
+this is not an application-facing permission to bypass normalization.
+
+A compatible SDK enables it through its payload converter's optional
+`{:shape-plan-factory (shapes/native-plan-factory)}` argument, with the existing
+native folder as the first argument. No caller reaches into private SDK Vars.
+The SDK controls when to learn and retains existing source-root cache hits,
+admission and retention limits. Full schema budgets leave new shapes on the
+original conversion path. No factory/codec is loaded by default SDK use.
+
+The exporter opt-in is `:experimental-span-shape-plans? true`, together with
+`:experimental-span-codec? true` and `:experimental-span-payload-cache? true`
+and the existing owned compact Durable prerequisites. Missing old SDK/library
+support rejects before JDBC, without a silent downgrade. No capture, JSON
+default, persistence acknowledgement or publication contract changes.
+
+This adds bounded template overhead; character counts are not a hard RSS cap.
+State is per synchronous payload, not global or thread-safe. Collection layout
+and native factory bodies remain trusted/version-sensitive. Source tests target
+official stock Jolt0.8.23, without compiler/data.json changes. The earlier fixed
+schema component result is not evidence of actual Durable throughput for this
+new inferred-shape integration; qualify that independently.
+
 The optional [explicit JSON reader](READER.md) is now a separate namespace in
 this component. It has no data.json dependency or automatic parser registration;
 numeric conversion/fallback are supplied by the consumer. Its qualification is
