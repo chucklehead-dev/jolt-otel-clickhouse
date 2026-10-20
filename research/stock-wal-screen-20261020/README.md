@@ -24,7 +24,7 @@ and is **not** a throughput or allocation-site qualification.
   warmups plus 32 callbacks), checking full field values and multiplicities.
 - Writer, reader and validator terminated successfully; copied receipts were
   compared before retiring the exact owned `/tmp/stock-metadata-profile.ianBSKwT`
-  store (about 0.75GiB). Only small scripts/logs/receipts remain.
+  store (752,208KiB, about 0.717GiB). Only small scripts/logs/receipts remain.
 
 Do not compare this instrumented single run's 12,214 rows/s with another run
 as a performance regression or improvement. The ordinary metadata reader stays
@@ -88,6 +88,12 @@ as a correctness pass; the two preflight changes were not separately profiled,
 so this is not a quantified diagnosis of the initial timeout's exact cost.
 
 ## What changes next
+
+Independent Claude read-only review completed successfully: both conclusions
+supported, no blockers. Review text is retained. Codex checked the cited
+receipts, the observed median regressions and recovery counts independently.
+The review's bit-math comments are advisory, not a newly machine-checked proof;
+the candidate remains rejected and has no production call site.
 
 Do not spend the next performance slice accelerating metadata parsing or
 shipping this clean-run scanner. The independent codec/traversal layering and

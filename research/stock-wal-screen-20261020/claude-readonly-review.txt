@@ -1,0 +1,21 @@
+**Verdict: Both rulings are justified and honestly scoped.** Numbers in README.md correspond exactly to the .edn/.validation.edn/.reader.edn receipts I cross-checked (profile calls/characters/nanos, confirmed-window-nanos, rows-per-second, recovered-rows). Only one cosmetic imprecision found: "~0.75GiB" retired store vs. the receipt's precise 752,208 KiB ≈ 0.717 GiB — within "about," not misleading.
+
+**Metadata cost ruling-out**
+- 109.87ms instrumented read time / 13,099.93ms confirmed window = 0.839%, matching `:whole-process-reader-nanos-over-window` in the edn exactly.
+- The script wraps `json/read-str` globally via `with-redefs`, observing only aggregate counts (no bodies retained) — a legitimate, low-risk technique, with correctly stated caveats (elapsed vs. exclusive CPU, includes startup/close).
+- 0.84% is far smaller than the gap between the confirmed 12,214 rows/s and the stated ~25k p50 objective, so "not the large remaining cost" is well supported. The report avoids overclaiming — it explicitly disclaims this as a throughput/allocation-site qualification or decoder-extraction justification.
+
+**WAL clean-run candidate rejection**
+I traced the embedded candidate sources in -v2.edn and -v3.edn against the current script and README's description:
+- `clean-word?`/`clean-end` definitions are byte-identical between V2 and V3.
+- V2 inserts the clean-run check as a new top-level `cond` clause ahead of the original escape/codepoint dispatch (confirmed in v2.edn text); V3 moves the identical check inside the existing `(fx= escape 0)` branch, after dispatch (confirmed in the current .clj script and v3.edn). This matches the README exactly and plausibly explains why V3 recovers most of V2's escape-heavy regression: V2 checks `clean-word?` unconditionally every byte, V3 only after the cheap branch is already selected.
+- Bounds safety: guards (`i+4<=n` for the read; `at+4<=capacity-12` and `clean-end`'s bound of `min(n, i+(capacity-at-12))` for the write) correctly preserve the existing 12-byte output reserve and never let `bytevector-copy!` overrun either buffer. The `>=48`/no-backslash SWAR bit tricks are exact, well-known formulas with no false-positive/negative edge cases for the byte ranges involved.
+- Correctness isn't just argued from bit math — it's checked empirically: byte-exact equality against the real encoder across all 128 ASCII codepoints × 4 alignments, 48 length/token boundary combinations (0–65537 bytes spanning chunk/buffer limits), and three large shapes via `Arrays/equals` plus independent SHA-256, re-checked on *every* timed observation, not just upfront. Solid coverage for the stated "already-private ASCII" precondition.
+- The rejection follows from the data: mixed JSON-like (closest to real traffic) regresses p50 by ~19% (V2) / ~12% (V3) despite a large win on an atypical long-clean-ASCII best case. Treating that win as insufficient, and skipping an expensive Durable ABBA run for an already-losing candidate, is sound.
+
+**Minor gaps / scope limits (not blockers)**
+1. The timeout run's cited source hash (`93dcbfd8f0...`) appears nowhere in the retained receipts — inherent to a failed run with "no result/log," and the README already flags this timeout as unqualified, so it's a disclosed gap, not a hidden one.
+2. The "already-private ASCII" precondition that makes the fast path's non-UTF-8-safety acceptable is asserted, not re-verified here, since the driver/call-site code was out of this review's scope.
+3. `sources.sha256` pins the profiler script, exporter source, and deps.edn, but not the gitlibs-referenced SDK source — acceptable since gitlibs paths are themselves content/commit-addressed.
+
+No corrections needed to either conclusion.
