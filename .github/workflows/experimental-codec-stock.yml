@@ -42,6 +42,8 @@ jobs:
           task_bin="$task_tmp/jolt-v0.8.23-x86_64-linux/jolt"
           printf '%s  %s\n' 7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94 "$task_bin" | sha256sum -c -
           test "$("$task_bin" --version)" = 'jolt v0.8.23'
+          "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
+            -m jolt.traversal.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
             "(require 'jolt.codec.experimental-test 'clojure.test)
              (let [r (clojure.test/run-tests 'jolt.codec.experimental-test)]

@@ -9,8 +9,43 @@ official Jolt 0.8.23 release. An actual exporter/Durable local-root candidate
 also passed stock-runtime write and independent readback. Published dependency
 pins and the complete Oscope consumer are not yet stock-qualified; the selected
 SDK/ordinary-JSON/driver ecosystem still includes our forks.
-Standalone/AOT packaging is not qualified. The traversal and byte/JSON kernels
-are separated here but not yet separately published libraries.
+Standalone/AOT packaging is not qualified. Traversal and byte/JSON are separate
+namespaces within this one dependency-free library, not separately published
+repositories. Loading traversal does not load the codec or exporter.
+
+## Independent traversal
+
+```clojure
+(require '[jolt.traversal.experimental :as traversal])
+(def walk (traversal/open-traversal))
+(traversal/fold-map walk {"a" 1 "b" 2}
+                    (fn [key value total] (+ total value)) 0)
+;; => 3
+(traversal/fold-vector walk [1 2 3] (fn [value total] (+ total value)) 0)
+;; => 6
+```
+
+These are explicit **full folds**, not drop-in `reduce` or `reduce-kv`:
+accumulator is the last callback argument, and `Reduced` does not terminate the
+walk. Ordinary maps retain their seq order (including hash collisions); stock
+sorted maps retain tree order without invoking comparators. The kernel builds
+no entries or seq cursors for maps/vectors. This does not make callbacks or
+vector indexing allocation-free, and collision traversal uses recursion stack.
+`fold-records` also accepts sequential sources, which may allocate or realize
+chunks according to their own semantics; it asks for no next record after a
+callback throws. Inputs must remain immutable throughout each call.
+
+Native consumers can capture `native-kernels` once in Scheme, or pass
+`native-pmap-folder` to a compatible SDK constructor. This avoids per-element
+Clojure wrappers. Unsupported layouts reject; there is no runtime-global helper
+installation. The bridge is trusted and version-sensitive, not a stable ABI.
+The codec now receives these native functions rather than embedding its own
+copy of the traversal implementation.
+
+To use only traversal as a local dependency, point `:local/root` at this
+`incubator/codec` directory and require only `jolt.traversal.experimental`.
+Neither the exporter project nor its SDK/driver/data.json dependencies are
+needed. Public distribution and standalone/AOT builds remain separate gates.
 
 ## API
 
@@ -64,6 +99,10 @@ allocation fell from 30.6KB to 28.4KB/row (about 7%). Pooled throughput was
 experimental; component improvements do not establish the Durable targets.
 
 ## Checks
+
+The traversal-only process gate uses the same isolated runtime command below
+with `-m jolt.traversal.experimental-test` instead of `-e ...`. It checks that
+the JSON namespace is absent both before and after the tests.
 
 From this directory, with the workspace's Chez 10.4.1 wrapper and the exact
 official stock executable:

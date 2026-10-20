@@ -1,13 +1,13 @@
 (ns jolt.codec.experimental
   "Incubating explicit ASCII JSON codec. Not a data.json backend. Source-mode
   qualified on stock Jolt 0.8.23 and selected runtime7098; AOT is not qualified."
-  (:require [clojure.java.io :as io] [jolt.scheme :as scheme]))
+  (:require [clojure.java.io :as io] [jolt.scheme :as scheme]
+            [jolt.traversal.experimental :as traversal]))
 
 (def ^:private seal (Object.))
 (defmacro ^:private embedded [path]
   (if-let [resource (io/resource path)] (slurp resource)
     (throw (ex-info "Missing experimental codec resource" {}))))
-(def ^:private traversal-source (embedded "jolt/codec/traversal.ss"))
 (def ^:private json-source (embedded "jolt/codec/json.ss"))
 (defn- qualify-nested-text! [scalar nested]
   ;; Exercise this backend's producer/consumer bridge before storage acquisition.
@@ -20,23 +20,18 @@
 (def ^:private backend
   (delay
     ;; Lexical definitions avoid process-global Scheme helper replacement.
-    (let [[scalar project qualify fold nested]
-          (scheme/eval-string
-            (str "(let () " traversal-source "\n" json-source
+    (let [walk (traversal/open-traversal)
+          factory (scheme/eval-string
+            (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?) (let () " json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
-                 " (lambda (m v s a)"
-                 " (and (eq? (record-type-uid (record-rtd m)) 'chez-pmap-v6)"
-                 "      (eq? (record-type-uid (record-rtd v)) 'chez-pvec-v4)"
-                 "      (eq? (record-type-uid (record-rtd s)) 'chez-htable-v2)"
-                 "      (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1)"
-                 "      (eq? (record-type-uid (record-type-descriptor hcoll)) 'chez-hcoll-v1)"
-                 "      (equal? (record-type-field-names (record-type-descriptor hcoll)) '#(hash alist))"
-                 "      (eq? (record-type-uid (record-rtd empty-hnode)) 'chez-hnode-v1))) ffc-pmap-fold ffc-json-nested-text))"))]
-      (when-not (and (qualify {} [] (sorted-map) (byte-array 0))
+                 " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
+                 " ffc-json-nested-text)))"))
+          [scalar project qualify nested] (apply factory (traversal/native-kernels walk))]
+      (when-not (and (qualify (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
-      [scalar project fold nested])))
+      [scalar project (traversal/native-pmap-folder walk) nested])))
 
 (deftype ^:private Codec [tag scalar project fold nested])
 (defn open-codec []

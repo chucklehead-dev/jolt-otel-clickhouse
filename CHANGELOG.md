@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Expose the experimental stock-Jolt traversal kernel as an independent
+  `jolt.traversal.experimental` namespace, without loading JSON or exporter
+  dependencies. The explicit codec captures its native folds once; no runtime
+  globals or per-element interop adapters are introduced.
+
 - Add a separate opt-in payload scalar-map cache to the explicit span codec,
   using the library-owned map folder and a compatible SDK. Keep cache state
   local to each payload and retain live conversion-policy checks and fallback.

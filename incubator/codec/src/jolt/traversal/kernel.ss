@@ -1,4 +1,4 @@
-;; Research backend, qualified only against the official Chez Jolt v0.8.23.
+;; Independent traversal backend, qualified on official Chez Jolt v0.8.23.
 ;; Representation access is centralized here, not added to the runtime.
 ;; Synchronous full folds; exceptions stop traversal. No Reduced convention yet.
 ;; No entries/seqs are constructed; collision buckets consume recursion stack.
