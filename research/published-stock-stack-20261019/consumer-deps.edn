@@ -1,0 +1,5 @@
+{:paths []
+ :deps {io.github.chucklehead-dev/jolt-codec
+        {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+         :git/sha "05fa8b86f38b0d1872322822fe68bf729b483613"
+         :deps/root "incubator/codec"}}}

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Update the SDK and driver pins for the explicit stock-Jolt codec path:
+  accept traversal injection into the opt-in immutable payload cache and the
+  driver's private prepared-WAL capability without local-root overrides.
+  Select the independent codec Git subproject with `:deps/root`; add a
+  published-component provenance/test alias and stock-Jolt CI coverage.
+  Defaults remain synchronous; this does not enable preparation overlap.
+
 - Exercise the independent traversal/codec library in a stock-Jolt Linux
   standalone binary, with a dependency-free packaging project and CI gate.
   This does not qualify complete exporter/application standalone builds.

@@ -1,0 +1,27 @@
+io.github.chucklehead-dev/jolt-chdb 3314b79
+  . jolt-lang/db cb06349
+    . io.github.yogthos/clojure.jdbc 9fc25d6
+    . io.github.jolt-lang/time 2494b21
+  X org.clojure/data.json 3adc8c5 :use-top
+  . com.github.seancorfield/honeysql 308d5a7
+  X jolt-lang/jolt-crypto 649c993 :use-top
+io.github.casselc/otel 26186ce
+  . io.github.casselc/http-client eab6b78
+    . org.clj-commons/clj-http-lite 5bc2a98
+    X jolt-lang/jolt-crypto 44da69b :excluded
+  . org.clojure/tools.logging ec6747e
+jolt-lang/jolt-crypto 5effcc8
+metosin/malli 0.20.1
+  . fipp/fipp 0.6.29
+    . org.clojure/core.rrb-vector 0.1.2
+  . mvxcvi/arrangement 2.1.0
+  . borkdude/dynaload 0.3.5
+  . borkdude/edamame 1.5.37
+    . org.clojure/tools.reader 1.5.2
+  . org.clojure/test.check 1.1.3
+org.clojure/data.json 0f51b99
+  . io.github.jolt-lang/time 2494b21
+    . io.github.juxt/tick 3c2cc4e
+      . com.widdindustries/cljc.java-time 0.1.22
+        . com.widdindustries/cljs.java-time 0.1.20
+      . com.widdindustries/time-literals 0.1.10
