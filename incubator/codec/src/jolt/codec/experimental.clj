@@ -26,17 +26,17 @@
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
                  " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes"
-                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width)))"))
-          [scalar project qualify nested cached-project row-box row-append row-width]
+                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width ffc-json-nested-scope)))"))
+          [scalar project qualify nested cached-project row-box row-append row-width nested-scope]
           (apply factory (traversal/native-kernels walk))]
       (when-not (and (qualify (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
       [scalar project (traversal/native-pmap-folder walk) nested cached-project
-       row-box row-append row-width])))
+       row-box row-append row-width nested-scope])))
 
-(deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width])
+(deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width nested-scope])
 (defn open-codec
   "Open a stateless explicit codec. Optional :flat-map-cache? (default false)
   enables bounded, per-invocation String->String pmap byte reuse in record
@@ -47,9 +47,9 @@
    (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
                   (boolean? (get options :flat-map-cache? false)))
      (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
-   (let [[scalar project fold nested cached-project row-box row-append row-width] @backend]
+   (let [[scalar project fold nested cached-project row-box row-append row-width nested-scope] @backend]
      (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested
-             row-box row-append row-width))))
+             row-box row-append row-width nested-scope))))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
@@ -107,6 +107,23 @@
   (require-codec! codec)
   (if (and (vector? value) (empty? value)) "[]"
     ((.-nested codec) value 67108864 128)))
+
+(defn with-nested-text-writer
+  "Call use-writer with a synchronous nested-text encoder for one payload.
+  Across calls it reuses complete ASCII fragments for immutable builtin maps
+  with String keys and scalar values. Bounds: 64 insertions, 128KiB retained
+  fragment bytes, 4KiB/fragment; keys are weak roots. No global cache or raw JSON.
+  Do not use the writer concurrently or across fibers. Inputs stay immutable.
+  On callback return/throw the cache is cleared and retained writers reject,
+  including empty inputs. Outputs made during the scope remain independent."
+  [codec use-writer]
+  (require-codec! codec)
+  (when-not (ifn? use-writer)
+    (throw (ex-info "Invalid nested-text scope callback" {:type ::invalid-scope-callback})))
+  (let [[prepare finish] ((.-nested-scope codec))]
+    (try
+      (use-writer (fn [value] (prepare value 67108864 128)))
+      (finally (finish)))))
 
 (defn encode-prefixed-records
   "Return fresh ASCII bytes for prefix + projected JSON lines. Payload limit

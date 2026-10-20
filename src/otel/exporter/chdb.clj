@@ -1272,21 +1272,32 @@
      :histogram (vec (concat common ["Count" "Sum" "BucketCounts" "ExplicitBounds"]
                              exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
 
+(def ^:dynamic ^:private *experimental-nested-writer* nil)
+
 (defn- load-experimental-span-codec!
   ([] (load-experimental-span-codec! false false))
   ([payload-cache?]
    (load-experimental-span-codec! payload-cache? false))
   ([payload-cache? flat-map-cache?]
+   (load-experimental-span-codec! payload-cache? flat-map-cache? false))
+  ([payload-cache? flat-map-cache? nested-fragments?]
   (try
     (require 'jolt.codec.experimental)
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
           encode @(ns-resolve 'jolt.codec.experimental 'encode-prefixed-records)
           nested @(ns-resolve 'jolt.codec.experimental 'prepare-nested-text)
+          scope-var (when nested-fragments?
+                      (ns-resolve 'jolt.codec.experimental 'with-nested-text-writer))
+          with-writer (when nested-fragments?
+                        (when-not (and scope-var (ifn? @scope-var))
+                          (throw (ex-info "Experimental nested fragments require their codec capability" {})))
+                        @scope-var)
           prepare-var (ns-resolve 'jdbc.chdb.owned-statement 'precompute-wal)
           prepare (when prepare-var @prepare-var)
           _ (when-not (ifn? prepare)
               (throw (ex-info "Experimental codec requires private WAL preparation" {})))
           codec (if flat-map-cache? (open {:flat-map-cache? true}) (open))
+          scope-owner (when with-writer (Object.))
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
           cache-var (when payload-cache?
                       (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter))
@@ -1300,17 +1311,31 @@
           _ (require 'otel.exporter.chdb.native-attributes)
           attributes ((ns-resolve 'otel.exporter.chdb.native-attributes 'load-transform!)
                       #'key-string #'value-string original-attribute-key-string folder)]
-      {:encode (fn [prefix records project limit] (encode codec prefix records project limit))
-       :nested (fn [value] (nested codec value))
+      {:encode (if with-writer
+                 (fn [prefix records project limit]
+                   (with-writer codec
+                     (fn [write]
+                       (binding [*experimental-nested-writer* [scope-owner write]]
+                         (encode codec prefix records project limit)))))
+                 (fn [prefix records project limit] (encode codec prefix records project limit)))
+       :nested (if with-writer
+                 (fn [value]
+                   (let [[owner write] *experimental-nested-writer*]
+                    (if (identical? scope-owner owner) (write value)
+                     (throw (ex-info "Nested writer used outside its payload" {:type ::missing-nested-scope})))))
+                 (fn [value] (nested codec value)))
        :folder folder :attributes attributes :prepare-statement prepare
        :payload-cache-factory cache-factory})
     (catch Throwable _
-      (throw (ex-info (if flat-map-cache?
+      (throw (ex-info (if nested-fragments?
+                        "Experimental nested fragments require a compatible codec and qualified runtime"
+                        (if flat-map-cache?
                         "Experimental span flat-map cache requires compatible codec/SDK capabilities"
                         (if payload-cache?
                         "Experimental span payload cache requires a compatible SDK and qualified runtime"
-                        "Experimental span codec requires its source alias and a qualified runtime"))
-                      {:type (cond flat-map-cache? ::experimental-span-flat-map-cache-unavailable
+                        "Experimental span codec requires its source alias and a qualified runtime")))
+                      {:type (cond nested-fragments? ::experimental-span-nested-fragments-unavailable
+                                   flat-map-cache? ::experimental-span-flat-map-cache-unavailable
                                    payload-cache? ::experimental-span-payload-cache-unavailable
                                    :else ::experimental-span-codec-unavailable)}))))))
 
@@ -1903,18 +1928,28 @@
   unqualified; no default or cross-thread cache is installed.
   :experimental-span-flat-map-cache? defaults false. True requires the explicit
   codec and enables bounded complete-map byte reuse within each record encoding.
-  It can compose with the SDK payload cache but changes no persistence contract."
+  It can compose with the SDK payload cache but changes no persistence contract.
+  :experimental-span-nested-fragment-cache? defaults false. True requires the
+  explicit codec and reuses bounded encoded scalar-map fragments across nested
+  JSON writes in one synchronous payload. It is closed before WAL preparation;
+  no global cache, caller admission or persistence contract changes."
   ([] (exporter {}))
   ([{:keys [connection db-spec create-schema? signals durable?
             persistence-barrier typed-span-descriptors typed-log-descriptors
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
-            experimental-span-codec? experimental-span-payload-cache? experimental-span-flat-map-cache?]
+            experimental-span-codec? experimental-span-payload-cache? experimental-span-flat-map-cache?
+            experimental-span-nested-fragment-cache?]
      limit-override :max-insert-bytes
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
           insert-format :json-each-row owned-statement-output? false experimental-span-codec? false
-          experimental-span-payload-cache? false experimental-span-flat-map-cache? false}}]
+          experimental-span-payload-cache? false experimental-span-flat-map-cache? false
+          experimental-span-nested-fragment-cache? false}}]
+   (when-not (and (boolean? experimental-span-nested-fragment-cache?)
+                  (or (not experimental-span-nested-fragment-cache?) experimental-span-codec?))
+     (throw (ex-info "Experimental nested fragments require the explicit span codec"
+                     {:type ::invalid-experimental-span-nested-fragments})))
    (when-not (and (boolean? experimental-span-flat-map-cache?)
                   (or (not experimental-span-flat-map-cache?) experimental-span-codec?))
      (throw (ex-info "Experimental span flat-map cache requires the explicit span codec"
@@ -1953,7 +1988,8 @@
    ;; the incubating namespace/resources; missing support is not a downgrade.
    (let [experimental-span-codec (when experimental-span-codec?
                                    (load-experimental-span-codec! experimental-span-payload-cache?
-                                                                  experimental-span-flat-map-cache?))]
+                                                                  experimental-span-flat-map-cache?
+                                                                  experimental-span-nested-fragment-cache?))]
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (and experimental-span-codec

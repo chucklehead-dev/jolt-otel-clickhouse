@@ -17,14 +17,23 @@
 (define (ffc-json-row-width row)
   (unless (ffc-json-row? row) (error 'ffc-json-row "expected a row"))
   (fx+ (vector-length (ffc-json-row-base row)) (pvec-count (ffc-json-row-suffix row))))
+(define-record-type ffc-fragments
+  (fields (mutable table) (mutable insertions) (mutable retained)))
+(define ffc-fragment-count-key (keyword #f "cnt"))
 (define-syntax define-ffc-json-encoder
   (syntax-rules ()
     ((_ encode-name flat-cache?)
-     (define (encode-name value limit max-depth lines? escape-unicode? project prefix)
+     (define-ffc-json-encoder encode-name flat-cache? #f () #f))
+    ((_ encode-name flat-cache? shared-cache? (extra-argument ...) shared-state)
+     (define (encode-name value limit max-depth lines? escape-unicode? project prefix extra-argument ...)
   (unless (and (fixnum? limit) (fx>=? limit 0)
                (fixnum? max-depth) (fx>=? max-depth 0))
     (error 'ffc-json "invalid byte/depth limit"))
   (unless (string? prefix) (error 'ffc-json "prefix must be ASCII text"))
+  ;; A scope shares only ASCII nested JSON fragments, never another wire mode.
+  (when shared-cache?
+    (unless (and escape-unicode? (not lines?) (not project) (string=? prefix ""))
+      (error 'ffc-json "invalid shared-fragment mode")))
   (do ((i 0 (fx+ i 1))) ((fx=? i (string-length prefix)))
     (unless (fx<=? (char->integer (string-ref prefix i)) 127)
       (error 'ffc-json "prefix must be ASCII text")))
@@ -35,7 +44,10 @@
         (digits (make-bytevector 21))
         ;; Per-call weak roots; only independently copied, complete fragments.
         ;; Fixed bounds: 64 insertions, 128KiB retained, <=4KiB per fragment.
-        (map-cache #f) (map-insertions 0) (map-retained 0) (map-flat? #f))
+        (map-cache (if shared-cache? (ffc-fragments-table shared-state) #f))
+        (map-insertions (if shared-cache? (ffc-fragments-insertions shared-state) 0))
+        (map-retained (if shared-cache? (ffc-fragments-retained shared-state) 0))
+        (map-flat? #f))
     (define (ensure-space!)
       (when (fx=? used (bytevector-length tail))
         (when (fx>=? (fx+ completed used) budget) (error 'ffc-json "byte limit exceeded"))
@@ -152,7 +164,13 @@
       (emit! v (fx+ container-depth 1)) #t)
     (define (tracked-map-entry! k v printed?)
       ;; Piggyback eligibility on the existing walk, never a second traversal.
-      (unless (and (string? k) (string? v)) (set! map-flat? #f))
+      (unless (and (string? k)
+                   (if shared-cache?
+                       (or (string? v) (jolt-nil? v) (boolean? v)
+                           (and (integer? v) (exact? v))
+                           (and (flonum? v) (finite? v)))
+                       (string? v)))
+        (set! map-flat? #f))
       (map-entry! k v printed?))
     (define (fragment! bytes depth)
       ;; Every eligible map is nonempty and its scalar values are one level
@@ -169,8 +187,14 @@
               (set! used (fx+ used take))
               (loop (fx+ offset take)))))))
     (define (map! m depth)
-      (let* ((candidate? (and flat-cache? (pmap? m) (fx>=? (pmap-cnt m) 8)))
-             (cached (and candidate? map-cache (hashtable-ref map-cache (pmap-root m) #f))))
+      (let* ((candidate? (and flat-cache?
+                             (if (pmap? m) (fx>=? (pmap-cnt m) 8)
+                                 (and shared-cache?
+                                      (fx>=? (jolt-ref-get m ffc-fragment-count-key) 8)))))
+             ;; Sorted-map admission already checked the stock ops table in
+             ;; emit!, including on hits. Identity is its immutable tree root.
+             (root (and candidate? (if (pmap? m) (pmap-root m) (jolt-ref-get m kw-tree))))
+             (cached (and root map-cache (hashtable-ref map-cache root #f))))
         (if cached (fragment! cached depth)
             (let ((previous container-depth) (previous-flat map-flat?)
                   (start-tail tail) (start used)
@@ -188,9 +212,13 @@
                     (let ((bytes (make-bytevector charge)))
                       (bytevector-copy! tail start bytes 0 charge)
                       (unless map-cache (set! map-cache (make-weak-eq-hashtable)))
-                      (hashtable-set! map-cache (pmap-root m) bytes)
+                      (hashtable-set! map-cache root bytes)
                       (set! map-insertions (fx+ map-insertions 1))
-                      (set! map-retained (fx+ map-retained charge))))))
+                      (set! map-retained (fx+ map-retained charge))
+                      (when shared-cache?
+                        (ffc-fragments-table-set! shared-state map-cache)
+                        (ffc-fragments-insertions-set! shared-state map-insertions)
+                        (ffc-fragments-retained-set! shared-state map-retained))))))
               (set! container-depth previous)
               (set! map-flat? previous-flat)))))
     (define (vector-entry! v printed?)
@@ -255,6 +283,7 @@
 
 (define-ffc-json-encoder ffc-json-encode/plain #f)
 (define-ffc-json-encoder ffc-json-encode/cached #t)
+(define-ffc-json-encoder ffc-json-encode/shared #t #t (fragments) fragments)
 ;; Private dispatcher for mechanism tests. Public facades select a specialized
 ;; entry point directly, not a per-map mode switch in the disabled path.
 (define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix flat-cache?)
@@ -277,3 +306,18 @@
   (ffc-json-encode/plain rows limit max-depth #t #t project prefix))
 (define (ffc-json-cached-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
   (ffc-json-encode/cached rows limit max-depth #t #t project prefix))
+
+(define (ffc-json-nested-scope)
+  (let ((fragments (make-ffc-fragments #f 0 0)) (active? #t))
+    (jolt-vector
+     (lambda (value limit max-depth)
+       (unless active? (error 'ffc-json "nested-text scope is closed"))
+       (if (and (pvec? value) (fx=? (pvec-count value) 0)) "[]"
+           (make-ffc-json-text
+            (jolt-array-vec
+             (ffc-json-encode/shared value limit max-depth #f #t #f "" fragments)))))
+     (lambda ()
+       (set! active? #f)
+       (ffc-fragments-table-set! fragments #f)
+       (ffc-fragments-insertions-set! fragments 0)
+       (ffc-fragments-retained-set! fragments 0)))))
