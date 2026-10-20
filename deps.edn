@@ -5,10 +5,10 @@
          :git/sha "3314b79e8a234fafdf5231439a0323c878a40040"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "26186ce79941e84e0cc67eb148dd8dd43b4e1880"
-         ;; Includes SDK-owned scalar conversion, ready-batch scheduling,
-         ;; batch<=queue validation and explicit traversal injection for the
-         ;; opt-in immutable payload cache on stock Jolt.
+         :git/sha "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+         ;; Includes reviewed decoder improvements and SDK-owned bounded
+         ;; scalar key-shape plans, plus the prior lifecycle/native helpers.
+         ;; Shape plans remain opt-in; no consumer-owned private SDK anchors.
          ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
          ;; independent of dependency traversal order.
@@ -24,11 +24,16 @@
            {:extra-deps
             {io.github.chucklehead-dev/jolt-codec
              {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-              :git/sha "98e93e2a6726c435d9b55ada9a088c2dbf5b1c99"
+              :git/sha "6288a7ccd04087f01061275367f7dabffd39cdba"
               :deps/root "incubator/codec"}}}
            :stock-span-codec-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-stock-published-codec-test"]}
+           :stock-shape-plans-test
+           {:extra-paths ["incubator/codec/test"]
+            :main-opts ["-m" "otel.exporter.chdb-shape-plans-test"
+                        "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                        "6288a7ccd04087f01061275367f7dabffd39cdba"]}
            :experimental-span-codec
            {:extra-paths ["incubator/codec/src"]}
            :experimental-span-codec-test

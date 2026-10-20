@@ -1282,6 +1282,8 @@
   ([payload-cache? flat-map-cache?]
    (load-experimental-span-codec! payload-cache? flat-map-cache? false))
   ([payload-cache? flat-map-cache? nested-fragments?]
+   (load-experimental-span-codec! payload-cache? flat-map-cache? nested-fragments? false))
+  ([payload-cache? flat-map-cache? nested-fragments? shape-plans?]
   (try
     (require 'jolt.codec.experimental)
     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
@@ -1309,12 +1311,20 @@
               (throw (ex-info "Experimental codec cannot encode SDK record contexts" {})))
           scope-owner (when with-writer (Object.))
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
+          shape-factory (when shape-plans?
+                          (require 'jolt.codec.scalar-text.experimental)
+                          (let [factory (ns-resolve 'jolt.codec.scalar-text.experimental 'native-plan-factory)]
+                            (when-not (and factory (ifn? @factory))
+                              (throw (ex-info "Experimental shape plans require their codec capability" {})))
+                            (@factory)))
           cache-var (when payload-cache?
                       (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter))
           cache-factory (when payload-cache?
                           (when-not cache-var
                             (throw (ex-info "Experimental payload cache requires its SDK capability" {})))
-                          (let [factory (fn [] (@cache-var folder))]
+                          (let [factory (if shape-plans?
+                                          (fn [] (@cache-var folder {:shape-plan-factory shape-factory}))
+                                          (fn [] (@cache-var folder)))]
                             (when-not (ifn? (factory))
                               (throw (ex-info "Experimental payload cache is unavailable" {})))
                             factory))
@@ -1337,21 +1347,24 @@
        :folder folder :attributes attributes :prepare-statement prepare
        :payload-cache-factory cache-factory})
     (catch Throwable _
-      (throw (ex-info (if nested-fragments?
+      (throw (ex-info (if shape-plans?
+                        "Experimental span shape plans require compatible SDK/codec capabilities"
+                       (if nested-fragments?
                         "Experimental nested fragments require a compatible codec and qualified runtime"
                         (if flat-map-cache?
                         "Experimental span flat-map cache requires compatible codec/SDK capabilities"
                         (if payload-cache?
                         "Experimental span payload cache requires a compatible SDK and qualified runtime"
-                        "Experimental span codec requires its source alias and a qualified runtime")))
-                      {:type (cond nested-fragments? ::experimental-span-nested-fragments-unavailable
+                        "Experimental span codec requires its source alias and a qualified runtime"))))
+                      {:type (cond shape-plans? ::experimental-span-shape-plans-unavailable
+                                   nested-fragments? ::experimental-span-nested-fragments-unavailable
                                    flat-map-cache? ::experimental-span-flat-map-cache-unavailable
                                    payload-cache? ::experimental-span-payload-cache-unavailable
                                    :else ::experimental-span-codec-unavailable)}))))))
 
 (defn check-experimental-span-codec!
   "Check optional codec/SDK/owned-statement capabilities without opening JDBC.
-  Options are the three experimental span cache Boolean flags (default false).
+  Options are the experimental span cache Boolean flags (default false).
   Returns true or throws; never installs the legacy native JSON writer.
   Applications can call this before acquiring their own storage. This checks
   the current runtime, not chDB version, schema, delivery or future nightlies.
@@ -1359,14 +1372,17 @@
   ([] (check-experimental-span-codec! {}))
   ([options]
    (let [flags [:experimental-span-payload-cache? :experimental-span-flat-map-cache?
-                :experimental-span-nested-fragment-cache?]]
+                :experimental-span-nested-fragment-cache? :experimental-span-shape-plans?]]
      (when-not (and (map? options) (every? (set flags) (keys options))
-                   (every? #(boolean? (get options % false)) flags))
+                   (every? #(boolean? (get options % false)) flags)
+                   (or (not (:experimental-span-shape-plans? options))
+                       (:experimental-span-payload-cache? options)))
        (throw (ex-info "Invalid experimental span codec preflight options"
                        {:type ::invalid-experimental-span-codec-preflight})))
      (load-experimental-span-codec! (:experimental-span-payload-cache? options false)
                                     (:experimental-span-flat-map-cache? options false)
-                                    (:experimental-span-nested-fragment-cache? options false))
+                                    (:experimental-span-nested-fragment-cache? options false)
+                                    (:experimental-span-shape-plans? options false))
      (when-not (try
                  (and (ifn? durable/execute-owned-and-flush!)
                       (owned-statement/statement?
@@ -1977,6 +1993,13 @@
   the explicit codec and a compatible SDK. Reuses bounded primitive-map
   conversions within one payload only. Compiler-woven converter bodies remain
   unqualified; no default or cross-thread cache is installed.
+  :experimental-span-shape-plans? defaults false and additionally requires the
+  payload cache and compatible independent codec/SDK capabilities. Infer at most
+  eight key schemas /8192 retained key characters per payload, after original
+  SDK admission. Reuse key/hash geometry for distinct sorted maps with equal
+  fields. No input-value cache beyond the existing SDK cache; unsupported/new
+  shapes after the budget retain the original conversion path. Original live
+  policy, normalization, fresh wrappers and confirmation remain unchanged.
   :experimental-span-flat-map-cache? defaults false. True requires the explicit
   codec and enables bounded complete-map byte reuse within each record encoding.
   It can compose with the SDK payload cache but changes no persistence contract.
@@ -1990,13 +2013,18 @@
             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
             experimental-span-codec? experimental-span-payload-cache? experimental-span-flat-map-cache?
-            experimental-span-nested-fragment-cache?]
+            experimental-span-nested-fragment-cache? experimental-span-shape-plans?]
      limit-override :max-insert-bytes
      :or {db-spec "chdb::memory:" create-schema? true
           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
           insert-format :json-each-row owned-statement-output? false experimental-span-codec? false
           experimental-span-payload-cache? false experimental-span-flat-map-cache? false
-          experimental-span-nested-fragment-cache? false}}]
+          experimental-span-nested-fragment-cache? false experimental-span-shape-plans? false}}]
+   (when-not (and (boolean? experimental-span-shape-plans?)
+                  (or (not experimental-span-shape-plans?)
+                      (and experimental-span-codec? experimental-span-payload-cache?)))
+     (throw (ex-info "Experimental span shape plans require the explicit codec and payload cache"
+                     {:type ::invalid-experimental-span-shape-plans})))
    (when-not (and (boolean? experimental-span-nested-fragment-cache?)
                   (or (not experimental-span-nested-fragment-cache?) experimental-span-codec?))
      (throw (ex-info "Experimental nested fragments require the explicit span codec"
@@ -2042,7 +2070,8 @@
    (let [experimental-span-codec (when experimental-span-codec?
                                    (load-experimental-span-codec! experimental-span-payload-cache?
                                                                   experimental-span-flat-map-cache?
-                                                                  experimental-span-nested-fragment-cache?))]
+                                                                  experimental-span-nested-fragment-cache?
+                                                                  experimental-span-shape-plans?))]
    ;; Resolve an explicitly selected backend before opening a database or DDL.
    ;; Never silently downgrade an unavailable native backend.
    (when (and experimental-span-codec
