@@ -13,6 +13,7 @@
             [jdbc.proto :as jdbc-proto]
             [otel.any-value :as any]
             [otel.context :as context]
+            [otel.trace :as trace]
             [otel.exporter.chdb.attribute-map-shape :as attribute-map-shape]
             [otel.exporter.chdb.attribute-projection :as attribute-projection]
             [otel.exporter.chdb.compact-format :as compact-format]
@@ -1297,6 +1298,15 @@
           _ (when-not (ifn? prepare)
               (throw (ex-info "Experimental codec requires private WAL preparation" {})))
           codec (if flat-map-cache? (open {:flat-map-cache? true}) (open))
+          ;; Real SDK/receiver link contexts are records, not fixture maps.
+          ;; Check this standard representation before JDBC acquisition.
+          _ (when-not (= [{"trace-id" "record-probe" "span-id" "context-probe"
+                           "trace-flags" 0 "trace-state" [] "remote?" false}]
+                         (json/read-str
+                           (String. (encode codec ""
+                                      [(trace/span-context {:trace-id "record-probe" :span-id "context-probe"})]
+                                      vector 1024) "UTF-8")))
+              (throw (ex-info "Experimental codec cannot encode SDK record contexts" {})))
           scope-owner (when with-writer (Object.))
           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
           cache-var (when payload-cache?

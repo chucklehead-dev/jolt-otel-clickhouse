@@ -59,7 +59,7 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The source and Linux standalone library gates run 28 tests / 287 assertions,
+The source and Linux standalone library gates run 32 tests / 314 assertions,
 including the leaf-resolution mechanism and nested-scope controls.
 
 ## Use as an independent Git dependency
@@ -71,7 +71,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "0af1008185cf84577298d3a0a0b2db87b97bddd5"
+   :git/sha "98e93e2a6726c435d9b55ada9a088c2dbf5b1c99"
    :deps/root "incubator/codec"}}}
 ```
 
@@ -97,7 +97,7 @@ jolt -M:stock-span-codec:stock-span-codec-test
 
 Local workspace runs must prefix that command with the required Chez 10.4.1
 wrapper. This gate checks the exact component resource paths before running
-the 65 exporter/cache/codec/traversal tests, including mixed-signal routing, capability preflight and nested scopes against
+the 71 exporter/cache/codec/traversal tests, including SDK record contexts, mixed-signal routing, capability preflight and nested scopes against
 the published library. It is not actual Durable throughput
 or a whole-application standalone qualification.
 
@@ -223,7 +223,7 @@ experimental; component improvements do not establish the Durable targets.
 
 The `packaging` project supplies only library/test source roots and no external
 dependencies. On official stock Jolt 0.8.23, a default Linux standalone binary
-runs **28 tests / 287 assertions**, including dynamic sorted-map operation
+runs **32 tests / 314 assertions**, including dynamic sorted-map operation
 checks, nested calls and caches. A separate traversal-only binary runs
 **5 / 51**, with the JSON namespace absent. These are functional packaging
 checks, not throughput measurements or a stable collection-layout ABI.

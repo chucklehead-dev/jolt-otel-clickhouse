@@ -66,7 +66,8 @@ jobs:
           # Actual old/current Git components, not a mocked missing Var.
           (cd ../.. && for task_case in \
             '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
-            '0af1008185cf84577298d3a0a0b2db87b97bddd5:present'; do
+            '0af1008185cf84577298d3a0a0b2db87b97bddd5:absent' \
+            '98e93e2a6726c435d9b55ada9a088c2dbf5b1c99:present'; do
               task_sha=${task_case%:*}
               task_expected=${task_case#*:}
               task_deps="{:paths [\"src\" \"incubator/codec/test\"] :deps {io.github.chucklehead-dev/jolt-codec {:git/url \"https://github.com/chucklehead-dev/jolt-otel-clickhouse.git\" :git/sha \"$task_sha\" :deps/root \"incubator/codec\"}}}"

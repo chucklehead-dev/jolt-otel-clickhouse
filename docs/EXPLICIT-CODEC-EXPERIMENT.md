@@ -51,6 +51,10 @@ The pinned published codec includes these capabilities. Explicitly requesting
 a missing capability or incompatible configuration rejects before acquiring
 storage. The selected SDK, driver and ordinary-JSON dependencies still include
 our forks: stock **Jolt** support does not mean an upstream-only ecosystem.
+The codec also supports ordinary record maps, including real SDK SpanContext
+records in links, preserving declared/extension order without copying to a map.
+Custom seq implementations still reject. Construction probes the SDK's actual
+record shape; older components without record support reject before storage.
 
 ## What stays unchanged
 
