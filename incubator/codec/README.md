@@ -9,7 +9,9 @@ official Jolt 0.8.23 release. An actual exporter/Durable local-root candidate
 also passed stock-runtime write and independent readback. Published dependency
 pins and the complete Oscope consumer are not yet stock-qualified; the selected
 SDK/ordinary-JSON/driver ecosystem still includes our forks.
-Standalone/AOT packaging is not qualified. Traversal and byte/JSON are separate
+Linux default standalone library builds also pass the smoke gate below; this
+does not qualify an exporter/application build or every build option/platform.
+Traversal and byte/JSON are separate
 namespaces within this one dependency-free library, not separately published
 repositories. Loading traversal does not load the codec or exporter.
 
@@ -118,6 +120,34 @@ allocation fell from 30.6KB to 28.4KB/row (about 7%). Pooled throughput was
 experimental; component improvements do not establish the Durable targets.
 
 ## Checks
+
+The `packaging` project supplies only library/test source roots and no external
+dependencies. On official stock Jolt 0.8.23, a default Linux standalone binary
+runs **19 tests / 186 assertions**, including dynamic sorted-map operation
+checks, nested calls and caches. A separate traversal-only binary runs
+**5 / 42**, with the JSON namespace absent. These are functional packaging
+checks, not throughput measurements or a stable collection-layout ABI.
+The stock-library CI workflow also builds and executes the combined binary;
+the local result is not itself evidence of a completed hosted run.
+
+For a local build through the required workspace wrapper, first create a
+task-specific temporary directory and pass its absolute output path:
+
+```sh
+cd packaging
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 \
+  env JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0 \
+  /home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt \
+  build -m jolt.codec.standalone-smoke-test -o /absolute/task-temp/codec-smoke
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 /absolute/task-temp/codec-smoke
+```
+
+Keep `build` first: the official 0.8.23 executable's build driver is unbound
+when `-Sdeps` precedes the command. The packaging project avoids that launcher
+path rather than patching the compiler. Retire the exact temporary binary and
+its `.build` directory after saving terminal logs. Cross-platform, shared
+library, closed-world/direct-link and complete SDK/exporter builds are not
+qualified by this gate.
 
 The traversal-only process gate uses the same isolated runtime command below
 with `-m jolt.traversal.experimental-test` instead of `-e ...`. It checks that

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Exercise the independent traversal/codec library in a stock-Jolt Linux
+  standalone binary, with a dependency-free packaging project and CI gate.
+  This does not qualify complete exporter/application standalone builds.
+
 - Separate private compact-batch materialization from confirmed publication.
   Keep execution synchronous, recheck the compact plan at publication, preserve
   callback/limit/failure order, and return the same Durable receipt. This is
