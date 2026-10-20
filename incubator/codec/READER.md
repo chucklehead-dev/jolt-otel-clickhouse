@@ -67,7 +67,10 @@ their effects and unread-input behavior stay with the configured parser.
 
 On success the existing native result vector contains `[value end]`; `end` is
 a positive **scalar-character offset**, before trailing whitespace, not a UTF-8
-byte offset. A parsed false or nil is distinct from a declined attempt. This
+byte offset or JVM UTF-16 char index. This module is Jolt-only: Jolt strings
+already use scalar indexing. Translate offsets explicitly if transferring them
+to another runtime; this complete-document API is not a streaming continuation.
+A parsed false or nil is distinct from a declined attempt. This
 small per-document result permits explicit acceptance/fallback accounting;
 there is no token-level counter or callback in the normal scan loop.
 

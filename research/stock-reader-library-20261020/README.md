@@ -48,3 +48,18 @@ subproject, then replicate actual socket writes/fresh recovery with per-document
 acceptance accounting. Broader whole-reader property/conformance, input bounds,
 consumer startup/failure/standalone and cross-platform qualification remain
 separate. Original Durable throughput/tail targets are active and unmet.
+
+## Publication and review
+
+The exact published Git subproject at77eb2899b1faec30f09bb5e1272f29a94bcd50ed
+passed a neutral consumer check. Its resource resolved inside that Git SHA;
+data.json, encoding and traversal namespaces remained absent. Hosted stock-library
+CI on that exact head also passed. This is component qualification, not app use.
+
+Claude read-only extraction review approved77eb289 for an owned PR and the next
+consumer-qualification stage. Its one non-blocking cursor note is clarified:
+the offset is neither UTF-8 bytes nor JVM UTF-16 units. There is no local Jolt
+slicing bug (Jolt String indexing is already scalar); this is an explicit
+cross-runtime warning, not a change to returned cursor/value semantics. Number
+adapter failures intentionally decline to fallback as the contract says; no
+claim is made for arbitrary impure or semantically incorrect adapters.

@@ -49,7 +49,9 @@
 (defn try-read-string
   "Attempt native decoding; return [value end] on success, nil on decline.
   End is a positive scalar-character offset before trailing whitespace, not a
-  UTF-8 byte offset. False/nil decoded values are inside the result vector.
+  UTF-8 byte offset or JVM UTF-16 char index. This Jolt-only API uses the same
+  scalar indexing as Jolt strings; end is not a streaming continuation cursor.
+  False/nil decoded values are inside the result vector.
   Does not invoke fallback. Number conversion is pure and may precede a later
   decline. Callback/unknown options decline before number conversion. Returned
   data is independently owned; structural checks do not prove backend semantics."
