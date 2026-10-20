@@ -1,6 +1,7 @@
 (ns jolt.codec.experimental
   "Incubating explicit ASCII JSON codec. Not a data.json backend. Source-mode
-  qualified on stock Jolt 0.8.23 and selected runtime7098; AOT is not qualified."
+  qualified on stock Jolt 0.8.23 and selected runtime7098. Linux standalone
+  library gates pass; complete exporter/application AOT is not qualified."
   (:require [clojure.java.io :as io] [clojure.string :as str] [jolt.scheme :as scheme]
             [jolt.traversal.experimental :as traversal]))
 

@@ -6,12 +6,16 @@
             [otel.exporter.chdb-preparation-test]
             [otel.exporter.chdb-stock-payload-cache-test]
             [otel.exporter.chdb-experimental-codec-test]
+            [otel.exporter.chdb-nested-fragments-test]
             [jolt.codec.flat-map-cache-test]
+            [jolt.codec.nested-fragment-test]
+            [jolt.codec.row-view-test]
             [jolt.codec.experimental-test]
+            [jolt.traversal.leaf-block-test]
             [jolt.traversal.experimental-test]))
 
 (def ^:private published-root
-  "https___github.com_chucklehead-dev_jolt-otel-clickhouse.git/05fa8b86f38b0d1872322822fe68bf729b483613/incubator/codec/src/")
+  "https___github.com_chucklehead-dev_jolt-otel-clickhouse.git/0af1008185cf84577298d3a0a0b2db87b97bddd5/incubator/codec/src/")
 
 (defn- published-resource? [resource path]
   (str/ends-with? (str path) (str "/" published-root resource)))
@@ -25,7 +29,7 @@
       ;; These check exact coordinate selection, not older-code incompatibility.
       (assert (published-resource? resource positive))
       (assert (not (published-resource? resource
-                     (str/replace positive "05fa8b86f38b0d1872322822fe68bf729b483613"
+                     (str/replace positive "0af1008185cf84577298d3a0a0b2db87b97bddd5"
                                   "627993767b9d2adf26576ae7470081d85ab943f1"))))
       (assert (not (published-resource? resource
                      (str/replace positive "chucklehead-dev_jolt-otel-clickhouse.git"
@@ -37,8 +41,12 @@
   (let [result (test/run-tests 'otel.exporter.chdb-preparation-test
                              'otel.exporter.chdb-stock-payload-cache-test
                              'otel.exporter.chdb-experimental-codec-test
+                             'otel.exporter.chdb-nested-fragments-test
                              'jolt.codec.flat-map-cache-test
+                             'jolt.codec.nested-fragment-test
+                             'jolt.codec.row-view-test
                              'jolt.codec.experimental-test
+                             'jolt.traversal.leaf-block-test
                              'jolt.traversal.experimental-test)]
-    (assert (= 39 (:test result)))
+    (assert (= 52 (:test result)))
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))

@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Refresh the optional published stock-Jolt codec pin to include vector leaf
+  traversal and nested-fragment scopes. Exercise the exact resolved component
+  through the combined exporter gate, including ownership/failure controls;
+  update setup documentation. Cache and codec options remain default-off.
+
 - Add a default-off nested-fragment cache to the explicit span codec. Reuse
   bounded complete scalar-map fragments and scope-local scratch buffers across
   nested JSON writes, with independent outputs and cleanup on return/throw.

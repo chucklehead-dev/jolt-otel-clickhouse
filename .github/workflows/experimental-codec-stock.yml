@@ -63,6 +63,17 @@ jobs:
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)
-          # Checkout-local new capability, distinct from the older published pin.
+          # Actual old/current Git components, not a mocked missing Var.
+          (cd ../.. && for task_case in \
+            '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
+            '0af1008185cf84577298d3a0a0b2db87b97bddd5:present'; do
+              task_sha=${task_case%:*}
+              task_expected=${task_case#*:}
+              task_deps="{:paths [\"src\" \"incubator/codec/test\"] :deps {io.github.chucklehead-dev/jolt-codec {:git/url \"https://github.com/chucklehead-dev/jolt-otel-clickhouse.git\" :git/sha \"$task_sha\" :deps/root \"incubator/codec\"}}}"
+              "$task_bin" -Srepro -Sdeps "$task_deps" \
+                -m otel.exporter.chdb-published-scope-capability-test "$task_expected"
+            done)
+          # Also check the checkout-local adapter; the published gate above
+          # includes the same scope/lifetime tests against the pinned library.
           (cd ../.. && "$task_bin" -Srepro -A:test:experimental-span-codec-test \
             -m otel.exporter.chdb-nested-fragments-test)

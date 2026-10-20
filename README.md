@@ -155,10 +155,14 @@ For a chDB 26.9.0 Durable writer connection, the opt-in exporter options are:
   :owned-statement-output? true
   :experimental-span-codec? true
   :experimental-span-payload-cache? true
-  :experimental-span-flat-map-cache? true})
+  :experimental-span-flat-map-cache? true
+  :experimental-span-nested-fragment-cache? true})
 ```
 
-The cache options are also experimental and may be omitted. This path uses an
+The cache options are also experimental and may be omitted. The nested cache
+reuses bounded fragments and scratch storage within one synchronous payload;
+it does not retain telemetry in a global cache. The pinned published codec
+includes this capability. This path uses an
 explicit built-in-value encoder, not custom JSONWriter extensions. It remains
 synchronous and returns success only after confirmed publication; it does not
 enable preparation overlap. SDK/driver/data.json ecosystem forks are still

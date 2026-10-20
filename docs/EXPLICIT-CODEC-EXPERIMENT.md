@@ -1,68 +1,78 @@
 # Explicit span codec experiment
 
-The optional codec moves nested event/link JSON and outer span encoding into a
-small, separate library. It is a research option; the normal backend is unchanged.
-It does not yet support every OTel value shape or replace all fork dependencies.
+This optional path encodes spans directly from Jolt collections into private
+byte buffers. It runs on official Jolt **0.8.23**, without our compiler fork or
+the optional native data.json writer. The normal exporter backend is unchanged.
+Use it to evaluate lower-allocation span export; it is not a general data.json
+replacement and does not support custom JSONWriter extensions or every OTel
+value shape. Unsupported values fail the export rather than being omitted.
 
-Activate `:experimental-span-codec`, then
-add this option to an otherwise configured exporter:
+## Enable it
+
+From this checkout, activate `:stock-span-codec`. Applications consuming the
+exporter as a dependency must declare the independent
+[codec Git subproject](../incubator/codec/README.md#use-as-an-independent-git-dependency)
+themselves: dependency aliases do not propagate. Do not combine the published
+and checkout-local codec aliases in a provenance test.
+
+For an existing chDB 26.9.0 Durable writer connection:
 
 ```clojure
-{:experimental-span-codec? true
- :signals #{:spans}
- :durable? true
- :json-backend :native-guarded-byte-batch
- :insert-format :json-compact-each-row
- :owned-statement-output? true}
+(otel.exporter.chdb/exporter
+ {:connection conn :durable? true :signals #{:spans}
+  :datetime64-wire :raw-ticks
+  :json-backend :native-guarded-byte-batch
+  :insert-format :json-compact-each-row
+  :owned-statement-output? true
+  :experimental-span-codec? true
+  :experimental-span-payload-cache? true
+  :experimental-span-flat-map-cache? true
+  :experimental-span-nested-fragment-cache? true})
 ```
 
-Supply the actual Durable connection and any installer-confirmed typed
-descriptors as usual. Invalid combinations or unavailable support fail before
-opening storage. The option is deliberately limited to this tested span path;
-it is not a way to change metric/log encoding.
+Supply installer-confirmed typed descriptors as usual if using typed storage.
+The three cache flags are optional, default-off optimizations. The last reuses
+bounded complete scalar-map fragments and private scratch storage only within
+one synchronous payload. Outputs remain independent and the scope closes on
+return or failure. It is not a global telemetry cache or raw JSON insertion.
 
-The explicit path does not load the optional native data.json writer. Its map
-walker is shared lexically with attribute projection rather than installed as
-a runtime global. Full stock-runtime use additionally needs the driver's
-stock-compatible private-buffer adoption change; the currently pinned driver
-does not yet include it. Other ecosystem dependency forks remain selected.
+The pinned published codec includes these capabilities. Explicitly requesting
+a missing capability or incompatible configuration rejects before acquiring
+storage. The selected SDK, driver and ordinary-JSON dependencies still include
+our forks: stock **Jolt** support does not mean an upstream-only ecosystem.
 
-The codec uses its own supported-value contract instead of third-party
-JSONWriter extensions. Unsupported values fail the export; no attributes are
-redacted or silently omitted. Compact plan checks run before and after
-encoding. The existing driver owns ASCII snapshots, native insertion, WAL,
-lease/CAS checks and persistence confirmation. No new acknowledgement contract
-or Durable protocol was introduced.
+## What stays unchanged
 
-## Current evidence
+Conversion/callback order, byte/depth limits and compact target/column-plan
+checks remain enforced. Private preparation still precedes confirmed
+publication synchronously; the plan is checked again before publication.
+The driver owns ASCII snapshots, native insertion, WAL, lease/CAS checks and
+persistence confirmation. Success is not queue admission or local execution.
+There is no new concurrency, acknowledgement contract or Durable protocol.
+No attribute values or persisted WAL contents are redacted by this option.
 
-An additional stock Jolt 0.8.23 semantic gate used the library-owned walker,
-stock-compatible driver buffer adoption and ordinary metadata JSON reader,
-without the optional native JSON alias. The actual SDK/Durable writer completed
-175,000 rows; a separate older-stack reader matched every physical row and
-multiplicity, including typed values/statuses and nested event fields. The
-validator passed. This gate used local-root candidate dependencies, not the
-published pins, and does not qualify AOT, S3 or Oscope startup. Its single
-11.62k confirmed-rows/s window is not a comparative speedup result.
+## Validation and limits
 
-The actual SDK/exporter/local-Durable comparison used 5,000-row rich typed
-batches, one serial exporter worker, a 20,000-item bounded queue and libchdb
-26.9.0. Four independent processes ran with the flag off/on/on/off. Each was
-followed by an older-stack reader that checked all 175,000 physical rows,
-including typed statuses and nested event fields. All 700,000 rows matched.
-Temporary stores were removed only after validation.
+The published-component gate checks the exact Git resource paths before
+running exporter, cache, traversal and codec tests:
 
-- Control windows: 9.69k and 11.48k confirmed rows/s.
-- Codec windows: 11.83k and 12.68k confirmed rows/s.
-- Estimated allocation: 24.4 versus 20.7 KB/row, about 15% lower.
+```sh
+jolt -M:stock-span-codec:stock-span-codec-test
+```
 
-The 18.5% drift between controls prevents treating the pooled rate difference
-as a qualified speedup. Callback p50/p90/p95/p99 are preserved in the research
-results, but this short run is not a production-tail or end-to-end span-latency
-qualification. This does **not** meet the 25k/20k throughput targets. No S3,
-failure-injection or standalone qualification is claimed here.
+Local workspace commands require the Chez 10.4.1 wrapper. The separate Linux
+standalone library gate passes; it does not qualify complete exporter/Oscope
+standalone builds or other platforms.
 
-The remaining work is published-pin/CI qualification of the stock consumer and
-reducing intermediate projection/attribute maps and row vectors, alongside
-the existing native/WAL/copy costs. The library is described in
-[the incubator README](../incubator/codec/README.md).
+The latest paired SDK/local-Durable nested-cache comparison used published
+SDK/driver pins, official Jolt 0.8.23, libchdb 26.9.0 and rich 5k-row callbacks.
+Observed pooled confirmed throughput increased **12,158 -> 14,769 rows/s**,
+with 9.1% control drift; estimated allocation fell about 1KiB/row. Both cache
+iterations independently recovered 700k full-field rows each. The complete
+[results and scripts](../research/nested-fragments-20261019/README.md) retain
+earlier inconclusive results, all p50/p90/p95/p99 samples and cleanup receipts.
+
+This is not population-tail, S3, real-application/Langfuse, Rust-relative or
+throughput-target qualification. The ~25k p50 / ~20k p99 objective remains
+unmet. Oscope defaults are unchanged; selecting this published library alone
+does not enable the codec or its caches in an application.

@@ -24,7 +24,7 @@
            {:extra-deps
             {io.github.chucklehead-dev/jolt-codec
              {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-              :git/sha "05fa8b86f38b0d1872322822fe68bf729b483613"
+              :git/sha "0af1008185cf84577298d3a0a0b2db87b97bddd5"
               :deps/root "incubator/codec"}}}
            :stock-span-codec-test
            {:extra-paths ["incubator/codec/test"]
