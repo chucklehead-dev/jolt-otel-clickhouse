@@ -38,9 +38,24 @@
        (let ((ops (var-cell-root ffc-sorted-ops-cell)))
          (and (pmap? ops) (eq? ops (jolt-ref-get m kw-ops))))))
 
+;; Ordinary defrecords sequence declared fields, then their extension map.
+;; Reject deftypes and custom seq implementations rather than bypassing them.
+;; Runtime field accessors encapsulate inline/spilled native record layouts.
+(define (ffc-stock-record? m)
+  (and (jrec? m) (jrec-record? m) (not (jrec-cl m "seq"))
+       (let ((ext (jrec-ext m))) (or (jolt-nil? ext) (pmap? ext)))))
+(define (ffc-record-fold m visit acc)
+  (let* ((keys (jrdesc-fkeys (jrec-desc m))) (n (vector-length keys))
+         (ext (jrec-ext m)))
+    (let loop ((i 0) (a acc))
+      (if (fx=? i n)
+          (if (jolt-nil? ext) a (ffc-pmap-fold ext visit a))
+          (loop (fx+ i 1) (visit (vector-ref keys i) (jrec-field-ref m i) a))))))
+
 (define (ffc-map-fold m visit acc)
   (cond
    ((pmap? m) (ffc-pmap-fold m visit acc))
+   ((ffc-stock-record? m) (ffc-record-fold m visit acc))
    ((ffc-stock-sorted-map? m)
     ;; Capture the immutable tree before callbacks; no comparator invocation.
     (let walk ((tree (jolt-ref-get m kw-tree)) (a acc))

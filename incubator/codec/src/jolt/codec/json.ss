@@ -196,7 +196,7 @@
     (define (map! m depth)
       (let* ((candidate? (and flat-cache?
                              (if (pmap? m) (fx>=? (pmap-cnt m) 8)
-                                 (and shared-cache?
+                                 (and shared-cache? (ffc-stock-sorted-map? m)
                                       (fx>=? (jolt-ref-get m ffc-fragment-count-key) 8)))))
              ;; Sorted-map admission already checked the stock ops table in
              ;; emit!, including on hits. Identity is its immutable tree root.
@@ -251,7 +251,7 @@
                 (loop (fx+ i 1) (vector-entry! (vector-ref base i) printed?))))
           (set! container-depth previous))
         (byte! 93))
-       ((or (pmap? x) (ffc-stock-sorted-map? x))
+       ((or (pmap? x) (ffc-stock-sorted-map? x) (ffc-stock-record? x))
         ;; Macro specialization keeps cache state/closures out of scalar and
         ;; uncached calls. Both variants share this one algorithm definition.
         (if flat-cache? (map! x depth)

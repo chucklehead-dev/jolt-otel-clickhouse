@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Traverse ordinary defrecords directly in the optional codec, preserving field
+  and extension order without map copies. This supports real SDK SpanContext
+  records in linked spans; custom seq/deftype shapes still reject, and record
+  metadata is neither serialized nor used as a fragment cache identity.
+
 - Expose an explicit span-codec capability check for applications that acquire
   their own connection. Validate optional codec/SDK/owned-statement support
   before storage; preserve constructor checks, defaults and confirmation.

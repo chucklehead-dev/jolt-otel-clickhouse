@@ -49,9 +49,9 @@ jobs:
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
             -m jolt.traversal.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
-            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'clojure.test)
-             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test)]
-               (assert (= 23 (:test r)))
+            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test 'clojure.test)
+             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'jolt.codec.record-test)]
+               (assert (= 27 (:test r)))
                (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
           # Build first: 0.8.23's launcher does not load the build driver when
           # -Sdeps precedes `build`. The small packaging project supplies paths
@@ -66,7 +66,8 @@ jobs:
           # Actual old/current Git components, not a mocked missing Var.
           (cd ../.. && for task_case in \
             '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
-            '0af1008185cf84577298d3a0a0b2db87b97bddd5:present'; do
+            '0af1008185cf84577298d3a0a0b2db87b97bddd5:absent' \
+            '98e93e2a6726c435d9b55ada9a088c2dbf5b1c99:present'; do
               task_sha=${task_case%:*}
               task_expected=${task_case#*:}
               task_deps="{:paths [\"src\" \"incubator/codec/test\"] :deps {io.github.chucklehead-dev/jolt-codec {:git/url \"https://github.com/chucklehead-dev/jolt-otel-clickhouse.git\" :git/sha \"$task_sha\" :deps/root \"incubator/codec\"}}}"

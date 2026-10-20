@@ -23,7 +23,7 @@
     ;; Lexical definitions avoid process-global Scheme helper replacement.
     (let [walk (traversal/open-traversal)
           factory (scheme/eval-string
-            (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?) (let () " json-source
+            (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map? ffc-stock-record?) (let () " json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
                  " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes"
