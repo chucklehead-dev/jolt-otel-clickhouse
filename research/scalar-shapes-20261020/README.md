@@ -30,6 +30,8 @@ trusted. Only the named stock runtime is qualified, not arbitrary future nightli
 ## Functional / review gates
 
 - Official stock Jolt0.8.23, pinned Chez10.4.1, no compiler/data.json changes.
+  The independent library needs only stock Jolt; the integrated exporter/driver
+  retains existing support-library pins. This is not full stock-ecosystem proof.
 - Independent library source: **37 tests /435 assertions**, zero failures/errors.
 - New SDK option: **6 /73**, including real bounded-learning rejection (new cold
   shapes still use original fallback), original eight-root changes/restoration,
