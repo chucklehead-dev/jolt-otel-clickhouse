@@ -106,6 +106,24 @@ or a whole-application standalone qualification.
 ;; fresh byte[] containing "[1]\n[2]\n"
 ```
 
+The row-construction prototype avoids an intermediate persistent row vector:
+
+```clojure
+(def build-row (codec/row-builder encoder 2)) ; capture once per schema
+(codec/write-nested encoder
+  (codec/append-row-fields encoder (build-row "value" 42) [false]))
+;; => "[\"value\",42,false]"
+```
+
+Fixed constructors support 0..32 arguments; an immutable vector suffix can
+make the complete row wider. The row owns private native base storage but
+references its field values and suffix; keep these immutable during use.
+This is not a Clojure collection or raw JSON, and does not invoke converters.
+Normal value, depth, output-size and fresh-output ownership rules apply.
+This prototype is not wired into the exporter. Its rich encoding screen
+reduces estimated allocation by about 6%, but establishes no median-time or
+tail improvement; see [the paired result](../../research/stock-row-view-20261019/README.md).
+
 For record batches with repeated immutable String->String maps, opt in with
 `(codec/open-codec {:flat-map-cache? true})`. The cache belongs to each
 `encode-prefixed-records` invocation, not the codec object. It copies complete
@@ -124,6 +142,36 @@ The exporter selects it separately with `:experimental-span-flat-map-cache? true
 than wire bytes. Neither option changes admission or persistence acknowledgement.
 Missing requested capabilities reject before database acquisition; defaults do
 not require the incubating library.
+
+### Candidate nested-text scopes
+
+This newer checkout capability is **not present in the earlier published
+`05fa8b8` coordinate above**. Use the checkout-local alias for candidate tests;
+do not enable the option with an older library pin and expect a fallback.
+
+```clojure
+(codec/with-nested-text-writer encoder
+  (fn [prepare]
+    ;; Each value is JSON TEXT for an outer string field, not raw JSON insertion.
+    (codec/encode-prefixed-records encoder "" [{"enabled" false}]
+      (fn [value] [(prepare value)]) 1000)))
+```
+
+The synchronous scope reuses complete ASCII fragments from immutable ordinary
+or stock sorted maps with String keys and scalar values. It retains at most
+64 insertions / 128KiB fragment bytes, at most 4KiB per fragment, with weak root
+keys; table overhead is additional. A 1KiB buffer and digit scratch are also
+reused privately. Every result has independent storage. Small output budgets
+still use clamped buffers, and hits retain current depth/byte checks.
+The callback must not use its writer concurrently or across fibers. On return
+or throw, cache/scratch are cleared and retained writers reject even empty
+inputs. This is not a hard RSS bound or a global telemetry cache.
+
+The exporter option `:experimental-span-nested-fragment-cache? true` requires
+the explicit codec. It opens one scope per synchronous payload, fences the
+writer to that codec owner, and closes it before WAL preparation. Defaults and
+acknowledgement semantics are unchanged; Oscope does not enable it.
+See [paired component and recovered SDK results](../../research/nested-fragments-20261019/README.md).
 
 The byte limit excludes the ASCII prefix and includes newlines. Failure returns
 no partial byte array and stops before asking for another record. Projection

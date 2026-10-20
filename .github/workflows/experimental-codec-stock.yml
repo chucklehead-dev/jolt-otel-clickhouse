@@ -49,9 +49,9 @@ jobs:
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
             -m jolt.traversal.experimental-test
           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
-            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'clojure.test)
-             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test)]
-               (assert (= 15 (:test r)))
+            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test 'clojure.test)
+             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'jolt.traversal.leaf-block-test 'jolt.codec.row-view-test 'jolt.codec.nested-fragment-test)]
+               (assert (= 23 (:test r)))
                (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
           # Build first: 0.8.23's launcher does not load the build driver when
           # -Sdeps precedes `build`. The small packaging project supplies paths
@@ -63,3 +63,6 @@ jobs:
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)
+          # Checkout-local new capability, distinct from the older published pin.
+          (cd ../.. && "$task_bin" -Srepro -A:test:experimental-span-codec-test \
+            -m otel.exporter.chdb-nested-fragments-test)
