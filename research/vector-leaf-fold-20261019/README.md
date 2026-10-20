@@ -68,6 +68,21 @@ limits/ownership and callback failures. A separate lexical mechanism test
 requires 34 resolutions for 1,057 elements, one for 24 and zero for empty.
 It is intentionally separate from compatibility tests of the older published
 codec pin; those must not demand a new mechanism from the old revision.
+The built Linux executable independently passes the same 20 / 199 gate.
+The local exporter integration gate and the older published-component
+compatibility gate each pass **39 / 276**; their separate logs are retained.
+
+Claude's bounded read-only source review found no blocking issue; see
+`claude-review.txt`. Codex independently executed the gates above and checked
+that the reconstructed baseline fold matches the parent modulo whitespace.
+The review notes a possible non-progress loop if the trusted runtime resolver
+returns an empty remaining leaf for a valid index. The runtime contract
+requires a positive remaining leaf; layout/primitive correctness remains a
+trusted boundary, not something these tests prove. The suggested extra nested
+slice shape is non-blocking additional coverage, not a demonstrated defect.
+The reviewer was not given `exporter-tests.log` in its bounded file list;
+its source review does not independently verify that receipt. The retained
+terminal local log, not the review, is the evidence for the 39 / 276 claim.
 
 From the repository root:
 
