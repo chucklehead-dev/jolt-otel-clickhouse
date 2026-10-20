@@ -91,7 +91,7 @@ jolt -M:stock-span-codec:stock-span-codec-test
 
 Local workspace runs must prefix that command with the required Chez 10.4.1
 wrapper. This gate checks the exact component resource paths before running
-the 62 exporter/cache/codec/traversal tests, including mixed-signal routing and nested scopes against
+the 65 exporter/cache/codec/traversal tests, including mixed-signal routing, capability preflight and nested scopes against
 the published library. It is not actual Durable throughput
 or a whole-application standalone qualification.
 

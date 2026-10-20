@@ -31,6 +31,12 @@ For an existing chDB 26.9.0 Durable writer connection:
 ```
 
 Supply installer-confirmed typed descriptors as usual if using typed storage.
+Applications that open JDBC themselves can first call
+`(otel.exporter.chdb/check-experimental-span-codec! cache-options)`, where
+`cache-options` contains only the three optional experimental cache Boolean
+flags. The check returns true without acquiring storage or installing the
+legacy writer; missing runtime/library/SDK/owned support rejects. It does not
+qualify the native version, schema or persistence. Construction checks again.
 To export all signals through this same owner, select
 `:signals #{:spans :logs :metrics}`. Spans use the explicit codec; logs and
 metrics retain the configured JSON writer, callback behavior and String SQL

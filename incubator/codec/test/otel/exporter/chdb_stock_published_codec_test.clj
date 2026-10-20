@@ -8,6 +8,7 @@
             [otel.exporter.chdb-experimental-codec-test]
             [otel.exporter.chdb-nested-fragments-test]
             [otel.exporter.chdb-mixed-codec-test]
+            [otel.exporter.chdb-codec-preflight-test]
             [jolt.codec.flat-map-cache-test]
             [jolt.codec.nested-fragment-test]
             [jolt.codec.row-view-test]
@@ -44,11 +45,12 @@
                              'otel.exporter.chdb-experimental-codec-test
                              'otel.exporter.chdb-nested-fragments-test
                              'otel.exporter.chdb-mixed-codec-test
+                             'otel.exporter.chdb-codec-preflight-test
                              'jolt.codec.flat-map-cache-test
                              'jolt.codec.nested-fragment-test
                              'jolt.codec.row-view-test
                              'jolt.codec.experimental-test
                              'jolt.traversal.leaf-block-test
                              'jolt.traversal.experimental-test)]
-    (assert (= 62 (:test result)))
+    (assert (= 65 (:test result)))
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
