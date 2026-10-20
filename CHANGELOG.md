@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add a separate opt-in payload scalar-map cache to the explicit span codec,
+  using the library-owned map folder and a compatible SDK. Keep cache state
+  local to each payload and retain live conversion-policy checks and fallback.
+  Ordinary paths, dependency pins and persistence confirmation are unchanged;
+  compiler-woven converter bodies remain unqualified.
+
 - Prepare private WAL bytes before writer submission in the explicit span-codec
   experiment. This moves pure encoding out of the serialized Durable worker;
   ordinary backends and persistence confirmation remain unchanged. Requires the
