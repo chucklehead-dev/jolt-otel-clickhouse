@@ -2,6 +2,8 @@
          '[clojure.string :as str]
          '[jolt.codec.experimental :as codec]
          '[jolt.scheme :as scheme]
+         '[shape-projection :as shape]
+         '[otel.any-value :as any]
          '[otel.exporter.chdb :as exporter]
          '[otel.exporter.chdb.attribute-projection :as projection]
          '[otel.exporter.chdb-attribute-projection-test :as installed]
@@ -14,6 +16,8 @@
   (nth (vec (sort samples)) (dec (long (Math/ceil (* q (count samples)))))))
 
 (let [expected-sdk (or (second *command-line-args*) "3366a3322c3ea4024057f6278e50c999864171e8")
+      conversion-mode (or (nth *command-line-args* 2 nil) "baseline")
+      _ (assert (contains? #{"baseline" "fixed-shape"} conversion-mode))
       _ (assert (not (str/blank? expected-sdk)))
       c (codec/open-codec {:flat-map-cache? true})
       context (#'exporter/load-experimental-span-codec! true true true)
@@ -22,6 +26,15 @@
       typed (projection/trace-vector-projector (:descriptor-set installation) target true (:folder context))
       attrs (into (sorted-map "service.name" "producer-shape" "flag" false "count" 42)
                   (map (fn [i] [(str "extra-" i) (case (mod i 3) 0 "value-λ" 1 false i)]) (range 14)))
+      shape-plan (shape/compile-plan (vec (keys attrs))
+                   [[#'any/try-scalar-string @#'any/scalar-text-helper]
+                    [#'any/canonicalize @#'any/scalar-text-canonicalizer]
+                    [#'any/default-limits @#'any/scalar-default-limits]
+                    [#'any/string-bytes @#'any/original-string-bytes]
+                    [#'any/min-int64 @#'any/scalar-map-min-int64]
+                    [#'any/max-int64 @#'any/scalar-map-max-int64]]
+                   (quot (:max-bytes @#'any/scalar-default-limits) 4)
+                   @#'any/scalar-sorted-map-prototype)
       shared (mapv (fn [span]
                      (-> span (assoc-in [:resource :attributes] attrs)
                          (assoc-in [:scope :attributes] attrs)
@@ -45,7 +58,14 @@
       (fn [run]
         (codec/with-nested-text-writer c
           (fn [nested]
-            (let [convert (#'exporter/payload-attrs-converter ((:payload-cache-factory context)))
+            (let [convert (#'exporter/payload-attrs-converter
+                            (if (= conversion-mode "baseline")
+                              ((:payload-cache-factory context))
+                              (shape/cached-converter
+                                (#'any/load-scalar-string-map-payload-cache
+                                  (#'any/scalar-string-map-payload-bindings) 64 65536 (:folder context))
+                                [shape-plan] @#'any/original-try-scalar-string-map
+                                @#'any/original-try-sorted-scalar-string-map)))
                   project (fn [span] (into (#'exporter/span-row span nil true nested convert) (typed span)))]
               (with-bindings {#'exporter/*timestamp-wire* :raw-ticks
                               #'exporter/*json-backend* :native-guarded-byte-batch
@@ -81,6 +101,9 @@
                {:round round :shape shape :mode mode :nanos nanos
                 :counters (#'bench/counter-delta before after)})))
       result {:scope :projection-and-encoding-component-diagnosis
+              :conversion-mode conversion-mode
+              :shape-plan-source (str (io/resource "shape_projection.ss"))
+              :shape-plan-schema-cost :outside-timing
               :rows 5000 :samples-per-cell 12 :runtime :official-stock-0.8.23
               :exporter-source (str (io/resource "otel/exporter/chdb.clj"))
               :sdk-source (str (io/resource "otel/any_value.clj"))
