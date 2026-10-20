@@ -1321,12 +1321,23 @@
        (every? empty? (vals (:typed-metric-columns snapshot)))
        (= direct-metric-columns schema/clickstack-metric-insert-columns)))
 
-(defn- execute-closed-compact-rows!
-  ([connection table columns rows checked-snapshot!]
-   (execute-closed-compact-rows! connection table columns rows checked-snapshot! nil nil))
-  ([connection table columns rows checked-snapshot! codec project]
-   (execute-closed-compact-rows! connection table columns rows checked-snapshot! codec project nil))
-  ([connection table columns rows checked-snapshot! codec project cached-projector]
+(def ^:private prepared-compact-seal (Object.))
+(deftype ^:private PreparedCompactInsert [seal connection table columns sql checked-snapshot!]
+  Object
+  (toString [_] "#<prepared compact insert>"))
+
+;; Jolt's ordinary deftype printer does not necessarily call Object/toString.
+;; Prepared values may contain telemetry SQL; neither printing mode exposes it.
+(defmethod print-method PreparedCompactInsert [_ writer]
+  (.write ^java.io.Writer writer "#<prepared compact insert>"))
+(defmethod print-dup PreparedCompactInsert [_ writer]
+  (.write ^java.io.Writer writer "#<prepared compact insert>"))
+
+(defn- prepare-closed-compact-rows
+  "Internal materialization only, under the existing admitted synchronous call.
+  May realize inputs/call converters; never executes or acknowledges a mutation.
+  The private result is not a public retained/async request or retry contract."
+  [connection table columns rows checked-snapshot! codec project cached-projector]
   (let [initial-snapshot (checked-snapshot!)]
     (compact-format/require-order! (:compact-plans initial-snapshot) connection table columns)
     (letfn [(checked [remaining]
@@ -1361,12 +1372,34 @@
                   (if (= :native-guarded-byte-batch *json-backend*)
                   (json-each-row-payload (checked rows) prefix
                                         (boolean (:owned-statement-output? initial-snapshot)))
-                  (str prefix (json-each-row-payload (checked rows)))))
-            snapshot (checked-snapshot!)]
-        ;; Custom conversion/JSON callbacks may have changed private state.
-        ;; Do not pair completed positional data with a different live plan.
-        (compact-format/require-order! (:compact-plans snapshot) connection table columns)
-        (execute-durable-sql! connection sql))))))
+                  (str prefix (json-each-row-payload (checked rows)))))]
+        (PreparedCompactInsert. prepared-compact-seal connection table columns sql checked-snapshot!)))))
+
+(defn- publish-prepared-compact-insert!
+  "Internal confirmed publication, immediately after preparation in the same
+  admitted call/bindings. Revalidate the current plan, then use the unchanged
+  atomic Durable execution/settlement path. Preparation is not authorization."
+  [prepared]
+  (when-not (and (instance? PreparedCompactInsert prepared)
+                 (identical? prepared-compact-seal (.-seal prepared)))
+    (throw (ex-info "Invalid prepared compact insert" {:type ::invalid-prepared-compact-insert})))
+  (let [connection (.-connection prepared) table (.-table prepared) columns (.-columns prepared)
+        snapshot ((.-checked-snapshot! prepared))]
+    ;; Custom conversion/JSON callbacks may have changed private state. Keep
+    ;; this check at publication, not merely when the prepared value is made.
+    (compact-format/require-order! (:compact-plans snapshot) connection table columns)
+    (execute-durable-sql! connection (.-sql prepared))))
+
+(defn- execute-closed-compact-rows!
+  ([connection table columns rows checked-snapshot!]
+   (execute-closed-compact-rows! connection table columns rows checked-snapshot! nil nil))
+  ([connection table columns rows checked-snapshot! codec project]
+   (execute-closed-compact-rows! connection table columns rows checked-snapshot! codec project nil))
+  ([connection table columns rows checked-snapshot! codec project cached-projector]
+   ;; No lookahead/concurrency yet. Preserve callback and final-check ordering,
+   ;; synchronous confirmed return, and the original exporter's in-flight scope.
+   (publish-prepared-compact-insert!
+     (prepare-closed-compact-rows connection table columns rows checked-snapshot! codec project cached-projector))))
 
 (defn- insert-direct-metric-batch! [connection state type columns rows]
   (execute-closed-compact-rows!

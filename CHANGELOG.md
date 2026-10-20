@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Separate private compact-batch materialization from confirmed publication.
+  Keep execution synchronous, recheck the compact plan at publication, preserve
+  callback/limit/failure order, and return the same Durable receipt. This is
+  an internal seam for future bounded preparation, not async success or a new
+  public prepared-request/retry API.
+
 - Add an opt-in flat string-map byte cache to the experimental explicit codec.
   Reuse complete encodings only within a record-encoding call, with fixed
   entry/byte bounds and current output-size/depth checks. Scalar/nested APIs,

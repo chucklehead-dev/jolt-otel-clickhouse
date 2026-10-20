@@ -1,0 +1,15 @@
+**Fix assessment**
+
+`print-method` and `print-dup` now both override the default deftype printer to emit the fixed literal `"#<prepared compact insert>"` (chdb.clj:1331-1334). This is necessary because Jolt's default record/deftype printer is documented not to reliably call `Object/toString` — so the earlier `toString` override alone didn't guarantee opacity under `pr-str`/`print-dup` dispatch. Neither override touches persisted SQL or ack behavior: they only affect the printer path for `PreparedCompactInsert`, not `execute-durable-sql!`, `publish-prepared-compact-insert!`, or the SQL string/owned-statement stored in `sql`. Dispatch for other types is unaffected — `defmethod` is added only for `PreparedCompactInsert`, a private type.
+
+**Fallback (String-SQL) coverage**
+
+The String-fallback path is exercised by `ordinary-string-path-keeps-the-same-materialization-and-check-order` (chdb_preparation_test.clj:75-92), which forces `*json-backend* :configured` (non-native) and asserts both `pr-str` (chdb_preparation_test.clj:87) and `print-dup`-bound `pr-str` (line 88) equal the fixed opaque string, then confirms the captured SQL is a real `String` ending in the row payload — i.e., the test does directly confirm the fallback's underlying SQL is a plain String while its printed form stays opaque. This matches the claim: fallback SQL is visible internally (`@captured` is a readable string) but opaque through the printer.
+
+The owned-statement path is covered separately by `preparation-does-not-publish-or-replay-producers` (lines 8-26), same opaque-printer assertions, with `owned/statement?` confirming the non-fallback branch.
+
+**No semantic drift found**
+
+Revalidation-at-publish, invalid-prepared rejection, lazy-row short-circuit on invalid rows, and exact-error propagation are all still asserted (lines 28-73) and behave identically to the prior semantics — the printer change is additive and isolated to presentation, not control flow or persistence.
+
+**Conclusion**: the printer fix is correctly scoped — it closes the identified gap (pr-str opacity wasn't guaranteed by `toString` alone) without altering persisted SQL, ack/receipt handling, or any other type's print dispatch, and both representation modes are tested for both the owned-statement and String-fallback paths.
