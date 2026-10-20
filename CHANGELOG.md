@@ -4,7 +4,8 @@
 
 - Reuse stock Jolt's in-range sorted-node accessors in the optional scalar
   shape-plan walker after its existing node/type/size checks. Avoid repeated
-  generic index validation without changing normalization, bounds or output.
+  generic index validation without changing normalization, bounds or output;
+  refresh the optional published codec pin to the tested implementation.
 
 - Add opt-in bounded scalar-text key-shape plans to the independent stock-Jolt
   codec component. Reuse hash geometry across distinct sorted maps with equal

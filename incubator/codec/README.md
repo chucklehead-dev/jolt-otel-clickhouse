@@ -108,7 +108,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "6288a7ccd04087f01061275367f7dabffd39cdba"
+   :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
    :deps/root "incubator/codec"}}}
 ```
 
