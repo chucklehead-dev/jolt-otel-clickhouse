@@ -25,6 +25,8 @@ standalone qualification and an upstream-only ecosystem.
   No mocked missing Var or checkout-local codec source in these controls.
 - `actionlint` passes the updated stock workflow, which also runs both real
   old/current dependency controls. No new exhaustive model run was requested.
+- Ordinary event-column gate on the same stock runtime, without the experimental
+  codec selected: **3 tests / 34 assertions**, no failures/errors.
 - One actual SDK/local Durable functional gate used the **published codec**,
   without the checkout-local codec alias or writer-side SDK/driver local roots.
   All four codec/traversal source resources were asserted to come from the
@@ -41,6 +43,13 @@ older runs as a speedup. Raw p50/p90/p95/p99 callback samples and allocation
 counters remain in `durable/writer.edn`. No target/population-tail, S3, actual
 Oscope/Langfuse ingestion, full app AOT or Rust-relative qualification is added.
 The ~25k p50 / ~20k p99 throughput goal remains unmet.
+
+Independent cumulative integration review: approved, no blockers. See
+`claude-canonical-review.txt` and `review-adjudication.md` for exact scope and
+Codex adjudication; the reviewer did not execute tests. Hosted stock run
+39373723185 passed at45574db, including actual standalone28/287 and the new
+published-component52/392 plus old/current capability controls. Full canonical
+PR145 checks remain a separate pre-merge gate.
 
 `run-durable.sh` pins the official binary/native checksums and older reader
 refs, uses committed fixture scripts and a new exact owned store, and retires
