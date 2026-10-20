@@ -1,0 +1,23 @@
+No write access is available in this session, so I'll deliver the review directly here.
+
+---
+
+**Delta review: flat-map specialization (json.ss) vs. frozen prototype, plus chdb.clj/tests**
+
+**json.ss (macro specialization vs. frozen `c6618f8` prototype)**
+
+The only structural change is in `emit!`'s map branch. The frozen prototype always called `(map! x depth)` for `pmap?`/`ffc-stock-sorted-map?` values, regardless of `flat-cache?`; `map!` internally computed `candidate? = (and flat-cache? ...)` and still carried `map-flat?`/`previous-flat` bookkeeping even when caching was disabled. The specialized version wraps `define-ffc-json-encoder` as a `define-syntax` macro taking `flat-cache?` as a literal, producing `ffc-json-encode/plain` (`#f`) and `ffc-json-encode/cached` (`#t`). `emit!` now branches on the literal: the cached variant still calls `map!` unconditionally (byte-for-byte identical to the old path), while the plain variant inlines `(byte! 123) ... (ffc-map-fold x map-entry! #f) ... (byte! 125)` directly, bypassing `map!`'s cache bookkeeping entirely.
+
+I traced this for equivalence: when `flat-cache?` is `#f`, the old `map!` path had `candidate?` always `#f` (short-circuited by `flat-cache?`), so `cached` was always `#f`, `track?` was always `#f`, and the end-of-map caching `when` block never fired. The only runtime-visible effects of going through `map!` in that case were the `container-depth`/`map-flat?` save-restore and byte emission — both exactly reproduced by the new inline branch. Output bytes, depth handling, and error conditions (`depth limit exceeded`) are identical. No cache bounds/eligibility/hit-limit logic changed; `map!`, `fragment!`, `tracked-map-entry!` are textually unchanged between the two files. `ffc-json-encode` (private dispatcher) and the public facades at the bottom of the file correctly route to `/cached` or `/plain` with matching 7-arg signatures; `flat_map_cache_test.clj`'s raw eval harness still targets the 8-arg dispatcher and get consistent walk/store counts. **No defects.**
+
+**chdb.clj — `load-experimental-span-codec!` (~1275) and exporter validation (~1885–1899)**
+
+Arities (0/1/2-arg) are preserved; the 2-arg call site always supplies both flags. `codec (if flat-map-cache? (open {:flat-map-cache? true}) (open))` correctly selects the optional-map constructor only when needed, matching `experimental.clj`'s `open-codec` arities. The payload-cache SDK-capability check (`cache-var` resolution) runs before any DB/storage acquisition, matching the "rejects missing capability before storage" test. The catch-block's `:type` selection (`cond flat-map-cache? ... payload-cache? ... :else ...`) correctly prioritizes flat-map-cache failure attribution, matching the "legacy zero-arg constructor" test (an arity exception from passing `{:flat-map-cache? true}` to a 0-arg-only mock is caught as `Throwable` and reported as flat-map-cache-unavailable).
+
+Exporter validation order (flat-map-cache? → payload-cache? → span-codec? → byte-limit → owned-statement-output? → insert-format → json-backend) correctly requires `boolean?` and gates each experimental flag on `experimental-span-codec?` being truthy, independent of evaluation order — each guard only throws when its own flag is set, so ordering doesn't create an authorization gap. No-option `open-codec` call is preserved for the disabled path. **No defects.**
+
+**Test file (`chdb_stock_payload_cache_test.clj`)**
+
+`invalid-flat-map-byte-cache-rejects-before-storage` and `unavailable-flat-map-byte-cache-rejects-before-storage` correctly isolate the strict-boolean-default-false and explicit-codec-required checks from the "unavailable capability" check, and confirm `(zero? @opens)` — rejection happens before `jdbc/connection`. `flat-map-byte-cache-composes-with-real-sdk-conversion` exercises both cache states and checks wire-identical output, consistent with the json.ss equivalence finding above. **No defects.**
+
+**Overall: no concrete correctness defects found in this delta.** The specialization is a pure dead-code-elimination refactor for the disabled-cache path; all cache semantics, bounds, and Clojure-side validation/dispatch are unchanged in observable behavior.

@@ -1,0 +1,484 @@
+diff --git a/.github/workflows/experimental-codec-stock.yml b/.github/workflows/experimental-codec-stock.yml
+index 9efe16d..aa9e691 100644
+--- a/.github/workflows/experimental-codec-stock.yml
++++ b/.github/workflows/experimental-codec-stock.yml
+@@ -45,7 +45,7 @@ jobs:
+           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' \
+             -m jolt.traversal.experimental-test
+           "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"] :deps {}}' -e \
+-            "(require 'jolt.codec.experimental-test 'clojure.test)
+-             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test)]
+-               (assert (pos? (:test r)))
++            "(require 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test 'clojure.test)
++             (let [r (clojure.test/run-tests 'jolt.codec.experimental-test 'jolt.codec.flat-map-cache-test)]
++               (assert (= 14 (:test r)))
+                (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))"
+diff --git a/CHANGELOG.md b/CHANGELOG.md
+index 550719a..7228651 100644
+--- a/CHANGELOG.md
++++ b/CHANGELOG.md
+@@ -2,6 +2,14 @@
+ 
+ ## Unreleased
+ 
++- Add an opt-in flat string-map byte cache to the experimental explicit codec.
++  Reuse complete encodings only within a record-encoding call, with fixed
++  entry/byte bounds and current output-size/depth checks. Scalar/nested APIs,
++  exporter defaults and persistence ordering are unchanged. The optional
++  exporter `:experimental-span-flat-map-cache?` flag composes with SDK map
++  conversion caching. Specialize plain/cached kernels from one Scheme body to
++  avoid allocating unused cache helpers on scalar/uncached paths.
++
+ - Expose the experimental stock-Jolt traversal kernel as an independent
+   `jolt.traversal.experimental` namespace, without loading JSON or exporter
+   dependencies. The explicit codec captures its native folds once; no runtime
+diff --git a/incubator/codec/README.md b/incubator/codec/README.md
+index 495d9ed..52e9cf2 100644
+--- a/incubator/codec/README.md
++++ b/incubator/codec/README.md
+@@ -58,6 +58,25 @@ needed. Public distribution and standalone/AOT builds remain separate gates.
+ ;; fresh byte[] containing "[1]\n[2]\n"
+ ```
+ 
++For record batches with repeated immutable String->String maps, opt in with
++`(codec/open-codec {:flat-map-cache? true})`. The cache belongs to each
++`encode-prefixed-records` invocation, not the codec object. It copies complete
++encoded maps into private fragments: at most 64 insertions, 128KiB of fragment
++bytes (plus bounded table/entry overhead), and 4KiB per fragment. Only ordinary persistent maps with at least eight entries
++are considered. Non-flat maps, sorted maps, and maps crossing buffer chunks
++use the existing serialization path. Hits still enforce current output/depth
++limits. There is no caller-provided raw JSON, retained source wrapper/metadata,
++or mutable output alias. Source maps and strings must remain immutable during
++the call. Scalar/nested encoders are unchanged; nested calls have separate state.
++This option is experimental and remains off by default.
++
++The exporter selects it separately with `:experimental-span-flat-map-cache? true`
++(requires `:experimental-span-codec? true` and its alias). It can compose with
++`:experimental-span-payload-cache? true`, which caches SDK normalization rather
++than wire bytes. Neither option changes admission or persistence acknowledgement.
++Missing requested capabilities reject before database acquisition; defaults do
++not require the incubating library.
++
+ The byte limit excludes the ASCII prefix and includes newlines. Failure returns
+ no partial byte array and stops before asking for another record. Projection
+ and an input sequence can have their own effects; those effects are not rolled
+diff --git a/incubator/codec/src/jolt/codec/experimental.clj b/incubator/codec/src/jolt/codec/experimental.clj
+index 42cfa09..05a5b67 100644
+--- a/incubator/codec/src/jolt/codec/experimental.clj
++++ b/incubator/codec/src/jolt/codec/experimental.clj
+@@ -25,17 +25,27 @@
+             (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?) (let () " json-source
+                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
+                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
+-                 " ffc-json-nested-text)))"))
+-          [scalar project qualify nested] (apply factory (traversal/native-kernels walk))]
++                 " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes)))"))
++          [scalar project qualify nested cached-project] (apply factory (traversal/native-kernels walk))]
+       (when-not (and (qualify (byte-array 0))
+                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
+         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
+       (qualify-nested-text! scalar nested)
+-      [scalar project (traversal/native-pmap-folder walk) nested])))
++      [scalar project (traversal/native-pmap-folder walk) nested cached-project])))
+ 
+ (deftype ^:private Codec [tag scalar project fold nested])
+-(defn open-codec []
+-  (let [[scalar project fold nested] @backend] (Codec. seal scalar project fold nested)))
++(defn open-codec
++  "Open a stateless explicit codec. Optional :flat-map-cache? (default false)
++  enables bounded, per-invocation String->String pmap byte reuse in record
++  encoding only. Scalar/nested encoders keep their existing path. No global
++  cache or raw JSON input; source collections/strings must remain immutable."
++  ([] (open-codec {}))
++  ([options]
++   (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
++                  (boolean? (get options :flat-map-cache? false)))
++     (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
++   (let [[scalar project fold nested cached-project] @backend]
++     (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested))))
+ (defn- require-codec! [codec]
+   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
+     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
+diff --git a/incubator/codec/src/jolt/codec/json.ss b/incubator/codec/src/jolt/codec/json.ss
+index 9403a13..897f5b6 100644
+--- a/incubator/codec/src/jolt/codec/json.ss
++++ b/incubator/codec/src/jolt/codec/json.ss
+@@ -5,7 +5,10 @@
+ ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
+ ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
+ (define-record-type ffc-json-text (fields bytes))
+-(define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix)
++(define-syntax define-ffc-json-encoder
++  (syntax-rules ()
++    ((_ encode-name flat-cache?)
++     (define (encode-name value limit max-depth lines? escape-unicode? project prefix)
+   (unless (and (fixnum? limit) (fx>=? limit 0)
+                (fixnum? max-depth) (fx>=? max-depth 0))
+     (error 'ffc-json "invalid byte/depth limit"))
+@@ -17,7 +20,10 @@
+          (_ (unless (fixnum? budget) (error 'ffc-json "byte limit too large")))
+          (tail (make-bytevector (min (if lines? 65536 1024) budget)))
+         (used 0) (completed 0) (parts '()) (container-depth 0)
+-        (digits (make-bytevector 21)))
++        (digits (make-bytevector 21))
++        ;; Per-call weak roots; only independently copied, complete fragments.
++        ;; Fixed bounds: 64 insertions, 128KiB retained, <=4KiB per fragment.
++        (map-cache #f) (map-insertions 0) (map-retained 0) (map-flat? #f))
+     (define (ensure-space!)
+       (when (fx=? used (bytevector-length tail))
+         (when (fx>=? (fx+ completed used) budget) (error 'ffc-json "byte limit exceeded"))
+@@ -132,6 +138,49 @@
+     (define (map-entry! k v printed?)
+       (when printed? (byte! 44)) (key! k) (byte! 58)
+       (emit! v (fx+ container-depth 1)) #t)
++    (define (tracked-map-entry! k v printed?)
++      ;; Piggyback eligibility on the existing walk, never a second traversal.
++      (unless (and (string? k) (string? v)) (set! map-flat? #f))
++      (map-entry! k v printed?))
++    (define (fragment! bytes depth)
++      ;; Every eligible map is nonempty and its scalar values are one level
++      ;; below it. Reusing bytes must not bypass the current call's limits.
++      (when (fx>=? depth max-depth) (error 'ffc-json "depth limit exceeded"))
++      (let ((n (bytevector-length bytes)))
++        (when (fx>? n (fx- budget (fx+ completed used)))
++          (error 'ffc-json "byte limit exceeded"))
++        (let loop ((offset 0))
++          (unless (fx=? offset n)
++            (ensure-space!)
++            (let ((take (fxmin (fx- n offset) (fx- (bytevector-length tail) used))))
++              (bytevector-copy! bytes offset tail used take)
++              (set! used (fx+ used take))
++              (loop (fx+ offset take)))))))
++    (define (map! m depth)
++      (let* ((candidate? (and flat-cache? (pmap? m) (fx>=? (pmap-cnt m) 8)))
++             (cached (and candidate? map-cache (hashtable-ref map-cache (pmap-root m) #f))))
++        (if cached (fragment! cached depth)
++            (let ((previous container-depth) (previous-flat map-flat?)
++                  (start-tail tail) (start used)
++                  (track? (and candidate? (fx<? map-insertions 64) (fx<? map-retained 131072))))
++              (set! container-depth depth)
++              (set! map-flat? #t)
++              (byte! 123)
++              (ffc-map-fold m (if track? tracked-map-entry! map-entry!) #f)
++              (byte! 125)
++              ;; A map crossing chunks simply declines. Capture no partial
++              ;; fragment, source map wrapper/metadata, or mutable output alias.
++              (when (and track? map-flat? (eq? start-tail tail))
++                (let ((charge (fx- used start)))
++                  (when (and (fx<=? charge 4096) (fx<=? (fx+ map-retained charge) 131072))
++                    (let ((bytes (make-bytevector charge)))
++                      (bytevector-copy! tail start bytes 0 charge)
++                      (unless map-cache (set! map-cache (make-weak-eq-hashtable)))
++                      (hashtable-set! map-cache (pmap-root m) bytes)
++                      (set! map-insertions (fx+ map-insertions 1))
++                      (set! map-retained (fx+ map-retained charge))))))
++              (set! container-depth previous)
++              (set! map-flat? previous-flat)))))
+     (define (vector-entry! v printed?)
+       (when printed? (byte! 44)) (emit! v (fx+ container-depth 1)) #t)
+     (define (emit! x depth)
+@@ -146,12 +195,16 @@
+        ((keyword? x) (string! (keyword-t-name x)))
+        ((symbol-t? x) (string! (symbol-t-name x)))
+        ((or (pmap? x) (ffc-stock-sorted-map? x))
+-        (byte! 123)
+-        (let ((previous container-depth))
+-          (set! container-depth depth)
+-          (ffc-map-fold x map-entry! #f)
+-          (set! container-depth previous))
+-        (byte! 125))
++        ;; Macro specialization keeps cache state/closures out of scalar and
++        ;; uncached calls. Both variants share this one algorithm definition.
++        (if flat-cache? (map! x depth)
++            (begin
++              (byte! 123)
++              (let ((previous container-depth))
++                (set! container-depth depth)
++                (ffc-map-fold x map-entry! #f)
++                (set! container-depth previous))
++              (byte! 125))))
+        ((pvec? x)
+         (byte! 91)
+         (let ((previous container-depth))
+@@ -176,19 +229,29 @@
+               (loop (cdr remaining) (fx+ offset (bytevector-length part))))))
+       ;; Stock runtime constructor, not the fork's na-owned-bv->bytearray.
+       ;; out is newly allocated and no encoder alias survives this call.
+-      (make-jolt-array out 'byte))))
++      (make-jolt-array out 'byte)))))))
++
++(define-ffc-json-encoder ffc-json-encode/plain #f)
++(define-ffc-json-encoder ffc-json-encode/cached #t)
++;; Private dispatcher for mechanism tests. Public facades select a specialized
++;; entry point directly, not a per-map mode switch in the disabled path.
++(define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix flat-cache?)
++  ((if flat-cache? ffc-json-encode/cached ffc-json-encode/plain)
++   value limit max-depth lines? escape-unicode? project prefix))
+ 
+ (define (ffc-json-bytes value limit max-depth)
+-  (ffc-json-encode value limit max-depth #f #f #f ""))
++  (ffc-json-encode/plain value limit max-depth #f #f #f ""))
+ (define (ffc-json-lines-bytes rows limit max-depth)
+-  (ffc-json-encode rows limit max-depth #t #f #f ""))
++  (ffc-json-encode/plain rows limit max-depth #t #f #f ""))
+ (define (ffc-json-ascii-bytes value limit max-depth)
+-  (ffc-json-encode value limit max-depth #f #t #f ""))
++  (ffc-json-encode/plain value limit max-depth #f #t #f ""))
+ (define (ffc-json-nested-text value limit max-depth)
+   (make-ffc-json-text (jolt-array-vec (ffc-json-ascii-bytes value limit max-depth))))
+ (define (ffc-json-ascii-lines-bytes rows limit max-depth)
+-  (ffc-json-encode rows limit max-depth #t #t #f ""))
++  (ffc-json-encode/plain rows limit max-depth #t #t #f ""))
+ (define (ffc-json-project-ascii-lines-bytes rows project limit max-depth)
+-  (ffc-json-encode rows limit max-depth #t #t project ""))
++  (ffc-json-encode/plain rows limit max-depth #t #t project ""))
+ (define (ffc-json-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
+-  (ffc-json-encode rows limit max-depth #t #t project prefix))
++  (ffc-json-encode/plain rows limit max-depth #t #t project prefix))
++(define (ffc-json-cached-project-prefixed-ascii-lines-bytes prefix rows project limit max-depth)
++  (ffc-json-encode/cached rows limit max-depth #t #t project prefix))
+diff --git a/incubator/codec/test/jolt/codec/flat_map_cache_test.clj b/incubator/codec/test/jolt/codec/flat_map_cache_test.clj
+new file mode 100644
+index 0000000..483957d
+--- /dev/null
++++ b/incubator/codec/test/jolt/codec/flat_map_cache_test.clj
+@@ -0,0 +1,105 @@
++(ns jolt.codec.flat-map-cache-test
++  (:require [clojure.test :refer [deftest is]]
++            [jolt.codec.experimental :as codec]
++            [jolt.traversal.experimental :as traversal]
++            [jolt.scheme :as scheme]))
++
++(defn fixture []
++  (into {} (map (fn [i] [(str "key-" i) (str "text/\\\"\nλ😀-" i)]) (range 8))))
++(defn text [bytes] (String. bytes "UTF-8"))
++(defn rejects? [f] (try (f) false (catch Throwable _ true)))
++(defn emit [c rows limit] (codec/encode-prefixed-records c "SQL\n" rows identity limit))
++
++;; Mechanism-only instrumentation. Count real map walks and cache insertions
++;; inside one isolated native kernel; never installed in production globals.
++(def instrumented
++  (delay
++    (let [factory (scheme/eval-string
++                    (str "(lambda (real-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?)"
++                         " (let ((walks 0) (stores 0) (charged 0) (real-set! hashtable-set!))"
++                         " (let ((ffc-map-fold (lambda (m v a) (set! walks (+ walks 1)) (real-fold m v a)))"
++                         "       (hashtable-set! (lambda (h k v) (set! stores (+ stores 1))"
++                         "                         (set! charged (+ charged (bytevector-length v))) (real-set! h k v))))"
++                         " (let () " @#'codec/json-source
++                         " (lambda (enabled? rows limit depth)"
++                         "   (set! walks 0) (set! stores 0) (set! charged 0)"
++                         "   (let ((out (ffc-json-encode rows limit depth #t #t #f \"\" enabled?)))"
++                         "      (jolt-vector out walks stores charged)))))))"))]
++      (apply factory (traversal/native-kernels (traversal/open-traversal))))))
++
++(deftest repeated-flat-maps-reuse-complete-bytes-not-walks
++  (let [m (fixture) rows [m (with-meta m {:private :metadata}) m]
++        [off walks-off stores-off] (@instrumented false rows 100000 128)
++        [on walks-on stores-on] (@instrumented true rows 100000 128)]
++    (is (= (text off) (text on)))
++    (is (= [3 0 1 1] [walks-off stores-off walks-on stores-on]))
++    (let [[_ visits] (@instrumented true [m (assoc m "key-0" "changed") m] 100000 128)]
++      (is (= 2 visits)))
++    (doseq [unsupported [(assoc m "key-0" false) (assoc m "key-0" {"nested" 1}) (into (sorted-map) m)]]
++      (let [[a _ _] (@instrumented false [unsupported unsupported] 100000 128)
++            [b _ stores] (@instrumented true [unsupported unsupported] 100000 128)]
++        (is (= (text a) (text b)))
++        (is (zero? stores))))))
++
++(deftest insertion-fragment-and-retained-byte-bounds
++  (let [base (fixture)
++        small (mapv #(assoc base "id" (str %)) (range 500))
++        [_ walks stores charged] (@instrumented true
++                                  (into small [(first small) (last small)]) 1000000 128)]
++    (is (= 501 walks))
++    (is (= 64 stores))
++    (is (<= charged 131072))
++    (let [large (assoc base "large" (apply str (repeat 5000 "x")))
++          [a _] (@instrumented false [large large] 1000000 128)
++          [b walks stores] (@instrumented true [large large] 1000000 128)]
++      (is (= (text a) (text b)))
++      (is (= [2 0] [walks stores])))
++    (let [rows (mapv #(assoc base "large" (str % (apply str (repeat 3000 "x")))) (range 100))
++          [a _] (@instrumented false rows 1000000 128)
++          [b _ stores charged] (@instrumented true rows 1000000 128)]
++      (is (= (text a) (text b)))
++      (is (pos? stores))
++      (is (< stores 64))
++      (is (<= charged 131072)))))
++
++(deftest cached-map-does-not-bypass-current-depth-limit
++  (let [m (fixture) off (codec/open-codec) on (codec/open-codec {:flat-map-cache? true})
++        wrap (fn [n] (nth (iterate vector m) n))]
++    ;; The first record warms the root at shallow depth; the second hits it
++    ;; exactly at the maximum map depth, but its values would be too deep.
++    (doseq [c [off on]]
++      (is (rejects? #(emit c [m (wrap 128)] 100000))))
++    (is (= (text (emit off [m (wrap 127)] 100000))
++           (text (emit on [m (wrap 127)] 100000))))))
++
++(deftest exact-budget-prefix-and-chunk-boundaries-on-hits
++  (let [m (fixture) off (codec/open-codec) on (codec/open-codec {:flat-map-cache? true})]
++    (doseq [prefix-size [0 1 65000 65530 65535 65536 65537]
++            padding [0 1 100]]
++      (let [prefix (apply str (repeat prefix-size "p"))
++            rows [m (apply str (repeat padding "x")) m m]
++            a (codec/encode-prefixed-records off prefix rows identity 100000)
++            size (- (alength a) prefix-size)]
++        (is (= (text a) (text (codec/encode-prefixed-records on prefix rows identity size))))
++        (is (rejects? #(codec/encode-prefixed-records on prefix rows identity (dec size))))))))
++
++(deftest failure-stops-producer-and-nested-calls-have-independent-storage
++  (let [m (fixture) c (codec/open-codec {:flat-map-cache? true})
++        single-size (- (alength (emit c [m] 100000)) 4)
++        seen (atom [])
++        source (lazy-seq (cons m (lazy-seq (cons m (lazy-seq (swap! seen conj :third) [m])))))]
++    (is (rejects? #(codec/encode-prefixed-records c "SQL\n" source
++                    (fn [x] (swap! seen conj :project) x) (+ single-size 10))))
++    (is (= [:project :project] @seen))
++    (let [inner (atom nil)
++          a (codec/encode-prefixed-records c "" [m m]
++              (fn [x] (reset! inner (emit c [x x] 100000)) x) 100000)
++          expected (text a)]
++      (aset-byte @inner 0 (byte 0))
++      (is (= expected (text a)))
++      (aset-byte a 0 (byte 0))
++      (is (= expected (text (codec/encode-prefixed-records c "" [m m] identity 100000)))))))
++
++(deftest invalid-options-reject
++  (doseq [options [nil {:flat-map-cache? nil} {:flat-map-cache? "yes"} {:other true}]]
++    (is (rejects? #(codec/open-codec options)))))
+diff --git a/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj b/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj
+index 62f06dc..07dabec 100644
+--- a/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj
++++ b/incubator/codec/test/otel/exporter/chdb_stock_payload_cache_test.clj
+@@ -3,7 +3,8 @@
+             [otel.exporter.chdb :as e]
+             [otel.exporter.chdb.compact-format :as compact]
+             [jdbc.chdb.owned-statement :as owned]
+-            [jdbc.core :as jdbc]))
++            [jdbc.core :as jdbc]
++            [jolt.codec.experimental :as codec]))
+ 
+ (defn fixture []
+   (into {} (map (fn [i] [(str "key-" i) (case (mod i 3) 0 "λ" 1 false i)]) (range 16))))
+@@ -110,3 +111,36 @@
+         (is (= :otel.exporter.chdb/experimental-span-payload-cache-unavailable
+                (try (e/exporter valid-options) nil (catch Throwable error (:type (ex-data error)))))))
+       (is (zero? @opens)))))
++
++(deftest flat-map-byte-cache-composes-with-real-sdk-conversion
++  (let [source (fixture) wire (atom [])]
++    (with-redefs-fn {#'compact/require-order! (fn [& _])
++                    #'e/execute-durable-sql! (fn [_ statement] (swap! wire conj (owned/text statement)))}
++      (fn []
++        (with-bindings {#'e/*json-backend* :native-guarded-byte-batch}
++          (doseq [enabled? [false true]]
++            (let [context (#'e/load-experimental-span-codec! true enabled?)]
++              (#'e/execute-closed-compact-rows! :conn "otel_traces" ["x"] [source source source]
++                                               checked context vector cached-project))))
++        (is (= 2 (count @wire)))
++        (is (apply = @wire))))))
++
++(deftest invalid-flat-map-byte-cache-rejects-before-storage
++  (let [opens (atom 0)]
++    (with-redefs [jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "storage" {})))]
++      (doseq [options [{:experimental-span-flat-map-cache? true}
++                      (assoc valid-options :experimental-span-flat-map-cache? nil)
++                      (assoc valid-options :experimental-span-flat-map-cache? "yes")]]
++        (is (= :otel.exporter.chdb/invalid-experimental-span-flat-map-cache
++               (try (e/exporter options) nil (catch Throwable error (:type (ex-data error)))))))
++      (is (zero? @opens)))))
++
++(deftest unavailable-flat-map-byte-cache-rejects-before-storage
++  (let [opens (atom 0)]
++    ;; Simulate a legacy codec with only its old zero-argument constructor.
++    (with-redefs [codec/open-codec (fn [] (throw (ex-info "legacy constructor" {})))
++                  jdbc/connection (fn [& _] (swap! opens inc) (throw (ex-info "storage" {})))]
++      (is (= :otel.exporter.chdb/experimental-span-flat-map-cache-unavailable
++             (try (e/exporter (assoc valid-options :experimental-span-flat-map-cache? true))
++               nil (catch Throwable error (:type (ex-data error))))))
++      (is (zero? @opens)))))
+diff --git a/src/otel/exporter/chdb.clj b/src/otel/exporter/chdb.clj
+index ea1364e..384bd23 100644
+--- a/src/otel/exporter/chdb.clj
++++ b/src/otel/exporter/chdb.clj
+@@ -1273,8 +1273,10 @@
+                              exemplars ["Flags" "Min" "Max" "AggregationTemporality"]))}))
+ 
+ (defn- load-experimental-span-codec!
+-  ([] (load-experimental-span-codec! false))
++  ([] (load-experimental-span-codec! false false))
+   ([payload-cache?]
++   (load-experimental-span-codec! payload-cache? false))
++  ([payload-cache? flat-map-cache?]
+   (try
+     (require 'jolt.codec.experimental)
+     (let [open (ns-resolve 'jolt.codec.experimental 'open-codec)
+@@ -1284,7 +1286,7 @@
+           prepare (when prepare-var @prepare-var)
+           _ (when-not (ifn? prepare)
+               (throw (ex-info "Experimental codec requires private WAL preparation" {})))
+-          codec (open)
++          codec (if flat-map-cache? (open {:flat-map-cache? true}) (open))
+           folder ((ns-resolve 'jolt.codec.experimental 'native-map-folder) codec)
+           cache-var (when payload-cache?
+                       (ns-resolve 'otel.any-value 'scalar-string-map-payload-converter))
+@@ -1303,11 +1305,14 @@
+        :folder folder :attributes attributes :prepare-statement prepare
+        :payload-cache-factory cache-factory})
+     (catch Throwable _
+-      (throw (ex-info (if payload-cache?
++      (throw (ex-info (if flat-map-cache?
++                        "Experimental span flat-map cache requires compatible codec/SDK capabilities"
++                        (if payload-cache?
+                         "Experimental span payload cache requires a compatible SDK and qualified runtime"
+-                        "Experimental span codec requires its source alias and a qualified runtime")
+-                      {:type (if payload-cache? ::experimental-span-payload-cache-unavailable
+-                                 ::experimental-span-codec-unavailable)}))))))
++                        "Experimental span codec requires its source alias and a qualified runtime"))
++                      {:type (cond flat-map-cache? ::experimental-span-flat-map-cache-unavailable
++                                   payload-cache? ::experimental-span-payload-cache-unavailable
++                                   :else ::experimental-span-codec-unavailable)}))))))
+ 
+ (defn- direct-metric-layout? [snapshot]
+   (and (:durable? snapshot)
+@@ -1862,18 +1867,25 @@
+   :experimental-span-payload-cache? defaults false. True additionally requires
+   the explicit codec and a compatible SDK. Reuses bounded primitive-map
+   conversions within one payload only. Compiler-woven converter bodies remain
+-  unqualified; no default or cross-thread cache is installed."
++  unqualified; no default or cross-thread cache is installed.
++  :experimental-span-flat-map-cache? defaults false. True requires the explicit
++  codec and enables bounded complete-map byte reuse within each record encoding.
++  It can compose with the SDK payload cache but changes no persistence contract."
+   ([] (exporter {}))
+   ([{:keys [connection db-spec create-schema? signals durable?
+             persistence-barrier typed-span-descriptors typed-log-descriptors
+             typed-gauge-descriptors typed-sum-descriptors typed-histogram-descriptors
+             durable-phase-receipts json-backend insert-format owned-statement-output? datetime64-wire
+-            experimental-span-codec? experimental-span-payload-cache?]
++            experimental-span-codec? experimental-span-payload-cache? experimental-span-flat-map-cache?]
+      limit-override :max-insert-bytes
+      :or {db-spec "chdb::memory:" create-schema? true
+           signals #{:spans :metrics} durable? false json-backend :configured datetime64-wire :auto
+           insert-format :json-each-row owned-statement-output? false experimental-span-codec? false
+-          experimental-span-payload-cache? false}}]
++          experimental-span-payload-cache? false experimental-span-flat-map-cache? false}}]
++   (when-not (and (boolean? experimental-span-flat-map-cache?)
++                  (or (not experimental-span-flat-map-cache?) experimental-span-codec?))
++     (throw (ex-info "Experimental span flat-map cache requires the explicit span codec"
++                     {:type ::invalid-experimental-span-flat-map-cache})))
+    (when-not (and (boolean? experimental-span-payload-cache?)
+                   (or (not experimental-span-payload-cache?) experimental-span-codec?))
+      (throw (ex-info "Experimental span payload cache requires the explicit span codec"
+@@ -1907,7 +1919,8 @@
+    ;; Resolve before database acquisition or DDL. Ordinary consumers never load
+    ;; the incubating namespace/resources; missing support is not a downgrade.
+    (let [experimental-span-codec (when experimental-span-codec?
+-                                   (load-experimental-span-codec! experimental-span-payload-cache?))]
++                                   (load-experimental-span-codec! experimental-span-payload-cache?
++                                                                  experimental-span-flat-map-cache?))]
+    ;; Resolve an explicitly selected backend before opening a database or DDL.
+    ;; Never silently downgrade an unavailable native backend.
+    (when (and experimental-span-codec
