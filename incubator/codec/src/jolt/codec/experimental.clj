@@ -25,17 +25,27 @@
             (str "(lambda (ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map?) (let () " json-source
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
-                 " ffc-json-nested-text)))"))
-          [scalar project qualify nested] (apply factory (traversal/native-kernels walk))]
+                 " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes)))"))
+          [scalar project qualify nested cached-project] (apply factory (traversal/native-kernels walk))]
       (when-not (and (qualify (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
-      [scalar project (traversal/native-pmap-folder walk) nested])))
+      [scalar project (traversal/native-pmap-folder walk) nested cached-project])))
 
 (deftype ^:private Codec [tag scalar project fold nested])
-(defn open-codec []
-  (let [[scalar project fold nested] @backend] (Codec. seal scalar project fold nested)))
+(defn open-codec
+  "Open a stateless explicit codec. Optional :flat-map-cache? (default false)
+  enables bounded, per-invocation String->String pmap byte reuse in record
+  encoding only. Scalar/nested encoders keep their existing path. No global
+  cache or raw JSON input; source collections/strings must remain immutable."
+  ([] (open-codec {}))
+  ([options]
+   (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
+                  (boolean? (get options :flat-map-cache? false)))
+     (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
+   (let [[scalar project fold nested cached-project] @backend]
+     (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested))))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))

@@ -58,6 +58,18 @@ needed. Public distribution and standalone/AOT builds remain separate gates.
 ;; fresh byte[] containing "[1]\n[2]\n"
 ```
 
+For record batches with repeated immutable String->String maps, opt in with
+`(codec/open-codec {:flat-map-cache? true})`. The cache belongs to each
+`encode-prefixed-records` invocation, not the codec object. It copies complete
+encoded maps into private fragments: at most 64 insertions, 128KiB total and
+4KiB per fragment. Only ordinary persistent maps with at least eight entries
+are considered. Non-flat maps, sorted maps, and maps crossing buffer chunks
+use the existing serialization path. Hits still enforce current output/depth
+limits. There is no caller-provided raw JSON, retained source wrapper/metadata,
+or mutable output alias. Source maps and strings must remain immutable during
+the call. Scalar/nested encoders are unchanged; nested calls have separate state.
+This option is experimental and remains off by default.
+
 The byte limit excludes the ASCII prefix and includes newlines. Failure returns
 no partial byte array and stops before asking for another record. Projection
 and an input sequence can have their own effects; those effects are not rolled
