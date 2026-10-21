@@ -1,0 +1,45 @@
+;; Research replacement of key! only. Values, collection order, depth checks,
+;; numeric/Unicode rules, output ownership and policy remain in the old kernel.
+;; <=64 immutable keys of <=64 scalar chars, <=1024 bytes/fragment, <=64KiB.
+;; Nested calls share only their explicit payload scope; no global table.
+(define key-table (if shared-cache? (ffc-fragments-key-table shared-state) #f))
+(define key-count (if shared-cache? (ffc-fragments-key-count shared-state) 0))
+(define key-bytes (if shared-cache? (ffc-fragments-key-bytes shared-state) 0))
+(define (key-fragment! bytes)
+  (let ((n (bytevector-length bytes)))
+    (when (fx>? n (fx- budget (fx+ completed used)))
+      (error 'ffc-json "byte limit exceeded"))
+    (let loop ((offset 0))
+      (unless (fx=? offset n)
+        (ensure-space!)
+        (let ((take (fxmin (fx- n offset) (fx- (bytevector-length tail) used))))
+          (bytevector-copy! bytes offset tail used take)
+          (set! used (fx+ used take))
+          (loop (fx+ offset take)))))))
+(define (key! k)
+  (let ((text (cond ((string? k) k)
+                    ((keyword? k) (keyword-t-name k))
+                    ((symbol-t? k) (symbol-t-name k))
+                    (else (error 'ffc-json "unsupported object key")))))
+    (if (fx>? (string-length text) 64)
+        (string! text)
+        (let ((cached (and key-table (hashtable-ref key-table text #f))))
+          (if cached
+              (key-fragment! cached)
+              (let ((start-tail tail) (start used))
+                (string! text)
+                ;; A key crossing chunks declines. Capture only a complete
+                ;; independent byte fragment, not an encoder buffer slice.
+                (when (and (fx<? key-count 64) (eq? start-tail tail))
+                  (let ((charge (fx- used start)))
+                    (when (and (fx<=? charge 1024) (fx<=? (fx+ key-bytes charge) 65536))
+                      (let ((bytes (make-bytevector charge)))
+                        (bytevector-copy! tail start bytes 0 charge)
+                        (unless key-table (set! key-table (make-hashtable string-hash string=?)))
+                        (hashtable-set! key-table text bytes)
+                        (set! key-count (fx+ key-count 1))
+                        (set! key-bytes (fx+ key-bytes charge))
+                        (when shared-cache?
+                          (ffc-fragments-key-table-set! shared-state key-table)
+                          (ffc-fragments-key-count-set! shared-state key-count)
+                          (ffc-fragments-key-bytes-set! shared-state key-bytes))))))))))))
