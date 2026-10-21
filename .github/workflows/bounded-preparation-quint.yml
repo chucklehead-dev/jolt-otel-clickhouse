@@ -1,0 +1,41 @@
+name: bounded-preparation-quint
+
+on:
+  push:
+    paths:
+      - .github/workflows/bounded-preparation-quint.yml
+      - formal/quint/bounded-preparation.md
+      - formal/quint/bounded-preparation-type-sketch.md
+      - scripts/check-bounded-preparation-quint.sh
+  pull_request:
+    paths:
+      - .github/workflows/bounded-preparation-quint.yml
+      - formal/quint/bounded-preparation.md
+      - formal/quint/bounded-preparation-type-sketch.md
+      - scripts/check-bounded-preparation-quint.sh
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  core-model:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install pinned model tools
+        run: |
+          npm install --global @informalsystems/quint@0.32.0
+          go install github.com/driusan/lmt@62fe18f2f6a6e11c158ff2b2209e1082a4fcd59c
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Check preparation/publication core (not complete lifecycle coverage)
+        run: bash scripts/check-bounded-preparation-quint.sh

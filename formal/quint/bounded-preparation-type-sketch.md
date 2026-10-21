@@ -1,7 +1,9 @@
 # Bounded span preparation: proposed scope and types
 
-**Revision B: awaiting type/scope approval; no model logic or concurrent
-production implementation yet.** Exporter #141; parent `05fa8b8`.
+**Revision B: type/scope and implementation scope approved by the user on
+2026-10-21.** Exporter #141; approved proposal `1ac581f` (parent `05fa8b8`).
+The adjacent `bounded-preparation.md` records incremental executable coverage;
+approval does not itself qualify a concurrent production implementation.
 
 ## Why this is adjacent to the existing models
 
