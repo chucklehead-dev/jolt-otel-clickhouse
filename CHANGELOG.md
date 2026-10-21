@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Write validated JSON escape pairs, Unicode escapes and integer digit runs in
+  bounded bursts in the optional stock-Jolt codec. Keep byte-at-a-time fallback
+  at chunk/budget boundaries, with unchanged wire bytes and failure ordering.
+
 - Reuse stock Jolt's in-range sorted-node accessors in the optional scalar
   shape-plan walker after its existing node/type/size checks. Avoid repeated
   generic index validation without changing normalization, bounds or output;

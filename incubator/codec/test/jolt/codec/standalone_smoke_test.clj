@@ -8,18 +8,20 @@
             [jolt.codec.nested-fragment-test]
             [jolt.codec.record-test]
             [jolt.codec.scalar-text.experimental-test]
-            [jolt.codec.flat-map-cache-test]))
+            [jolt.codec.flat-map-cache-test]
+            [jolt.codec.escape-burst-test]))
 
 (defn -main [& _]
   (assert (nil? (find-ns 'otel.exporter.chdb)))
   (let [result (test/run-tests 'jolt.traversal.experimental-test
                              'jolt.codec.experimental-test
                              'jolt.codec.flat-map-cache-test
+                             'jolt.codec.escape-burst-test
                              'jolt.traversal.leaf-block-test
                              'jolt.codec.row-view-test
                              'jolt.codec.nested-fragment-test
                              'jolt.codec.record-test
                              'jolt.codec.scalar-text.experimental-test)]
-    (assert (= 39 (:test result)))
+    (assert (= 43 (:test result)))
     (assert (nil? (find-ns 'otel.exporter.chdb)))
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
