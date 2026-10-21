@@ -76,11 +76,17 @@ pair is only a screen; qualify promising changes with matched order controls.
 For a separate preparation diagnostic, append `phase-counters` after the mode
 argument on the `overlap` arm. It adds two host-counter snapshots per preparation
 and stores scalar deltas in `:preparation-host-delta` on each sample. The default
-`none` takes no additional phase snapshots. These process-wide, non-atomic
-counters include concurrent publisher/collector work; they do not isolate
-preparation-thread CPU or allocation. A falling live heap is not an allocation
+`none` takes no additional phase snapshots. Memory/GC counters are process-wide
+and non-atomic, so concurrent publisher/collector work can contribute to them.
+On this pinned Chez runtime, `cpu-nanos` comes from `sstats-cpu`, populated by
+`current-time 'time-thread`: it is current OS-thread CPU, not process CPU.
+This single SDK preparer does not concurrently prepare two batches; it overlaps
+one preparation with earlier publication. Allocation is not thread-isolated.
+A falling live heap is not an allocation
 reduction. Diagnostic runs have extra observer overhead and must not replace
 the matched throughput receipts above.
+See the separate [preparation CPU/GC diagnostic](PREPARATION-DIAGNOSTIC.md)
+for native observations and the correction to the first diagnostic's CPU label.
 
 ## Independent recovery
 

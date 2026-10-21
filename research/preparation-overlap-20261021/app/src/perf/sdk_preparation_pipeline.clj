@@ -54,7 +54,8 @@
    :gc-count (- (:gc-count after) (:gc-count before))
    :gc-real-nanos (- (:gc-nanos after) (:gc-nanos before))
    ;; Heap is current, not cumulative. Add reclaimed bytes only as a coarse
-   ;; allocation estimate; counters are non-atomic and process-wide.
+   ;; allocation estimate; memory/GC counters are process-wide and non-atomic.
+   ;; On pinned Chez, host cpu-nanos is CURRENT OS THREAD time, not process CPU.
    :estimated-allocated-bytes (- (+ (:heap after) (:gc-bytes after))
                                 (+ (:heap before) (:gc-bytes before)))})
 
@@ -125,7 +126,9 @@
                   (double (* n rounds)))
                :counter-snapshots-non-atomic true :population-tail-qualified false
                :preparation-host-diagnostics? profile?
-               :phase-counters-scope :process-wide-not-thread-local
+               :phase-counters-scope {:cpu :current-os-thread
+                                      :memory-and-gc :process-wide
+                                      :snapshots :non-atomic}
                :diagnostic-printing-in-window true
                :independent-recovery-qualified false :native-package "26.9.0"}))))
 
