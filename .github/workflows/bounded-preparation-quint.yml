@@ -37,5 +37,5 @@ jobs:
           npm install --global @informalsystems/quint@0.32.0
           go install github.com/driusan/lmt@62fe18f2f6a6e11c158ff2b2209e1082a4fcd59c
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
-      - name: Check preparation/publication core (not complete lifecycle coverage)
+      - name: Check preparation, positioned flush and two-role shutdown (sampled)
         run: bash scripts/check-bounded-preparation-quint.sh
