@@ -14,6 +14,13 @@
                (<= (vector-length values) 128))
     (error 'scalar-text-view "invalid trusted view"))
   (make-ffc-json-scalar-map template values))
+;; Trusted SDK admission has already checked keys, scalar kinds, bounds and
+;; ORIGINAL policy roots. Own a metadata-free header, not the source wrapper;
+;; immutable input nodes/Strings remain referenced only by the returned view.
+(define (ffc-json-direct-scalar-map-box m)
+  (unless (and (pmap? m) (fx>? (pmap-cnt m) 8) (fx<=? (pmap-cnt m) 128))
+    (error 'scalar-text-view "invalid trusted ordinary map"))
+  (make-ffc-json-scalar-map (make-pmap (pmap-root m) (pmap-cnt m)) #f))
 ;; Explicit row view: a private fixed-width native vector plus an immutable
 ;; persistent suffix. Neither native storage nor a mutable output alias escapes.
 (define-record-type ffc-json-row (fields base suffix))
@@ -250,6 +257,14 @@
               ((fixnum? value) (byte! 34) (integer! value) (byte! 34))
               (else (error 'scalar-text-view "invalid trusted scalar"))))
       #t)
+    (define (direct-scalar-entry! k value printed?)
+      (when printed? (byte! 44)) (key! k) (byte! 58)
+      (when (fx>=? container-depth max-depth) (error 'ffc-json "depth limit exceeded"))
+      (cond ((string? value) (string! value))
+            ((boolean? value) (string! (if value "true" "false")))
+            ((fixnum? value) (byte! 34) (integer! value) (byte! 34))
+            (else (error 'scalar-text-view "invalid trusted scalar")))
+      #t)
     (define (emit! x depth)
       (when (fx>? depth max-depth) (error 'ffc-json "depth limit exceeded"))
       (cond
@@ -266,7 +281,8 @@
         (let ((previous container-depth) (previous-values scalar-values))
           (set! container-depth depth)
           (set! scalar-values (ffc-json-scalar-map-values x))
-          (ffc-map-fold (ffc-json-scalar-map-template x) scalar-text-entry! #f)
+          (ffc-map-fold (ffc-json-scalar-map-template x)
+                        (if scalar-values scalar-text-entry! direct-scalar-entry!) #f)
           (set! scalar-values previous-values)
           (set! container-depth previous))
         (byte! 125))

@@ -27,21 +27,30 @@
                  "\n(jolt-vector ffc-json-ascii-bytes ffc-json-project-prefixed-ascii-lines-bytes"
                  " (lambda (a) (eq? (record-type-uid (record-rtd a)) 'jolt-array-v1))"
                  " ffc-json-nested-text ffc-json-cached-project-prefixed-ascii-lines-bytes"
-                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width ffc-json-nested-scope ffc-json-scalar-map-box)))"))
-          [scalar project qualify nested cached-project row-box row-append row-width nested-scope scalar-map-box]
+                 " ffc-json-row-box ffc-json-row-append ffc-json-row-width ffc-json-nested-scope ffc-json-scalar-map-box ffc-json-direct-scalar-map-box)))"))
+          [scalar project qualify nested cached-project row-box row-append row-width nested-scope scalar-map-box direct-map-box]
           (apply factory (traversal/native-kernels walk))]
       (when-not (and (qualify (byte-array 0))
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
       [scalar project (traversal/native-pmap-folder walk) nested cached-project
-       row-box row-append row-width nested-scope scalar-map-box])))
+       row-box row-append row-width nested-scope scalar-map-box direct-map-box])))
 
 (defn native-scalar-text-view-box
   "Research-only trusted Scheme bridge for scalar-text plan output. This is
   not an application constructor, a plain map, or authorization to skip policy."
   []
   (nth @backend 9))
+
+(defn native-direct-scalar-map-box
+  "Trusted SDK-only encoder bridge. Its caller must first admit String keys
+  and bounded String/Boolean/native-fixnum values under ORIGINAL policy roots.
+  Result is NOT a Clojure map/raw JSON. It references immutable input nodes,
+  drops the source wrapper/metadata, and owns no mutable output alias. Keep
+  inputs immutable while views are in use; no global/per-codec value cache."
+  []
+  (nth @backend 10))
 
 (deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width nested-scope])
 (defn open-codec

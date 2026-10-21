@@ -1,5 +1,14 @@
 # Experimental explicit JSON codec
 
+An unadopted [direct ordinary-map view](../../research/direct-scalar-map-owner-20261021/README.md)
+prototype reuses the SDK's exact admission before writing scalar text from
+immutable input nodes. It drops source wrapper metadata and avoids replacement
+map nodes/numeric Strings, but keeps an immutable input reference until the view
+is released. It is not raw JSON, a map-returning converter, an enforced linear
+loan or a new exporter option. The SDK must supply original policy checks;
+do not call the native box directly from application code. Component allocation
+is lower; no Durable throughput/tail or consumer adoption is established.
+
 An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
 adds a separate trusted encoder output strategy without changing the existing
 plain-map converter. Do not pass its factory to that map-returning API. The

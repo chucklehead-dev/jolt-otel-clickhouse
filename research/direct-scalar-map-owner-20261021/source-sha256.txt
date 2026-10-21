@@ -1,0 +1,6 @@
+10015499324b8015cba3c9e6cd803bfab696d32ce324990e14717346972e23b5  incubator/codec/src/jolt/codec/json.ss
+47a9bfd8bc3c2da25b4855b0c151c56aca78fd2d5ea913afe4ce1a5175304811  incubator/codec/src/jolt/codec/experimental.clj
+a99f59f20769ef1bad73de323349407920c2a131036df1e26a295912269c70e6  research/direct-scalar-map-owner-20261021/check.clj
+83706623aa275a636bdb200fbf8d0287934b63436d4e5a0f16d23db2f8e55b4b  research/direct-scalar-map-owner-20261021/context.clj
+affc771e4f6f912112e0356331c504050c01a558d59a57f2376913bcd7d45c59  research/direct-scalar-map-owner-20261021/screen.clj
+8d9f56eec577bbb1042facf4735be936d8f8a41bffb505509a8cb456c84f1147  research/direct-scalar-map-owner-20261021/screen.edn

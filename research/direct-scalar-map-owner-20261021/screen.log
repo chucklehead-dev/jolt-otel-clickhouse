@@ -1,0 +1,1 @@
+{:baseline {:p50-p90-p95-p99-ms [178.125405 195.785488 196.934005 196.934005], :median-estimated-bytes-per-row 8983.0432}, :direct {:p50-p90-p95-p99-ms [172.94342 292.398611 317.627247 317.627247], :median-estimated-bytes-per-row 8464.5856}}

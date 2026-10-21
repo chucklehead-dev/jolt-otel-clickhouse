@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Prototype a trusted SDK-only direct scalar-map view in the optional codec.
+  Read admitted immutable input nodes without copying normalized maps or
+  formatting integer Strings; drop source metadata and keep fresh output bytes.
+  No exporter flag/default/pin or persistence change. Component allocation is
+  lower; whole-pipeline throughput/tail qualification remains outstanding.
+
 - Collect small typed span projections directly into invocation-owned field
   slots on the selected native path, avoiding temporary location maps and
   vectors. Keep the original value/status classifier, live helper behavior and
