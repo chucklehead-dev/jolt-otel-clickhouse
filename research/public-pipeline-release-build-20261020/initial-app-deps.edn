@@ -1,0 +1,6 @@
+;; Initial, functionally tested but NOT canonical-stack dependency selection.
+;; Relative roots are interpreted from app/, just like the initial build.
+{:paths ["src"]
+ :jolt/min-version "0.8.23"
+ :deps {io.github.chucklehead-dev/jolt-otel-clickhouse {:local/root "../../.."}
+        io.github.chucklehead-dev/jolt-codec {:local/root "../../../incubator/codec"}}}
