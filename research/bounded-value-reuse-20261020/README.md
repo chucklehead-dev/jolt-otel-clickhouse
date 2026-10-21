@@ -22,9 +22,9 @@ eight ORIGINAL policy anchors and controls learning after canonical admission.
 Every call still checks shape/type/value limits and live policy BEFORE reuse.
 Never pass this factory to the SDK's plain-map-returning converter.
 
-Extra retention: at most8 first snapshots and16384 conservatively charged
-key/value characters per serial planner, separately from existing8schema/
-8192key-character bounds. No source wrappers/trees/metadata are retained.
+Extra retention: at most 8 first snapshots and 16384 conservatively charged
+key/value characters per serial planner, separately from existing 8-schema/
+8192-key-character bounds. No source wrappers/trees/metadata are retained.
 Immutable scalar Strings may be retained for planner lifetime. Keys, numbers
 and native nodes/vectors have bounded overhead; this is NOT a hard RSS limit
 or a cross-thread redefinition lock. The native codec box/layouts are trusted.
@@ -80,6 +80,12 @@ experiments remain on `perf/ordinary-scalar-view-20261020`, not duplicated here.
 
 ## Next gates
 
+The subsequent [native ABBA comparison](native-results/README.md) recovered
+all700,000 physical rows, but did NOT demonstrate a repeatable throughput or
+allocation win. Pooled window rate improved8.1%, while baseline drift was12.9%
+and the reverse pair slightly favored the baseline. Keep this strategy
+unadopted; do not promote the earlier component screen into a product gain.
+
 Initial source review and separate alias/accounting follow-up both returned
 scoped Claude APPROVE. The initial review MISSED the retention flaw; own review
 and the new object-alias oracle caught it. Frozen packet hashes:
@@ -92,9 +98,9 @@ count it as approval. The successful retry read the packet then attempted one
 nonexistent path (returned no content), so strict single-tool-call compliance
 is not claimed.
 
-Next: actual confirmed local Durable A/B writes with independent full-field/type/nanosecond/multiplicity
-recovery. Include variable context values to expose cache overhead. Do not
-change defaults or claim targets from this component screen. Hosted networking
+Completed: confirmed local Durable ABBA with independent full-field/type/
+nanosecond/multiplicity recovery. Variable-context native cost is still unmeasured.
+Do not change defaults or claim targets from the component screen. Hosted networking
 is required for target S3 throughput; local DSL upload is capped at10Mbps.
 No new protocol/concurrency model or unchanged exhaustive run is needed for
 this representation-only slice; its resource-alias invariant has explicit

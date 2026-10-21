@@ -1,0 +1,7 @@
+8203101bf2639ae7fd5bd3bb1e947e435d804796f0c55cc86a93db991c5dd7bd  research/bounded-value-reuse-20261020/app/deps.edn
+7ee57d95e523e14ce552d0478194c963e182aedc2f35e481821aa865b9052946  research/bounded-value-reuse-20261020/app/src/perf/value_reuse_pipeline.clj
+b8888e60b332bc1d19566be1db6b0a4abf1ce199a671b0fde74a74780dc86367  research/scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj
+1448d7c2aeb4898877c0f113be86316fb0080b9d04de64653ae8572e93f5521f  incubator/codec/src/jolt/codec/scalar_text/value_reuse.ss
+4aaab0b5732e7c691604e0f0fcfad54d0acacd46e5b0378a892618aee5930d8b  /home/chuck/ai-src/evidence/value-reuse-native-20261021.Dg2Ce4N6/value-reuse-app
+7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94  /home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt
+a7d22ade86e1de82b187adf572b569a6034600ce932c52b0acb8c97b82430557  /home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so
