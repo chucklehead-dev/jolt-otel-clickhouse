@@ -21,6 +21,11 @@ are separate evidence, not substitutes for this consumer test.
 The same3/18 gate also passes with the actual published GitSDK selected by the
 new alias, not just the local-root SDK. The first fetch was network-denied;
 after confirming that process was absent, the authorized network run passed.
+Existing published codec regression remains71tests/553assertions, all pass.
+Exact implementation head68ee1ca passed hosted stock-library CI run39530386177;
+Claude read-only integration review APPROVE, no blockers. Review did not run
+tests or native recovery; Codex performed those checks. See the review and CI
+receipts alongside the measurements. No PR/merge or default repin yet.
 
 ## Cumulative rich component
 

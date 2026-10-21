@@ -1,0 +1,38 @@
+## Review: commit 68ee1ca (exporter scalar-text-encoder-view integration)
+
+**Verdict: APPROVE**
+
+### Gating correctness (primary question)
+
+Traced the full option chain in `src/otel/exporter/chdb.clj`:
+
+- **Default-off**: `exporter`'s `:or` map sets `experimental-span-scalar-views? false` (line ~2046). Confirmed.
+- **Dependency chain enforced before any downgrade is possible**: `exporter` validates, in sequence, that `scalar-views?` ⇒ `codec? ∧ payload-cache? ∧ shape-plans?` (throws `::invalid-experimental-span-scalar-views` first, lines 2047–2052), then `shape-plans?` ⇒ `codec? ∧ payload-cache?`, then `payload-cache?`/`flat-map-cache?`/`nested-fragment-cache?` ⇒ `codec?`, then `codec?` ⇒ durable + owned-statement-output + spans-in-signals + `:native-guarded-byte-batch` + `:json-compact-each-row`. Because the scalar-views check runs first and is strict (`and`, not `or`-fallback), no combination of bad flags can silently resolve to a weaker codec — it only ever throws. Verified by hand against all four "bad" cases in the new test and the evaluation order matches.
+- **Capability resolution happens before storage**: `load-experimental-span-codec!` is called at line ~2100, explicitly commented "Resolve before database acquisition or DDL," prior to any JDBC/connection work. When `scalar-views?` is true, it resolves `jolt.codec.scalar-text.experimental/native-view-plan-factory` (instead of `native-plan-factory`), `jolt.codec.experimental/native-scalar-text-view-box`, and `otel.any-value/scalar-text-payload-projector` (instead of `scalar-string-map-payload-converter`) — the three "new SDK projector/codec view factory" pieces the task calls out. Each is independently probed with `ns-resolve`/`ifn?` and throws `ex-info` (`::experimental-span-scalar-views-unavailable`) if missing, before any JDBC call. The new test (`view-capabilities-are-qualified-before-storage`) stubs out each of these three vars individually via `with-redefs` on `ns-resolve` and asserts the correct error type plus `(is (zero? @opens))`, proving rejection happens strictly before storage.
+- **Existing order preserved**: The non-scalar-views path (`native-plan-factory` / `scalar-string-map-payload-converter`) is untouched. Runtime dispatch in `export-spans!`/`export-metrics!`/`export-logs!` (lines ~1830–1950) is unchanged by this commit — it still reads `(:attributes experimental-span-codec)` into the same dynamic var regardless of whether scalar-views is on, so converter/fallback/effect order at call sites is identical to before. The scalar-views addition only changes *which* internal factory/cache var gets resolved inside `load-experimental-span-codec!`.
+
+No blockers found in the gating logic itself.
+
+### Test evidence
+
+Counted assertions in the new `chdb_scalar_views_test.clj`: 3 deftests, 5 + 7 + 6 = 18 `is` assertions — matches the claimed "3 tests/18 assertions" and matches `results/*.tests.log` and `*.git-sdk-test.log`, both reading "Ran 3 tests. 18 assertions passed, 0 failures, 0 errors." The published-regression log shows "Ran 71 tests. 553 assertions passed, 0 failures, 0 errors," matching the stated baseline. The `deps.edn` `:scalar-views-test` alias overlays `io.github.casselc/otel` at sha `023fe33d…` (the reviewed SDK commit) only for this alias; the root `:deps` pin for the same artifact remains `14f58e5a…`, confirming the README's claim that this is test-only and not a default repin. The CI workflow (`experimental-codec-stock.yml`) does invoke `-M:scalar-views-test` against official stock Jolt/chDB downloads with pinned sha256 checks, consistent with "actual GitSDK" gate execution.
+
+The third deftest (`opaque-output-preserves-wire-and-changed-exporter-policy-fallback`) checks that encoded bytes are identical between the plain and view codec arms under both normal and redefined `value-string` policy, and that only the plain arm's projector returns a plain map (the view arm returns an opaque, non-map result) — this substantiates the "opaque result selection" and "changed exporter policy fallback" claims in the README.
+
+### Claim-overstatement check (benchmark numbers)
+
+Cross-checked every number quoted in `research/scalar-view-exporter-20261020/README.md` against the raw `.edn`/`.log` receipts:
+
+- Rich component: map p50/p90/p95/p99 = 162.43/185.37/187.52/187.52 ms, median B/row 11306.096; view = 159.18/170.44/282.21/282.21 ms, median B/row 9769.504 — exact match to `results/scalar-view-exporter-20261020.rich.edn`. Ordinal 13 (view) has `gc-nanos 126338082` within `nanos 282208891` — exactly the "126.34ms GC within 282.21ms elapsed" the README calls out as **not excluded**. Allocation delta ≈13.6%, time delta ≈2% — both arithmetically correct, not rounded favorably.
+- Public app: views 12917.75 rows/s, 15705.06 B/row; maps 12555.54 rows/s, 17246.95 B/row — exact match to `view.writer.edn`/`map.writer.edn`. Rate delta ≈2.9%, allocation delta ≈8.9%, and the README correctly notes view's p50 (379.19ms) is *worse* than map's p50 (373.33ms) — this is a real regression the doc does not hide.
+- 350,000-row recovery claim reconciles exactly: two independent reader logs each report `:rows 175000` (175,000 + 175,000 = 350,000), and retirement-receipt files (`*.retired-kib.txt`) were recorded before the temp stores were removed, consistent with "retired only after terminal success."
+
+I found no instance where the README's stated numbers diverge from the receipts, and the document is unusually conservative — it repeatedly flags what it does *not* demonstrate (`:tail-qualified false`, `:release-optimization-qualified false`, non-ABBA sequential pairing, GC outlier retained). This is the opposite of overstatement.
+
+### Nonblocking notes
+
+1. In `load-experimental-span-codec!`'s failure path (lines ~1360–1377), the `ex-info` `:type`/message always attributes failure to the *highest* requested capability (scalar-views > shape-plans > nested-fragments > flat-map-cache > payload-cache), even if the actual missing dependency belongs to an unrelated flag requested alongside it (e.g., `nested-fragment-cache?` failing while `scalar-views?` is also true). Behavior still fails closed correctly; only the diagnostic label could mislead an operator debugging which specific capability is absent.
+2. `check-experimental-span-codec!`'s flags list omits `:experimental-span-codec?` itself — it's a capability probe, not a full mirror of `exporter`'s validation, which is consistent with its docstring but worth knowing if someone expects full parity between the two entry points.
+3. README prose has a few places where spacing was dropped in commit-SHA sentences (cosmetic only; the referenced SHAs and figures themselves are all correct).
+
+No action required before merge; both notes are informational.
