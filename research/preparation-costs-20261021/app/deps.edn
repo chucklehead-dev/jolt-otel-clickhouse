@@ -1,0 +1,8 @@
+{:paths ["src" "../../scalar-view-exporter-20261020/app/src"]
+ :jolt/min-version "0.8.23"
+ :deps {io.github.chucklehead-dev/jolt-otel-clickhouse {:local/root "../../.."}
+        io.github.chucklehead-dev/jolt-codec
+        {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+         :git/sha "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
+         :deps/root "incubator/codec"}}
+ :aliases {:test {:extra-paths ["test"] :main-opts ["-m" "perf.preparation-costs-test"]}}}
