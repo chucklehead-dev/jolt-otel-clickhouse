@@ -40,6 +40,18 @@
     (fixture/ensure! (pos? n) :nonempty-samples)
     (mapv #(nth v (dec (long (Math/ceil (* % n))))) [0.5 0.9 0.95 0.99])))
 
+(defn prepared-cycle! [adapter prepare rows]
+  (let [cap ((:reserve! adapter) (count rows))]
+    (fixture/ensure! cap :reserved)
+    (try
+      (fixture/ensure! (true? (prepare cap rows)) :prepared)
+      (finally
+        ;; No request is ever submitted. A materializer/observer failure still
+        ;; leaves its reservation/admission to abort, release and retire.
+        (fixture/ensure! (true? ((:abort! adapter) cap)) :aborted-unsubmitted)
+        (fixture/ensure! (true? ((:release! adapter) cap)) :released)
+        (fixture/ensure! (true? ((:retire! adapter) cap)) :retired)))))
+
 (defn summary [samples]
   (into {} (for [phase phases
                  :let [xs (filter #(= phase (:phase %)) samples)]]
@@ -52,11 +64,13 @@
 
 (defn -main [root mode & [rows-text rounds-text]]
   (let [n (parse-long (or rows-text "5000")) rounds (parse-long (or rounds-text "16"))
-        warmups 2 samples (atom []) round (atom -1)]
+        warmups 2 samples (atom []) round (atom -1)
+        observer-var (ns-resolve 'otel.exporter.chdb '*preparation-stage-observer*)]
     (fixture/ensure! (and root (.isAbsolute (java.io.File. root))
                          (not (.exists (java.io.File. (str root "/objects"))))) :fresh-root)
     (fixture/ensure! (contains? #{"source-diagnostic" "release-diagnostic"} mode) :mode)
     (fixture/ensure! (and (<= 1 n 10000) (<= 2 rounds 32)) :bounded-geometry)
+    (fixture/ensure! observer-var :research-marker-patch-required)
     (native/ensure-loaded!)
     (fixture/ensure! (= "26.9.0" (native/chdb-version)) :native-version)
     (.mkdirs (java.io.File. (str root "/scratch-writer")))
@@ -72,7 +86,7 @@
             rows (fixture/fixture n)
             wrap #(observer samples round n %1 fixture/counters %2)]
         (with-bindings
-          {#'exporter/*preparation-stage-observer*
+          {observer-var
            (fn [phase f] ((wrap phase f)))}
           (do
             (let [target (exporter/exporter
@@ -93,12 +107,7 @@
                 (System/gc)
                 (dotimes [i (+ warmups rounds)]
                   (reset! round (- i warmups))
-                  (let [cap ((:reserve! adapter) n)]
-                    (fixture/ensure! cap :reserved)
-                    (fixture/ensure! (true? (prepare cap rows)) :prepared)
-                    (fixture/ensure! (true? ((:abort! adapter) cap)) :aborted-unsubmitted)
-                    (fixture/ensure! (true? ((:release! adapter) cap)) :released)
-                    (fixture/ensure! (true? ((:retire! adapter) cap)) :retired)))
+                  (prepared-cycle! adapter prepare rows))
                 (let [measured (vec (filter #(<= 0 (:round %)) @samples))]
                   ;; Preserve only bounded scalar observations even when the
                   ;; compiler bypasses a wrapper. Missing coverage is failure,

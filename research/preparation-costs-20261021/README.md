@@ -36,8 +36,9 @@ parent/child timing, CPU, allocation and GC totals must not be summed together.
 
 The three coarse markers surround the actual codec invocation (including its
 projection callbacks), immutable ASCII snapshot, and cached-WAL preparation.
-**The temporary observer hook in `src/otel/exporter/chdb.clj` is research-only
-and must not be merged into the product as part of an optimization.** It uses
+**The temporary observer hook is NOT present in HEAD's product source.** It is
+retained only as `release-marker.patch`, to apply manually in a disposable
+research checkout; it must not accompany a product optimization. It uses
 a dynamically bound observer and does not change driver admission/publication.
 Samples contain fixed phase names, counts and numeric deltas only, never values,
 SQL, rows, credentials or arbitrary function/exception returns.
@@ -61,10 +62,28 @@ Release binary SHA256:
 Compact raw samples and summary are under `results/`; source/build hashes and
 logs are retained in the workspace evidence root. No persisted telemetry dump.
 
+The measured marker source is commit `00f041d` (which still has the hook).
+After review, HEAD restores product source exactly to the canonical base;
+missing markers now reject before native/database acquisition. A subsequent research-only
+cleanup correction puts abort/release/retirement in `finally` when preparation
+throws or returns false; this is outside the timed callback. New controls cover
+success, false and thrown preparation. It is not retroactively represented as
+the measured binary, and the observer hook remains excluded from product work.
+
 ## Reproduce
 
 From `app/`, select the explicit stock executable in `JOLT_BIN` and 26.9.0
 library in `JOLT_CHDB_LIB`. All local Jolt commands use the pinned wrapper:
+
+First, **in a disposable checkout only**, run from its repository root:
+
+```sh
+git apply research/preparation-costs-20261021/release-marker.patch
+```
+
+No app startup or test command applies this patch automatically. Without it,
+the observer/coverage unit tests can run but the native diagnostic fails closed.
+Then change to `research/preparation-costs-20261021/app`:
 
 ```sh
 /home/chuck/ai-src/tools/jolt-with-chez-10.4.1 env JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0 \

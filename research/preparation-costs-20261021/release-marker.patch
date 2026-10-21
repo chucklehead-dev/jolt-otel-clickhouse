@@ -1,0 +1,43 @@
+diff --git a/src/otel/exporter/chdb.clj b/src/otel/exporter/chdb.clj
+index 3affa7d..3ceb6b3 100644
+--- a/src/otel/exporter/chdb.clj
++++ b/src/otel/exporter/chdb.clj
+@@ -1429,6 +1429,12 @@
+ (defmethod print-dup PreparedCompactInsert [_ writer]
+   (.write ^java.io.Writer writer "#<prepared compact insert>"))
+ 
++;; Research branch ONLY: coarse in-place markers survive release direct linking.
++;; Do not merge this hook into the product as part of an optimization.
++(def ^:dynamic ^:private *preparation-stage-observer* nil)
++(defn- observe-preparation-stage [phase f]
++  (if-let [observer *preparation-stage-observer*] (observer phase f) (f)))
++
+ (defn- prepare-closed-compact-rows
+   "Internal materialization only, under the existing admitted synchronous call.
+   May realize inputs/call converters; never executes or acknowledges a mutation.
+@@ -1452,18 +1458,21 @@
+                                     (throw (ex-info "Missing cached span projector" {:type ::invalid-cache-projector})))
+                                   (factory))
+                         project (if convert (cached-projector (payload-attrs-converter convert)) project)
+-                        bytes ((:encode codec) prefix rows
++                        bytes (observe-preparation-stage :projection-json
++                               #((:encode codec) prefix rows
+                                (fn [record]
+                                  (let [row (project record)]
+                                    (when-not (and (vector? row) (= (count columns) (count row)))
+                                      (throw (ex-info "Invalid direct compact telemetry row"
+                                                      {:type ::invalid-compact-row})))
+                                    row))
+-                               (insert-byte-limit))]
++                               (insert-byte-limit)))]
+                     ;; Same immutable snapshot and fallback as the existing
+                     ;; driver encoder. Never replay input producers on decline.
+-                    (if-let [statement (owned-statement/try-snapshot bytes)]
+-                      ((:prepare-statement codec) statement)
++                    (if-let [statement (observe-preparation-stage :snapshot
++                                        #(owned-statement/try-snapshot bytes))]
++                      (observe-preparation-stage :cached-wal
++                        #((:prepare-statement codec) statement))
+                       (String. bytes "UTF-8")))
+                   (if (= :native-guarded-byte-batch *json-backend*)
+                   (json-each-row-payload (checked rows) prefix

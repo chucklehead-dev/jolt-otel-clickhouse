@@ -1,0 +1,9 @@
+Unhandled exception: Public pipeline check failed
+  ex-data: {:label :nonempty-samples}
+  trace:
+    perf.preparation-costs/summary (./src/perf/preparation_costs.clj:44)
+    perf.public-pipeline/ensure! (./../../scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj:18)
+    perf.preparation-costs/quantiles (./src/perf/preparation_costs.clj:40)
+    jfn$perf.preparation-costs/summary$1
+    lazyseq-realize!
+    reduce-seq
