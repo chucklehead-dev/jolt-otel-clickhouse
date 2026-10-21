@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Prototype explicit bounded span preparation options for a dedicated compact
+  Durable exporter. Reserve SQL+cached-WAL array capacity before materializing,
+  retain at most two slots through confirmed settlement and admission release,
+  and restore fixed encoding bindings at late plan validation/writer admission.
+  Borrowed connections remain caller-owned. Pin the compatible SDK/driver
+  checkpoints and provide an optional focused test alias. Fresh-process local
+  recovery is checked for both ownership modes; defaults are unchanged and
+  complete lifecycle/performance qualification is still required.
+
+- Add an explicit native cancellation control for bounded span preparation:
+  hold real WAL publication while the next batch is prepared, fence shutdown,
+  and independently recover only the admitted batch. Exercise owned and
+  borrowed publisher cleanup without treating cancellation as delivery success.
+
 - Avoid redundant checked stores for locally bounded bytes in the optional
   stock-Jolt codec, after its existing capacity/output-budget guard. Keep
   runtime numeric formatter output on checked stores and add invalid-formatter

@@ -2297,3 +2297,126 @@
          (throw t)))))))
 
 (defn last-error [exporter] (:last-error @(:state exporter)))
+
+(defn experimental-span-batch-options
+  "Build an explicit SDK batch option map for ONE preparation owner of an
+  existing, dedicated span-only compact Durable exporter. Ordinary exporter
+  construction and direct synchronous export remain unchanged. Use this map
+  only with that exporter's single BatchSpanProcessor; do not concurrently use
+  direct conversion, replace converters/configuration or administer its schema.
+  Both exporter-owned and borrowed connections retain their existing ownership.
+
+  Requires the stock-runtime codec/owned output and confirmed-ticket driver
+  stack. The existing exporter is caller-owned on entry; validation happens
+  before acquiring any prepared reservation or SDK worker. No implicit fallback
+  or success-on-admission. max-prepared-bytes optionally bounds retained SQL+
+  WAL array capacity; it is NOT a total RSS/heap or raw-queue byte bound.
+  Experimental integration, not yet native performance qualification."
+  ([exporter] (experimental-span-batch-options exporter {}))
+  ([exporter batch-options]
+   (when-not (and (instance? ChdbExporter exporter) (map? batch-options)
+                  (not (contains? batch-options :experimental-span-preparation)))
+     (throw (ex-info "Invalid explicit span preparation owner" {:type ::invalid-preparation-owner})))
+   (require 'otel.exporter.chdb.preparation 'otel.sdk.preparation)
+   (let [required (fn [namespace sym]
+                    (let [v (ns-resolve namespace sym)]
+                      (when-not (and v (fn? @v))
+                        (throw (ex-info "Span preparation stack unavailable"
+                                        {:type ::preparation-unavailable})))
+                      @v))
+         open (required 'otel.exporter.chdb.preparation 'open-adapter)
+         charge (required 'otel.exporter.chdb.preparation 'reservation-byte-count)
+         checked (required 'otel.sdk.preparation 'checked-adapter)
+         retained (required 'jdbc.chdb.owned-statement 'precomputed-retained-byte-count)
+         input-limit (required 'jdbc.chdb.owned-statement 'precomputed-input-byte-limit)
+         try-submit (required 'jdbc.chdb.durable 'try-submit-owned-and-flush!)
+         await-confirmed (required 'jdbc.chdb.durable 'await-confirmed!)
+         connection (:connection exporter) owned? (:owned? exporter)
+         state (:state exporter) initial @state codec (:experimental-span-codec initial)
+         plan (:typed-span-vector-plan initial) projector (:vector-projector plan)
+         columns (:span-insert-columns initial)
+         config (merge export/default-batch-config batch-options)
+         n (:max-export-batch-size config)
+         with-config (fn [f]
+                       (context/with-instrumentation-suppressed
+                         (binding [*insert-byte-limit* (:max-insert-bytes initial)
+                                   *experimental-attribute-transform* (:attributes codec)
+                                   *json-backend* (:json-backend initial)
+                                   *timestamp-wire* (:timestamp-wire initial)]
+                           (f))))]
+     (when-not (and (= #{:spans} (:expected-signals exporter))
+                    (:durable? initial) codec (:owned-statement-output? initial)
+                    (= :native-guarded-byte-batch (:json-backend initial))
+                    (= :json-compact-each-row (:insert-format initial))
+                    (nil? (:durable-phase-receipts initial))
+                    (integer? n) (pos? n)
+                    (integer? (:max-queue-size config)) (<= n (:max-queue-size config))
+                    (integer? (:schedule-delay-ms config)) (pos? (:schedule-delay-ms config))
+                    (with-config #(or (direct-span-layout? initial)
+                                      (direct-typed-span-layout? initial))))
+       (throw (ex-info "Unsupported explicit span preparation configuration"
+                       {:type ::unsupported-preparation-configuration})))
+     (let [prefix (binding [*timestamp-wire* :raw-ticks]
+                    (str (compact-insert-query "otel_traces" columns) " FORMAT JSONCompactEachRow\n"))
+           max-sql (+ (or (:max-insert-bytes initial) max-insert-bytes)
+                      (alength (.getBytes prefix "UTF-8")))
+           _ (when (> max-sql (input-limit))
+               (throw (ex-info "Prepared SQL exceeds cached WAL capability"
+                               {:type ::unsupported-preparation-byte-limit})))
+           reservation (charge max-sql)
+           max-bytes (get batch-options :max-prepared-bytes (* 2 reservation))
+           checked-snapshot!
+           (fn []
+             (let [current @state]
+               (when-not (and (identical? codec (:experimental-span-codec current))
+                              (identical? plan (:typed-span-vector-plan current))
+                              (= columns (:span-insert-columns current))
+                              (= (:timestamp-wire initial) (:timestamp-wire current))
+                              (= (:max-insert-bytes initial) (:max-insert-bytes current))
+                              (or (direct-span-layout? current) (direct-typed-span-layout? current)))
+                 (throw (ex-info "Span preparation plan changed" {:type ::preparation-plan-changed})))
+               current))
+           row (fn [span convert]
+                 (let [base (if convert (span-row span nil true (:nested codec) convert)
+                                      (span-row span nil true (:nested codec)))]
+                   (if projector (into base (projector span)) base)))
+           adapter
+           (open {:max-batch-rows n :max-rows (* 2 n)
+                  :reservation-bytes reservation :max-bytes max-bytes
+                  :admit! #(with-config (fn [] (admit-signal! owned? #{:spans} state :spans)))
+                  :release! #(with-config (fn [] (not (false? (release-signal! connection owned? state :spans)))))
+                  :on-error! #(swap! state assoc :last-error %)
+                  :materialize!
+                  (fn [spans]
+                    (with-config
+                      (fn []
+                        (let [prepared (prepare-closed-compact-rows
+                                        connection "otel_traces" columns spans checked-snapshot! codec
+                                        #(row % nil)
+                                        (when (:payload-cache-factory codec)
+                                          (fn [convert] (fn [span] (row span convert)))))
+                              sql (.-sql prepared)
+                              size (when (owned-statement/statement? sql) (retained sql))]
+                          (when-not size
+                            (throw (ex-info "Preparation requires cached owned SQL"
+                                            {:type ::preparation-representation-unavailable})))
+                          {:prepared prepared :retained-bytes size}))))
+                  :try-submit!
+                  (fn [prepared]
+                    (with-config
+                      (fn []
+                        (let [current ((.-checked-snapshot! prepared))]
+                          (compact-format/require-order! (:compact-plans current) connection "otel_traces" columns)
+                          (try-submit connection (.-sql prepared))))))
+                  :await-confirmed! #(with-config (fn [] (await-confirmed %)))})]
+       (checked adapter)
+       (let [[old _] (swap-vals! state
+                                 (fn [s]
+                                   (if (or (:preparation-claimed? s) (pos? (:in-flight s))
+                                           (contains? (:closed-signals s) :spans))
+                                     s (assoc s :preparation-claimed? true))))]
+         (when (or (:preparation-claimed? old) (pos? (:in-flight old))
+                   (contains? (:closed-signals old) :spans))
+           (throw (ex-info "Span preparation owner already claimed or active"
+                           {:type ::preparation-owner-unavailable}))))
+       (assoc config :experimental-span-preparation adapter)))))
