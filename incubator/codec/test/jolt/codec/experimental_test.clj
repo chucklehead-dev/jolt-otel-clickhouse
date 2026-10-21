@@ -92,6 +92,16 @@
 
 (deftest scalar-and-prefix-chunk-boundaries
   (let [c (codec/open-codec)]
+    ;; Force decimal scratch output to straddle a 64KiB batch chunk. Cover
+    ;; signed/unsigned 64-bit values and arbitrary-precision fallback too.
+    (doseq [n [0 -1 9223372036854775807 -9223372036854775808
+               18446744073709551615 18446744073709551616
+               -9223372036854775809]
+            padding [65525 65530 65533 65535]]
+      (let [prefix (apply str (repeat padding "p")) payload (str n "\n")
+            actual (codec/encode-prefixed-records c prefix [n] identity (count payload))]
+        (is (= (str prefix payload) (text actual)))
+        (is (rejects? #(codec/encode-prefixed-records c prefix [n] identity (dec (count payload)))))))
     (doseq [n [0 1 1021 1022 1023 1024 1025 65530 65535 65536]]
       (let [s (str (apply str (repeat n "x")) "😀\n")
             prefix (apply str (repeat 1100 "p"))

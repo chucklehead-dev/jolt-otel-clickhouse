@@ -165,8 +165,18 @@
                 (if (= q 0)
                     (let ((start (if negative? (fx- i 1) i)))
                       (when negative? (bytevector-u8-set! digits start 45))
-                      (do ((j start (fx+ j 1))) ((fx=? j 21))
-                        (byte! (bytevector-u8-ref digits j))))
+                      ;; Scratch already contains the final decimal bytes.
+                      ;; Copy contiguous ranges, not byte!/capacity bookkeeping
+                      ;; for every digit. Capacity still enforces the budget,
+                      ;; including integers crossing an output-chunk boundary.
+                      (let copy ((j start))
+                        (unless (fx=? j 21)
+                          (ensure-space!)
+                          (let ((take (fxmin (fx- 21 j)
+                                            (fx- (bytevector-length tail) used))))
+                            (bytevector-copy! digits j tail used take)
+                            (set! used (fx+ used take))
+                            (copy (fx+ j take))))))
                     (loop q (fx- i 1))))))))
     (define (key! k)
       (cond ((string? k) (string! k))
