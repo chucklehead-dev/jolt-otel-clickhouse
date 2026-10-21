@@ -19,7 +19,7 @@
             [jolt.traversal.experimental-test]))
 
 (def ^:private published-root
-  "https___github.com_chucklehead-dev_jolt-otel-clickhouse.git/68ee1ca8f2826c930ff668ea9532c0a3f498dc41/incubator/codec/src/")
+  "https___github.com_chucklehead-dev_jolt-otel-clickhouse.git/c75579b90a9089bcbdcb195ebd18d15d16ee0082/incubator/codec/src/")
 
 (defn- published-resource? [resource path]
   (str/ends-with? (str path) (str "/" published-root resource)))
@@ -33,7 +33,7 @@
       ;; These check exact coordinate selection, not older-code incompatibility.
       (assert (published-resource? resource positive))
       (assert (not (published-resource? resource
-                     (str/replace positive "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
+                     (str/replace positive "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
                                   "627993767b9d2adf26576ae7470081d85ab943f1"))))
       (assert (not (published-resource? resource
                      (str/replace positive "chucklehead-dev_jolt-otel-clickhouse.git"

@@ -24,7 +24,7 @@
            {:extra-deps
             {io.github.chucklehead-dev/jolt-codec
              {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-              :git/sha "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
+              :git/sha "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
               :deps/root "incubator/codec"}}}
            :scalar-views-test
            {:extra-paths ["incubator/codec/src" "incubator/codec/test"]
@@ -41,12 +41,12 @@
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-shape-plans-test"
                         "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
-                        "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"]}
+                        "c75579b90a9089bcbdcb195ebd18d15d16ee0082"]}
            :stock-scalar-views-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-scalar-views-test"
                         "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
-                        "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"]}
+                        "c75579b90a9089bcbdcb195ebd18d15d16ee0082"]}
            :experimental-span-codec
            {:extra-paths ["incubator/codec/src"]}
            :experimental-span-codec-test
