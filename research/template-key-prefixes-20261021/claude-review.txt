@@ -1,0 +1,27 @@
+Write and ExitPlanMode aren't available as tools in this session, so I'll deliver the review directly as text instead of a plan file.
+
+## Source Review: template-key-prefixes-20261021 (research, not adopted)
+
+**Scope:** Reviewed `research/template-key-prefixes-20261021/{README.md, prototype.clj, prefix-plan.ss, check.clj, mechanism.clj, rich-mechanism.{clj,edn}, screen.{clj,edn}, inline.clj, inline-check.clj, inline-screen.{clj,edn}, check.log, inline-check.log}` against base `a6cbf939`, plus `incubator/codec/src/jolt/codec/json.ss` and `research/scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj` as reference. No execution; everything below is from static reading.
+
+**Blockers before publishing as RESEARCH ONLY:** None found. The scope is self-contained — `prototype.clj` patches an in-memory `scheme/eval-string` copy of json.ss via exact/unique-anchor `replace-once` (asserts on missing/duplicate anchors); no production file is touched, no new codec is registered, no public API added.
+
+**Claim-vs-source/result check — no mismatches found:**
+- Budgets (8 attempts incl. declines, ≤128 fields, ≤64 chars/key, ≤32KiB/plan, ≤128KiB total) are verbatim in `prefix-plan.ss`.
+- `json.ss` lines 243–252 (`scalar-text-entry!`) and the `map-flat? #f)` anchor (line 66) match the exact strings `prototype.clj`'s `replace-once` targets — the patch is not stale against this base commit.
+- Arithmetic reproduces exactly: "8.80% slower"/"1.33% higher" (first screen) and "3.58% lower"/"1.34% higher" (inline screen) match the medians in `screen.edn`/`inline-screen.edn`.
+- `rich-mechanism.edn` (2240→1169 key-writer calls, 1071 avoided; one plan, 190 bytes; 63/63 scalar-map/selected-plan visits; 55,216-byte match) matches README's "cache is not simply missing" section precisely.
+- `check.log` (5 tests/199 assertions) and `inline-check.log` (same 5, then 4 reused/196 assertions) match the README's counts and the actual deftest set (check.clj's 3 + mechanism.clj's 2, minus the intentionally-excluded mutation test in the inline run).
+- `public_pipeline.clj`'s `fixture`/`approved` are real SDK-shaped data (nested resource/scope/events, sorted-maps, a compiled attribute manifest) — supports "full SDK policy/conversion/typed projection." `-main`'s durable/queue path is untouched by any research script.
+
+**inline-screen.clj: confirmed, not a silent reload (evidence).** `inline.clj` loads `prototype.clj` (binding `prefix-native` to the un-inlined native), then separately compiles `inline-native` from a textually-different source. `inline-screen.clj` wraps `screen.clj`'s text in `(with-redefs [prefix-native inline-native] ...)` **and** strips screen.clj's own `(load-file ".../prototype.clj")` line before `load-string`-ing it. That strip is load-bearing: without it, the reload would re-`def` `prefix-native` back to the original native inside the `with-redefs` dynamic extent, and since `with-redefs` only restores the pre-entry value on exit, that re-def would persist for the rest of the script. The code correctly avoids this, and `prefix-context` dereferences the var at call time, so it picks up `inline-native`. Claim confirmed.
+
+**Cache bounds, fallback, ordinals, oracles — meaningful:**
+- Fallback: `scalar-prefix-map!` only takes the plan branch when `template-key-plan` returns non-`#f`; any invalid/oversized shape falls through to the unmodified `ffc-map-fold`/`scalar-text-entry!` path.
+- Partial-failure handling: `compile-prefix-plan`'s running `charge` is only committed to `template-bytes` inside the final success check — a failed/partial attempt leaves the budget untouched.
+- Root-collision safety net: a cache hit whose stored field-count disagrees with the current template's count is rejected to `#f` (fallback), so a stale cache entry degrades to "no plan," not a wrong result. This still rests on `pmap-root`/`pmap-cnt` identity guarantees from the native traversal layer, outside the reviewed file set — **inference, not verified here**.
+- Oracles: `mutations-are-rejected-by-real-oracles` zeroes all ordinals and separately disables the depth guard; both are caught, showing the suite has discriminating power, not pass-through assertions.
+
+**Noteworthy, not a defect:** `template-cache`/`template-attempts`/`template-bytes` reset fresh on every encoder invocation — amortization happens only across rows within one encode call, not across calls/batches. README says this ("per encoder invocation") but a skim of headline numbers alone could misread it as longer-lived.
+
+**Unverifiable from source:** "Only one measured local workload ran at a time, with no concurrent Claude task" and similar environment-isolation claims are operational, not checkable by reading files — taken on trust, consistent with honest self-labeling elsewhere (`:tail-qualified false`, p95/p99 = max at n=16).

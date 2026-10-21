@@ -1,0 +1,3 @@
+
+Ran 5 tests. 199 assertions passed, 0 failures, 0 errors.
+:inline-controls {:test 4, :pass 196, :fail 0, :error 0}
