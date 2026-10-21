@@ -92,6 +92,14 @@
 
 (deftest scalar-and-prefix-chunk-boundaries
   (let [c (codec/open-codec)]
+    ;; All public inputs still encounter byte-budget checks before any private
+    ;; store, including empty initial buffers and expansion-heavy scalar text.
+    (doseq [value [nil false true 0 -9223372036854775808 18446744073709551615
+                  "" (apply str (map char (range 128))) "éλ😀"]]
+      (let [expected (str (codec/write-nested c value) "\n") size (count expected)]
+        (is (= expected (text (codec/encode-prefixed-records c "" [value] identity size))))
+        (is (rejects? #(codec/encode-prefixed-records c "" [value] identity 0)))
+        (is (rejects? #(codec/encode-prefixed-records c "" [value] identity (dec size))))))
     (doseq [n [0 1 1021 1022 1023 1024 1025 65530 65535 65536]]
       (let [s (str (apply str (repeat n "x")) "😀\n")
             prefix (apply str (repeat 1100 "p"))

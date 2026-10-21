@@ -75,7 +75,12 @@
         (set! used 0)))
     (define (byte! b)
       (ensure-space!)
-      (bytevector-u8-set! tail used b)
+      ;; Only internal JSON punctuation, decimal digits and encoded scalar
+      ;; bytes reach this helper (all 0..255), never caller array/index input.
+      ;; ensure-space! either raises or establishes used < length(tail).
+      ;; This is the same private-buffer bound used by the clean-string loop;
+      ;; keep the capacity/budget guard, remove only its redundant store check.
+      (#3%bytevector-u8-set! tail used b)
       (set! used (fx+ used 1)))
     (define (ascii! text)
       (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
