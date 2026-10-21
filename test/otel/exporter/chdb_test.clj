@@ -878,6 +878,7 @@
     (check "timestamp wire regressions pass" 0 (+ (:fail result) (:error result))))
   (ordinary-rows-test/run check)
   (let [result (test/run-tests 'otel.exporter.chdb-preparation-owner-test)]
+    (check "preparation owner tests are nonempty" true (pos? (:test result)))
     (check "preparation owner failures" 0 (:fail result))
     (check "preparation owner errors" 0 (:error result)))
   (let [result (test/run-tests 'otel.exporter.chdb-insert-budget-test)]

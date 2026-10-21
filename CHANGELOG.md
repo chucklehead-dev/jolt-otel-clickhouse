@@ -6,8 +6,10 @@
   Durable exporter. Reserve SQL+cached-WAL array capacity before materializing,
   retain at most two slots through confirmed settlement and admission release,
   and restore fixed encoding bindings at late plan validation/writer admission.
-  Borrowed connections remain caller-owned. Defaults are unchanged; the new
-  SDK/driver stack and lifecycle/performance qualification are still required.
+  Borrowed connections remain caller-owned. Pin the compatible SDK/driver
+  checkpoints and provide an optional focused test alias. Fresh-process local
+  recovery is checked for both ownership modes; defaults are unchanged and
+  complete lifecycle/performance qualification is still required.
 
 - Avoid redundant checked stores for locally bounded bytes in the optional
   stock-Jolt codec, after its existing capacity/output-budget guard. Keep
