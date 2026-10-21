@@ -6,7 +6,8 @@ on:
   pull_request:
     paths:
       - .github/workflows/durable-export-quint.yml
-      - formal/quint/**
+      - formal/quint/durable-export-ack.md
+      - formal/quint/traces/**
       - scripts/check-durable-export-quint.sh
       - scripts/generate-durable-export-itf.sh
       - src/otel/exporter/chdb.clj
