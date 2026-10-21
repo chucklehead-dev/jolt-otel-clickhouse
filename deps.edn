@@ -69,6 +69,9 @@
            :native-projection-test
            {:extra-paths ["test" "bench"]
             :main-opts ["-m" "otel.exporter.chdb-native-declared-attributes-test"]}
+           :native-field-slots-test
+           {:extra-paths ["test" "bench" "incubator/codec/src"]
+            :main-opts ["-m" "otel.exporter.chdb-native-field-slots-test"]}
            :preloaded-scalar-test
            {:extra-paths ["test"]
             :main-opts ["-m" "otel.exporter.chdb-preloaded-scalar-test"]}

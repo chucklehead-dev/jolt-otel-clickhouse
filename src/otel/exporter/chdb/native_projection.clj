@@ -14,6 +14,20 @@
 (def ^:private string-declared
   (source "otel/exporter/chdb/native_declared_strings.ss"))
 
+(def ^:private trace-field-slots
+  (source "otel/exporter/chdb/native_trace_field_slots.ss"))
+
+(defn load-trace-field-slots!
+  "Internal bounded default-policy trace projector, or nil for unsupported plans.
+  Declines unsupported inputs/policies without callbacks; the caller retains its
+  existing indexed fallback. Schema has <=8 distinct fields in <=3 locations.
+  Original classifier stays live; no output storage is passed to user code."
+  [locations plan key-var contains-var original-key project-var original-projector folder]
+  (let [factory (if folder
+                  ((scheme/eval-string (str "(lambda (pmap-fold-seq-order) " trace-field-slots ")")) folder)
+                  (scheme/eval-string trace-field-slots))]
+    (or (factory locations plan key-var contains-var original-key project-var original-projector) nil)))
+
 (defn load-declared-collector!
   "Return a bounded built-in-map collector, declining unsupported layouts.
   Resolve converter and membership Vars per key in source sequence order.

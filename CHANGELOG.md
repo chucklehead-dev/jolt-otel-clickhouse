@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Collect small typed span projections directly into invocation-owned field
+  slots on the selected native path, avoiding temporary location maps and
+  vectors. Keep the original value/status classifier, live helper behavior and
+  generic fallback for unsupported maps/policies or wider plans. No capture,
+  encoding, acknowledgement or default portable-projector change.
+
 - Wire an explicit `:experimental-span-scalar-views?` exporter opt-in to the
   separate SDK encoder handoff, with missing-capability checks before storage.
   Requires the existing codec/payload-cache/shape-plan options; feature defaults

@@ -19,6 +19,21 @@ to a normal builder; larger input maps and unsupported map layouts use the
 portable collection fallback. These limits are optimization bounds, not capture
 limits. Calls never share mutable scratch or overwrite input nodes.
 
+For up to eight distinct fields across the three trace attribute locations,
+ordinary String-key maps can now be collected directly into field slots. This
+avoids temporary per-location maps and the outer collected-values vector.
+The existing classifier still decides each value/status, including live
+replacement and reentrant calls. Unsupported maps, non-String aliases, changed
+key/membership policies, duplicate field keys or wider plans keep the existing
+indexed fallback. Complete captured attribute dictionaries remain untouched.
+The two-argument portable projector and persistence acknowledgements are unchanged.
+This is not a heap/RSS limit or concurrent schema-administration guarantee.
+
+`jolt -M:native-field-slots-test` exercises the explicit independent traversal
+folder on stock Jolt. It does not need the older compiler-fork global folder.
+The legacy `:native-projection-test` gate still targets its qualified runtime;
+it is not blanket stock-runtime compatibility evidence.
+
 The focused gate is `jolt -M:native-projection-test`. It checks callback order,
 live replacement and reentry, collision buckets, fallback, input ownership,
 single-seal positional output and deliberately wrong traversal/field-order
