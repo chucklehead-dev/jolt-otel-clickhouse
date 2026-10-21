@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Prototype encoder-only scalar-text view plans for originally admitted
+  ordinary HAMT attributes. Match a key-only template with fresh value slots;
+  retain live policy fences, bounded schemas and the collision-node fallback.
+  A factory Boolean preserves the sorted-only control. No default exporter or
+  Durable acknowledgement change; full-pipeline qualification is pending.
+
 - Integrate the bounded preparation adapter with its approved literate model
   and canonical SDK/confirmed-ticket driver pins. Add explicit stock-runtime
   ownership and held-WAL cancellation/readback CI gates, and document the

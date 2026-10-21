@@ -8,7 +8,9 @@
         planner (io/resource "jolt/codec/scalar_text/planner.ss")]
     (when-not (and plan planner)
       (throw (ex-info "Missing scalar-text plan resources" {})))
-    (str "(lambda (view-box) (let ((compile-one (" (slurp plan) " view-box))) " (slurp planner) "))")))
+    (str "(lambda (view-box . options)"
+         " (let ((hamt-views? (if (null? options) #t (car options))))"
+         " (let ((compile-one (" (slurp plan) " view-box))) " (slurp planner) ")))")))
 
 (def ^:private source (embedded))
 (def ^:private factory-maker (delay (scheme/eval-string source)))
@@ -41,8 +43,11 @@
   "Research-only trusted encoder bridge. Same admission/anchors/bounds as the
   plain-map plan, but emits an opaque view through the supplied native box.
   NOT suitable for scalar-string-map-payload-converter: it promises plain maps.
-  Box must be callback-free and retain only template/independently owned slots."
-  [native-box]
-  (when-not (ifn? native-box)
-    (throw (ex-info "Expected native view constructor" {:type ::invalid-view-box})))
-  (@factory-maker native-box))
+  Box must be callback-free and retain only template/independently owned slots.
+  Optional false hamt-views? retains sorted-only learning; true also learns
+  originally admitted non-collision ordinary HAMTs, with fresh value slots."
+  ([native-box] (native-view-plan-factory native-box true))
+  ([native-box hamt-views?]
+   (when-not (and (ifn? native-box) (boolean? hamt-views?))
+     (throw (ex-info "Expected native view constructor and Boolean selection" {:type ::invalid-view-box})))
+   (@factory-maker native-box hamt-views?)))
