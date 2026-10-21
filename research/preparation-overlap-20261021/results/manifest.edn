@@ -1,0 +1,19 @@
+{:scope :finite-local-saturated-sdk-screen
+ :measured-source "3cedfb912a03a575cff65067f8d81faa7cb97b93"
+ :binary-sha256 "e022bf2694dddcbf90898aee0e81ed11b231b6406f74df28e2fca5e558d209a7"
+ :jolt "0.8.23" :chez "10.4.1" :native "26.9.0"
+ :jolt-sha256 "7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94"
+ :native-sha256 "a7d22ade86e1de82b187adf572b569a6034600ce932c52b0acb8c97b82430557"
+ :sdk "d8db5da817074829950ca0150301877a5bafbace"
+ :driver "a752c0cd553fdce41087a261d081f390154f7b55"
+ :codec "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
+ :json "0f51b99101bc5e840f957c073f87b6f877309a25"
+ :crypto "5effcc89a3258499a79a2a3d69edad9e7800d1bf"
+ :reader-driver "3314b79e8a234fafdf5231439a0323c878a40040"
+ :reader-sdk "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
+ :reader-json "3adc8c5d3a57a30d18f62bad9d1c7a5c1f6857e0"
+ :case-order ["synchronous" "overlap" "overlap-2" "synchronous-2"]
+ :batch-size 5000 :warmups 3 :measured-batches-per-run 32
+ :independently-recovered-rows 700000
+ :comparison :sha256-canonical-all-decoded-physical-fields
+ :population-tail-qualified false :s3-qualified false}

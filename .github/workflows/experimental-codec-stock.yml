@@ -8,6 +8,7 @@ on:
       - deps.edn
       - src/otel/exporter/**
       - test/otel/exporter/chdb_native_field_slots_test.clj
+      - test/otel/exporter/chdb_preparation*.clj
   pull_request:
     paths:
       - .github/workflows/experimental-codec-stock.yml
@@ -15,6 +16,7 @@ on:
       - deps.edn
       - src/otel/exporter/**
       - test/otel/exporter/chdb_native_field_slots_test.clj
+      - test/otel/exporter/chdb_preparation*.clj
   workflow_dispatch:
 
 permissions:
@@ -89,10 +91,16 @@ jobs:
           # incubator source. The gate checks both actual resource identities.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-shape-plans-test)
-          # New SDK handoff is test-only; default SDK/library pins stay intact.
-          # This resolves the actual published Git SDK, not a local-root overlay.
+          # Retain the historical SDK handoff as a separate compatibility gate.
+          # The stock-prefixed gate checks the current root SDK/library pins.
           (cd ../.. && "$task_bin" -Srepro -M:scalar-views-test)
           (cd ../.. && "$task_bin" -Srepro -M:stock-span-codec:stock-scalar-views-test)
+          # Concrete ownership gates on the published SDK/driver/codec graph.
+          (cd ../.. && "$task_bin" -Srepro -A:bounded-span-preparation-test -e \
+            "(require 'otel.exporter.chdb-preparation-owner-test 'otel.exporter.chdb-preparation-adapter-test 'clojure.test)
+             (let [r (clojure.test/run-tests 'otel.exporter.chdb-preparation-owner-test 'otel.exporter.chdb-preparation-adapter-test)]
+               (assert (= 10 (:test r)))
+               (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1)))")
           # Actual old/current Git components, not a mocked missing Var.
           (cd ../.. && for task_case in \
             '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
@@ -131,4 +139,15 @@ jobs:
                 -m otel.exporter.chdb-mixed-codec-native writer "$task_store" "$task_wire"
               "$task_bin" -Srepro -A:stock-span-codec -Sdeps "$task_deps" \
                 -m otel.exporter.chdb-mixed-codec-native reader "$task_store"
+            done)
+          # Causal held-WAL cancellation and fresh-process recovery, both owners.
+          # Reuse the native library verified above; no workstation wrapper.
+          (cd ../.. &&
+            export JOLT_CHDB_LIB="$task_tmp/libchdb.so" &&
+            for task_owner in owned borrowed; do
+              task_store=$(mktemp -d "$task_tmp/preparation-cancel.XXXXXXXX")
+              "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"]}' -A:stock-span-codec \
+                -m otel.exporter.chdb-preparation-native-cancellation writer "$task_store" "$task_owner"
+              "$task_bin" -Srepro -Sdeps '{:paths ["src" "test"]}' -A:stock-span-codec \
+                -m otel.exporter.chdb-preparation-native-cancellation reader "$task_store"
             done)

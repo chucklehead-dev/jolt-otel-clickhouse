@@ -1,0 +1,1 @@
+{:rows 5000, :logical-sql-bytes 8648398, :logical-wal-bytes 10508410, :sql-plus-wal-bytes-per-row 3831.3616, :scope :one-rich-batch-not-a-heap-bound}
