@@ -50,6 +50,13 @@ This is an incubating library, not a data.json replacement. It walks ordinary
 Jolt data directly in Chez and writes to private byte buffers. It does not
 replace JSONWriter methods or register global Scheme helpers.
 
+Private punctuation/escape/digit stores reuse the encoder's existing capacity
+guard; external numeric formatter text keeps checked stores. This requires no
+compiler fork or global unsafe mode. A local 5k-row confirmed Durable comparison
+observed about 9% higher window throughput with unchanged allocation and full
+independent recovery. This is not a population-tail or 25k/20k target claim;
+see the [measurements and scope](https://github.com/chucklehead-dev/jolt-otel-clickhouse/tree/008fbdc1eac88a26ef9d8b48b725e78f274dd624/research/private-byte-store-20261021/native-results).
+
 The library itself has no dependencies beyond Jolt. Its tests run on the
 official Jolt 0.8.23 release. The exporter with published SDK/driver pins also
 passed stock-runtime writes and independent readback. The complete Oscope
