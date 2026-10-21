@@ -68,7 +68,10 @@
                 (finish-sample! samples index ok warmups total anchors)
                 ok))
     :retire! (fn [cap]
-               (let [ok ((:retire! adapter) cap)] (swap! active dissoc cap) ok))))
+               (let [ok ((:retire! adapter) cap)]
+                 (ensure! (true? ok) :retired)
+                 (swap! active dissoc cap)
+                 ok))))
 
 (defn- quantiles-ms [values]
   (let [sorted (vec (sort values)) size (count sorted)]
