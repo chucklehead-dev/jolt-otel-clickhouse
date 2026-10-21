@@ -1,0 +1,22 @@
+Write is disabled for this session, so I can't create the plan file — I'll deliver the review directly as text instead, consistent with the task's "advisory, not execution" framing.
+
+## Advisory review: native-publication-syscalls-20261021 packet
+
+**Verdict: no blocking defects. One wording fix recommended before publish.**
+
+### Finding (recommend fixing before publish)
+`README.md`, "Observed result" section: *"Writer completed0 with35 confirmed5k calls,175000 rows"* labels all 35 batches as "confirmed." The packet's own declared methodology ("3warmups+32confirmed5k callbacks") and `writer.edn` (`:warmups 3`, `:rounds 32`, exactly 32 entries in `:samples`) show only 32 of the 35 batches are in the confirmed window used for the rate/quantile stats — 3 are warmups. The reader's "35 copies" (per-record-multiplicity in `validated.edn`) is a separate, correct count of physically stored rows across all 35 batches and is fine as written. Only the writer sentence's reuse of "confirmed" for all 35 is inconsistent with the rest of the packet. Recommend: "35 total (3 warmups + 32 confirmed) 5k calls, 175000 rows."
+
+### Checked and passed (evidence, not inference)
+- **Binary-identity claim**: `binary-sha256.txt`'s hash matches byte-for-byte the retained PR157 B2-arm manifest `research/fused-typed-field-slots-20261021/native-results/artifact-sha256.txt` — verified by direct comparison, not by trusting the assertion.
+- **Sync arithmetic**: fsync (0.745492s) + fdatasync (0.238005s) = 0.983497s, matching the README. `syscalls.txt` calls (63230) and seconds (567.311853) column sums foot correctly against its own "total" row.
+- **Window framing**: `writer.edn`'s `:confirmed-window-nanos` (≈18.94s) matches the README's comparison figure; the 0.98s-vs-18.94s framing is correctly scoped as whole-process-including-setup/warmup/query/close vs. the narrower confirmed window, not a disjoint phase subtraction.
+- **Futex caveat**: 561.95s/99.05% is correctly described as summed per-thread wait time, not wall-clock or CPU — consistent with `strace -w` semantics.
+- **Traced-throughput caveat**: the 8446.52 rows/s and p50–p99 figures are explicitly labeled "TRACED run only... NOT a regression/new baseline."
+- **Validator/reader scope unchanged**: `validated.edn` and `validator-controls.edn` match the exact output shapes of the unmodified `validate-native.bb`/`validate-controls.bb` (same 9 rejected-mutation labels, same independent-reader exporter commit `0af1008...` and JSON adapter `3adc8c5d...` as PR157) — same independent recovery/validator scope reused, not weakened.
+- **Retirement bookkeeping**: `retired-kib.txt` (745352/298412/78912 KiB) converts to ~728/291/77 MiB, summing to ~1.071 GiB, matching the README exactly.
+- **No new performance/CPU/bottleneck claim**: the one CPU-attribution statement is explicitly framed as future work, not an assertion about this run.
+- **Ptrace log**: shows a pre-startup denial with no child process/workload run before the escalated attempt — consistent with the README's framing, not a masked retry.
+
+### Not reviewed (outside bounded scope)
+`claude-review.txt`, `writer.log`, `reader.log`, `source-sha256.txt` weren't in the named-file list, so not opened. `app/src/perf/field_slot_pipeline.clj` doesn't exist at that top-level path in this worktree (only under `research/.../app/`) and wasn't needed to answer the question.

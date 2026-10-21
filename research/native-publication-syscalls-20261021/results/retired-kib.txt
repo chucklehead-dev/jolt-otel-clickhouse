@@ -1,0 +1,3 @@
+745352	/home/chuck/ai-src/evidence/native-syscalls-20261021.YU6r0gJY/run
+298412	/home/chuck/ai-src/evidence/native-syscalls-20261021.YU6r0gJY/app.build
+78912	/home/chuck/ai-src/evidence/native-syscalls-20261021.YU6r0gJY/app
