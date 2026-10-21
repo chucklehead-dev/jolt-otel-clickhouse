@@ -93,7 +93,9 @@ Corrected exact42c548f hosted stock run39540823873 is COMPLETED/SUCCESS,
 including candidate standalone and old published/native consumer gates. These
 native gates still select the old published codec, so their success is NOT
 native storage/performance qualification of the new fused representation.
-The source review process remains pending; no PR or adoption is proposed yet.
+Claude's source review completed APPROVE with no blockers, but explicitly
+noticed the test tree changed during review. See review-resolution.md: this is
+not claimed as a static final exact-commit approval. No PR/adoption is proposed.
 
 ## Larger layering opportunity to preserve
 
