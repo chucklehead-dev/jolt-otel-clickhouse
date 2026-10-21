@@ -1,0 +1,23 @@
+----- Error --------------------------------------------------------------------
+Type:     clojure.lang.ExceptionInfo
+Message:  Invalid fusion native receipt
+Data:     {:label :arm}
+Location: /home/chuck/ai-src/worktrees/exporter-fused-nested-literal-20261020/research/fused-nested-literal-20261020/validate-native.bb:3:23
+
+----- Context ------------------------------------------------------------------
+1: (require '[clojure.edn :as edn])
+2: (defn ensure! [condition label]
+3:   (when-not condition (throw (ex-info "Invalid fusion native receipt" {:label label}))))
+                         ^--- Invalid fusion native receipt
+4: (let [[root arm] *command-line-args*
+5:       w (edn/read-string (slurp (str root "/writer.edn")))
+6:       r (edn/read-string (slurp (str root "/reader.edn")))
+7:       samples (:samples w)
+8:       quantile (fn [p] (nth (vec (sort (map :nanos samples)))
+
+----- Stack trace --------------------------------------------------------------
+user/ensure! - /home/chuck/ai-src/worktrees/exporter-fused-nested-literal-20261020/research/fused-nested-literal-20261020/validate-native.bb:3:23
+user/ensure! - /home/chuck/ai-src/worktrees/exporter-fused-nested-literal-20261020/research/fused-nested-literal-20261020/validate-native.bb:2:1
+user         - /home/chuck/ai-src/worktrees/exporter-fused-nested-literal-20261020/research/fused-nested-literal-20261020/validate-native.bb:12:3
+user         - /home/chuck/ai-src/worktrees/exporter-fused-nested-literal-20261020/research/fused-nested-literal-20261020/validate-native.bb:4:1
+

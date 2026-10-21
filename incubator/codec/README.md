@@ -1,5 +1,11 @@
 # Experimental explicit JSON codec
 
+An unadopted [fused nested-STRING experiment](../../research/fused-nested-literal-20261020/README.md)
+adds explicit `prepare-nested-literal` and `with-nested-literal-writer` bridges.
+They produce the same JSON STRING value without a subsequent byte-by-byte
+outer-escaping pass. The scoped variant retains a separate bounded fragment
+cache. Neither accepts caller-supplied raw JSON or changes exporter defaults.
+
 An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
 adds a separate trusted encoder output strategy without changing the existing
 plain-map converter. Do not pass its factory to that map-returning API. The

@@ -6,6 +6,7 @@
             [jolt.codec.experimental-test]
             [jolt.codec.row-view-test]
             [jolt.codec.nested-fragment-test]
+            [jolt.codec.fused-nested-literal-test]
             [jolt.codec.record-test]
             [jolt.codec.scalar-text.experimental-test]
             [jolt.codec.scalar-text.view-test]
@@ -19,9 +20,10 @@
                              'jolt.traversal.leaf-block-test
                              'jolt.codec.row-view-test
                              'jolt.codec.nested-fragment-test
+                             'jolt.codec.fused-nested-literal-test
                              'jolt.codec.record-test
                              'jolt.codec.scalar-text.experimental-test
                              'jolt.codec.scalar-text.view-test)]
-    (assert (= 43 (:test result)))
+    (assert (= 46 (:test result)))
     (assert (nil? (find-ns 'otel.exporter.chdb)))
     (System/exit (if (zero? (+ (:fail result) (:error result))) 0 1))))
