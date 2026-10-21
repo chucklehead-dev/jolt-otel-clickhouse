@@ -1,0 +1,2 @@
+8b09855619ce8153da590691dbbd4d23cd07db69f35b8ca9d7871f154d765a99  src/otel/exporter/chdb/native_trace_field_slots.ss
+a847e7830cb5d7a6e564f87ff26f3d58ae35df99700b8b0d734394ad67b4536d  test/otel/exporter/chdb_native_field_slots_test.clj

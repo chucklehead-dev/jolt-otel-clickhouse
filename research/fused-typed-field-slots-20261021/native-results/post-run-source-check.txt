@@ -1,0 +1,7 @@
+deps.edn: OK
+src/perf/field_slot_pipeline.clj: OK
+../../scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj: OK
+../../../src/otel/exporter/chdb/attribute_projection.clj: OK
+../../../src/otel/exporter/chdb/native_projection.clj: OK
+../../../src/otel/exporter/chdb/native_trace_field_slots.ss: OK
+../../../src/otel/exporter/chdb.clj: OK

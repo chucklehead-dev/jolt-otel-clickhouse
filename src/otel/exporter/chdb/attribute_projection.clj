@@ -228,14 +228,18 @@
         plan (mapv (fn [{:keys [location key type]}]
                      [(get indices location) key type]) fields)]
     (if native-maps?
-      (if folder
-        (do
-         (require 'otel.exporter.chdb.native-projection)
-         (indexed-vector-projector
-           locations wanted plan
-           ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
-            #'key-string #'clojure.core/contains? original-key-string folder)))
-        (indexed-vector-projector locations wanted plan))
+      (do
+        (require 'otel.exporter.chdb.native-projection)
+        (let [fallback (if folder
+                         (indexed-vector-projector
+                           locations wanted plan
+                           ((ns-resolve 'otel.exporter.chdb.native-projection 'load-declared-collector!)
+                            #'key-string #'clojure.core/contains? original-key-string folder))
+                         (indexed-vector-projector locations wanted plan))
+              direct ((ns-resolve 'otel.exporter.chdb.native-projection 'load-trace-field-slots!)
+                      locations plan #'key-string #'clojure.core/contains? original-key-string
+                      #'projected-value original-projected-value folder)]
+          (if direct (fn [span] (or (direct span) (fallback span))) fallback)))
     (fn [span]
       (let [values (mapv (fn [location keys]
                            (values-by-key (attributes-at span location) keys))

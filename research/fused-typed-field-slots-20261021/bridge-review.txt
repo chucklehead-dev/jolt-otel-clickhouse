@@ -1,0 +1,11 @@
+Write is disabled in this session, so I can't produce the plan file — here's the review directly.
+
+**Verdict: CLOSED (confirmed).** `native_trace_field_slots.ss:22-26` now runs, inside the factory lambda before any schema/classification work (classification starts line 27), the identical `top-level-bound? 'jolt-invoke3` / `procedure?` / `bitwise-bit-set? (procedure-arity-mask ...) 4` triad and the same `'native-projection "Runtime continuation bridge is unavailable"` error as the sibling guard in `native_projection.clj:64-67` (`load-positional-output!`). The `(when original-projector ...)` gate exactly covers the only call site that can reach `jolt-invoke3` (line 94: `(if (and original-projector (eq? projector original-projector)) (jolt-invoke3 ...) (jolt-invoke2 ...))`), so every reachable path to the 4-arg bridge is now checked at construction, matching the file's own header contract ("decline BEFORE invoking user callbacks").
+
+`unavailable-continuation-bridge-rejects-at-construction` (`chdb_native_field_slots_test.clj:116-133`) evaluates the `.ss` source directly, swaps `jolt-invoke3` for a wrong-arity 1-arg lambda inside `dynamic-wind`, restores the saved binding in the `after` thunk (fires on every exit, including the error/guard path), and asserts the controlled condition is raised rather than an uncaught arity error — a faithful match to the description.
+
+`field-slots-bridge-tests.log` shows "Ran 8 tests. 561 assertions passed, 0 failures, 0 errors," matching the 8 `deftest` forms present and the README's claim. README's framing is accurate: the paired-component benchmark table is explicitly labeled as preceding the constructor-only guard, and the hot per-span body (everything after the guard, lines 69-101) is unchanged — no new hot-path/timing claim is implied.
+
+**No new blocker.** The guard checks a moment-in-time binding of `jolt-invoke3`; a rebind between construction and invocation wouldn't be caught, but that's the same risk shape as the pre-existing sibling guard, not a regression introduced here.
+
+**Caveat:** source-only read, nothing executed — the 561-assertion count and sha256 hashes are taken as reported, not independently recomputed.

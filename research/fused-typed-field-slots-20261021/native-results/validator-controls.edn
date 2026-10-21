@@ -1,0 +1,1 @@
+{:positive-control true, :rejected-controls [:empty-samples :false-ack :wrong-round :wrong-selected :wrong-quantile :wrong-rate :wrong-allocation :missing-physical-proof :missing-rows], :persisted-receipts-modified false}

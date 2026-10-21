@@ -7,12 +7,14 @@ on:
       - incubator/codec/**
       - deps.edn
       - src/otel/exporter/**
+      - test/otel/exporter/chdb_native_field_slots_test.clj
   pull_request:
     paths:
       - .github/workflows/experimental-codec-stock.yml
       - incubator/codec/**
       - deps.edn
       - src/otel/exporter/**
+      - test/otel/exporter/chdb_native_field_slots_test.clj
   workflow_dispatch:
 
 permissions:
@@ -80,6 +82,9 @@ jobs:
           # Dependency-root qualification: no checkout-local codec source alias.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-span-codec-test)
+          # Bounded typed collection must use the explicit independent folder;
+          # stock Jolt need not supply the older compiler-fork global helper.
+          (cd ../.. && "$task_bin" -Srepro -M:native-field-slots-test)
           # New SDK-owned plans must resolve the published library, not local
           # incubator source. The gate checks both actual resource identities.
           (cd ../.. && "$task_bin" -Srepro \

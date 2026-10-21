@@ -1,0 +1,21 @@
+**Scope: source-only review** (Read/Grep against files on disk). No commands, scripts, or benchmarks were executed; no `.bb` validator was run. All arithmetic checks below were done by hand against the persisted `.edn` receipts.
+
+## Findings
+
+**1. The headline "+6.71%" is carried almost entirely by one outlier run, and the two indexed runs are suspiciously identical.**
+`native-results/summary.edn`: forward pair (A1→B1) = +1.79%, reverse pair (A2→B2) = +12.14%, baseline drift (A1→A2) = +0.0052%. Checking `confirmed-window-nanos`: A1=13,142,676,385 vs A2=13,141,996,195 — two independent process runs (separate warmups/GC/JIT) agree to within 0.005%, while the two fused runs (B1=12,911,859,170 vs B2=11,719,007,709) differ by ~10%. Drop B2 and the effect (A1/A2 vs B1 alone) is ~1.8%, indistinguishable from the baseline-drift noise floor. The raw numbers are honestly disclosed (both pair percentages are printed in `README.md`/`summary.edn`), but the "Adoption decision" framing ("measured allocation benefit and modest fixture-specific native-rate improvement") doesn't surface that one of the two A/B pairs is statistically within noise. **Smallest fix:** add one line noting the forward pair alone sits within the observed baseline-drift band, so the rate claim rests mainly on the reverse pair.
+
+**2. No second source-hash snapshot backs the "checked again after" claim.**
+`native-results/README.md` line 85 states prebuild source hashes "were checked again after all writer processes finished," but only one `prebuild-source-sha256.txt` exists (pre-build) — there's no retained post-run hash file to evidence the recheck. **Smallest fix:** retain/reference the second hash artifact, or soften the sentence to describe only the pre-build check that's actually evidenced.
+
+## Non-findings (checked and consistent)
+- Rate/quantile/allocation arithmetic in `validate-native.bb`/`summarize-native.bb` recomputes from raw `:nanos`/`:heap`/`:gc-bytes` rather than trusting stored summary fields (spot-checked A1: 160e12/13,142,676,385 ≈ 12,174.08 ✓; quantiles match sorted sample maxima ✓).
+- Pooled rate is total-rows/total-time, correctly weighted (not an average-of-rates).
+- `app/src/perf/field_slot_pipeline.clj`'s `with-redefs` interception self-validates via `:factory-calls`/`:factories-selected` assertions, which would fail if redefinition hadn't actually taken effect in release mode.
+- `validate-controls.bb`'s 8 mutation controls + positive control behave as expected per `validator-controls.edn`.
+- Independent recovery reruns a genuinely different, older exporter commit (`0af1008...`), avoiding circular validation against the writer's own code.
+- Single artifact SHA256 (`artifact-sha256.txt`) used across both arms matches the "same-binary A/B/B/A" claim.
+- README already explicitly flags p95/p99 at n=32/n=16 as sample maxima (not population-tail estimates) and flags no target/tail/SDK-queue/S3 qualification — accurate self-caveats, not overstated.
+
+## Overall
+No blocking correctness defect in the harness/validators themselves. The one substantive issue is interpretive — report confidence language slightly outpaces what the forward/reverse split actually supports — plus one evidentiary gap (missing post-build hash file). Both are small documentation fixes, not grounds to distrust the mechanism or re-run the experiment.
