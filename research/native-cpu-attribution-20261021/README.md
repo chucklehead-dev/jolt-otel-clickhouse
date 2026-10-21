@@ -149,6 +149,11 @@ not overhead qualification or fiber/carrier-transfer integration. Do not call
 it process CPU. It offers a library-level route to measuring named pure CPU
 regions without pretending execution-count instrumentation is sampled CPU.
 
+The same probe also passes from neutral `/tmp` with `-Srepro -Sdeps '{:deps {}}'`.
+Explicit checks confirm no SDK, exporter, data.json or codec namespace is loaded.
+See `results/isolated-cost-center-smoke.log`. This proves the narrow capability
+needs no ecosystem fork; it does not qualify a complete application or packaging.
+
 ## Next bounded action
 
 Measure a few COARSE synchronous encoder/normalization regions with public

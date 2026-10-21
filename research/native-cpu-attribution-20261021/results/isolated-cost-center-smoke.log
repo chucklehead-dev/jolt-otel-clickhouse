@@ -1,0 +1,2 @@
+{:scope :stock-public-cost-center-capability, :iterations 1000000, :timed-cpu-nanos 1773474, :untimed-cpu-nanos 0, :same-result true, :multiple-values-preserved true, :error-propagates true, :reset-verified true, :allocation-counts-qualified false, :instruction-counts-qualified false, :overhead-qualified false, :process-cpu-qualified false, :function-attribution false}
+:isolated-stock-cost-center-no-ecosystem-namespaces
