@@ -1,0 +1,27 @@
+## Verdict: APPROVE
+
+**Scope reviewed:** `incubator/codec/src/jolt/codec/{json.ss, experimental.clj, scalar_text/plan.ss, scalar_text/experimental.clj}`, `incubator/codec/test/jolt/codec/{scalar_text/experimental_test.clj, scalar_text/view_test.clj, standalone_smoke_test.clj}`, `research/compiled-scalar-keys-20261020/{README.md, rich-screen.clj, results/*.edn}`.
+
+## Blockers
+None found.
+
+## Supporting findings
+
+1. **Byte/depth bounds.** The per-key encode limit of 98306 bytes in `ffc-json-compile-scalar-schema` (`json.ss:363`) is exactly 8192 chars × 12 bytes (two `\u` surrogate escapes) + 2 quote bytes — tight but correct for the worst-case supplementary-plane key, matching the exact-8192-emoji-key test (`view_test.clj:109-131`). The direct block-copy fast path in `emit!` (`json.ss:277-285`) fires only when the key fragment fits the current tail buffer's remaining capacity; every tail chunk's length is itself capped at `budget - completed` (`json.ss:53-59,69-76`), so the fast path can never exceed the overall byte budget. No chunk-boundary overrun.
+
+2. **Unicode escaped keys.** ASCII and UTF‑8 key-fragment arrays are pre-baked once per schema (`json.ss:355-384`) and selected by `escape-unicode?` at emit time (`json.ss:274-276`), matching the wire-mode selection used elsewhere in the encoder, via the same string encoder as ordinary object keys.
+
+3. **Ordinal/traversal order.** The compiled schema's fold order over `template` is whatever `ffc-map-fold` visits — not necessarily the original payload's key order — but all three arms (plain-map reconstruction, uncompiled view, compiled view) are keyed off the identical `template`/`root` object built once at schema-learn time (`plan.ss:69-96`), so JSON key order is pinned and shared across arms by construction. `compiled-keys-preserve-order-limits-policy-and-independent-values` (`view_test.clj:90-136`) cross-checks this against the plain-map path for n in [0..128] and both map orderings — the right test for this invariant.
+
+4. **Per-payload learning/retention.** The new `compile-view?` parameter (`plan.ss:5,19`) and `compiled-box` are threaded through without touching the existing bounded-learning path (max 8 schemas / 8192 chars / 128 keys) in `planner.ss`, which is unmodified. Compilation happens once per learned schema inside `learn!`, not per lookup.
+
+5. **Old-API / fallback-order preservation.** `native-plan-factory` and `native-view-plan-factory` still call the factory-maker with `compile-view?=false` (`scalar_text/experimental.clj:14-15,40-48`), and `plan.ss:88` falls through to the pre-existing `(view-box template values)` call whenever `compiled-box` is false, so unmodified callers stay byte-for-byte on the old path. `json.ss`'s new scalar-schema branch is purely additive alongside the pre-existing `(ffc-map-fold template scalar-text-entry! #f)` fallback (`json.ss:286`).
+
+6. **Measurement claims vs. data.** README's numbers match `results/*.edn` exactly (map/view/compiled p50/p90/p95/p99, bytes/row), and the "~3% lower median, not causal/durable" framing is accurate given n=16 samples/arm, where p99 necessarily equals the max (`ceil(0.99×16)=16th value`) — correctly disclosed. The slower first-attempt arm is kept and explained rather than omitted. Scope exclusions (SDK queue, native/durable I/O, AOT, S3) and the un-isolated dispatch-overhead caveat are stated explicitly. Nothing overstates the result; the doc leans conservative ("prefer keeping this unadopted").
+
+## Advisory measurement gaps (not blockers)
+
+- Only one 48-observation run is captured per variant (`rich.edn`, `block-rich.edn`); no repeated process run shows the "first version slower" vs. "final variant faster" delta isn't itself within the run-to-run noise visible elsewhere in the same data (e.g., the map-arm p90 varies ~189ms→~221ms between the two logged runs).
+- No separate micro-benchmark isolates just the compiled-schema dispatch/branch overhead from the base-encoder change, as the README itself flags should happen before adoption.
+- Per-observation GC noise is visible (gc-nanos up to ~126ms on one sample) and not filtered beyond "keep every GC-affected sample" — honest, but means the ~3% median gap sits within plausible GC jitter for several individual samples.
+- Assertion-count claims ("45 tests/755 assertions", standalone binary hash) can't be independently re-verified here since execution is out of scope for this review; treat as reported, not reproduced.

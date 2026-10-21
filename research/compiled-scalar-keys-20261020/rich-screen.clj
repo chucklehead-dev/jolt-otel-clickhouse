@@ -14,13 +14,22 @@
 (defn quantile [xs p]
   (nth (vec (sort xs)) (dec (long (Math/ceil (* p (count xs)))))))
 
-(let [contexts {:map (#'e/load-experimental-span-codec! true true true true)
-                :view (#'e/load-experimental-span-codec! true true true true true)
-                :compiled (with-redefs [shapes/native-view-plan-factory
+(def baseline-json (second *command-line-args*))
+(when baseline-json
+  (assert (not (realized? @#'codec/backend)))
+  ;; Isolate the original encoder while holding SDK/plans/callers fixed. The
+  ;; additive factory is unused in this control but the current loader names it.
+  (alter-var-root #'codec/json-source
+    (constantly (str (slurp baseline-json) "\n(define ffc-json-compile-scalar-schema #f)"))))
+
+(let [contexts (cond-> {:map (#'e/load-experimental-span-codec! true true true true)
+                        :view (#'e/load-experimental-span-codec! true true true true true)}
+                (not baseline-json)
+                (assoc :compiled (with-redefs [shapes/native-view-plan-factory
                                         (fn [_]
                                           (shapes/native-compiled-view-plan-factory
                                             (codec/native-compiled-scalar-text-view-factory)))]
-                            (#'e/load-experimental-span-codec! true true true true true))}
+                            (#'e/load-experimental-span-codec! true true true true true))))
       rows (app/fixture 5000)
       target (Object.) installation (#'installed/installed (app/approved) target)
       typed (projection/trace-vector-projector (:descriptor-set installation) target true
@@ -38,14 +47,15 @@
                    ((:encode context) "SQL\n" values project 67108864))))
       equal? (scheme/eval-string "(lambda (a b) (bytevector=? (jolt-array-vec a) (jolt-array-vec b)))")
       expected (encode :map rows)
-      _ (doseq [mode [:map :view :compiled]]
+      modes (if baseline-json [:map :view] [:map :view :compiled])
+      _ (doseq [mode modes]
           (assert (equal? expected (encode mode rows)))
           (assert (not (equal? expected (encode mode (assoc-in rows [0 :events 0 :name] "changed-event"))))))
-      order [:map :view :compiled :compiled :view :map]
+      order (vec (concat modes (reverse modes)))
       _ (doseq [mode order] (encode mode rows))
       observations
       (mapv (fn [ordinal]
-              (let [mode (nth order (mod ordinal 6)) before (counters)
+              (let [mode (nth order (mod ordinal (count order))) before (counters)
                     start (System/nanoTime) output (encode mode rows)
                     elapsed (- (System/nanoTime) start) after (counters)]
                 (assert (equal? expected output))
@@ -54,7 +64,7 @@
                                      (+ (:heap before) (:gc-bytes before)))
                  :cpu-nanos (- (:cpu after) (:cpu before))
                  :gc-count (- (:gc-count after) (:gc-count before))
-                 :gc-nanos (- (:gc-nanos after) (:gc-nanos before))})) (range 48))
+                 :gc-nanos (- (:gc-nanos after) (:gc-nanos before))})) (range (* 16 (count modes))))
       summary (into {} (for [[mode samples] (group-by :mode observations)]
                          [mode {:p50-p90-p95-p99-ms
                                 (mapv #(/ (quantile (map :nanos samples) %) 1e6) [0.5 0.9 0.95 0.99])
@@ -66,6 +76,7 @@
              :changed-event-controls true :schema-compilation-in-every-sample true
              :sdk-policy-and-payload-cache-included true :typed-projection-included true
              :test-only-context-injection true :sdk-queue false :native-io false
+             :baseline-json-source baseline-json :encoder-only-base-control (boolean baseline-json)
              :durable-io false :tail-qualified false
              :output-bytes (alength expected) :summary summary :observations observations}))
   (prn summary))

@@ -68,8 +68,64 @@ No persistence/lifecycle/model logic changes or unchanged exhaustive run.
 The same45tests/755assertions also pass in a default Linux standalone binary
 executed from `/tmp`, outside checkout-relative resource resolution. Binary
 SHA256ff67b4fa434ea6872f7b4dcbd90182f697fdb1401f6d51163de94afc391097a9.
-Independent peer review and a base-encoder comparison are still required before
-proposing adoption. Prefer keeping this unadopted if larger work has more payoff.
+Independent peer review and an initial base-encoder comparison are recorded
+below. Neither establishes an adoption-worthy time win; keep this unadopted.
+
+## Review and follow-up: still unadopted
+
+Claude's read-only review of350135e approved the bounded implementation, found
+no blockers, and correctly called out the missing base-encoder comparison and
+small noisy sample. It did not run tests. Its "old path" finding means retained
+APIs/semantics, not zero shared-path performance overhead. Codex ran the gates.
+The subsequent screen-only baseline control/receipts were added after that
+review; no reviewed implementation changed in the final tree.
+
+An unchanged encoder control reads the actual clean e1f35c7 json.ss from the
+separate scalar-view worktree; SHA256
+`5b9cc251976491faa16c51d493e1fd32a90c13108cb1ea1f70e3facdd18e9166`.
+The current loader references the additive schema function; the old source gets
+only an unused false definition for that symbol. The compiled arm is excluded
+from this control; SDK/plans/callers remain current. An assertion proves the
+codec backend has not already been realized before swapping the source.
+
+Control p50 map/view164.88/160.15ms; estimated allocation11306/9769 B/row.
+Repeat candidate p50 map/view/compiled172.90/164.64/154.76ms, estimated
+11338/9801/9813 B/row. These are sequential process runs, NOT an ABBA causal
+comparison; they reveal a consistent estimated extra32B/row in common candidate
+paths, whose cause is NOT established. They do not prove a time regression.
+
+A further test replaced the new `bytes!` and `scalar-text!` local procedures
+with hygienic syntax-rules expansions to test the captured-helper hypothesis.
+It passed45/755 but did not remove the allocation difference (11338/9802/9813
+B/row), and all arms were slower (208.13/201.15/199.15ms). No causal compiler or
+closure diagnosis follows; the macro change was reverted exactly to reviewed
+350135e source rather than carried as an unmeasured "fix". Small raw reports
+are retained, and no unpaired process timing is promoted into a win.
+
+Thus compiled-key emission remains a reviewed research branch, not a proposed
+product adoption or a new exporter flag. Preserve the existing scalar-view
+gain and pursue larger pass fusion/ordered overlap, not more retries of this
+unchanged small mechanism. The old-helper/global registration approach was
+not restored; stock Jolt remains sufficient for these library paths.
+
+## Separate stock-runtime overlap diagnostic
+
+`runtime-overlap/` contains a tiny C11 atomic-state helper and Jolt runner.
+A sequential negative control performs work after native exit. In the positive
+case, a future enters an actual collect-safe C call and publishes state1 from
+inside C; the main thread computes and forces an observed GC while C still
+reports state1. One collection and the full1million-iteration result were
+observed before native exit. The runner awaits the exact worker and calls
+shutdown-agents before exit. All arguments are scalar, no callbacks/managed
+buffer loans/chDB handles, no production concurrency or model changes.
+
+This demonstrates stock0.8.23 runtime potential, NOT chDB pointer lifetime,
+data-race freedom, SDK settlement, bounded queues or Durable pipeline safety.
+Existing driver stream FFI calls already carry blocking flags; no missing-flag
+fix is justified. Initial diagnostic also passed/joined but waited Jolt's
+documented60s future-pool keepalive before exiting. Explicit shutdown-agents
+removed that diagnostic exit delay; neither run was killed/restarted on silence.
+This is not a throughput benchmark, and its elapsed time is not a speed claim.
 
 Reproduce from the repository root using the mandatory Chez wrapper and exact
 stock Jolt binary:

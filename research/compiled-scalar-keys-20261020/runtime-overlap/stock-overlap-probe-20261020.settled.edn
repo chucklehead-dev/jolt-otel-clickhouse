@@ -1,0 +1,1 @@
+{:runtime :stock-jolt-0.8.23, :native-phase-before 1, :native-phase-after 1, :gc-count-delta 1, :scheme-work-result 1000000, :elapsed-nanos 2748984, :sequential-negative-control true, :scalar-only-ffi true, :native-buffer-loans false, :chdb-io false, :pipeline-safety-proven false}

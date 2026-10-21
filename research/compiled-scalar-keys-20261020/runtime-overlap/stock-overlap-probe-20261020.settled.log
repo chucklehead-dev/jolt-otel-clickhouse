@@ -1,0 +1,1 @@
+PASS: Scheme CPU work and an observed GC completed during native C wait; worker joined.
