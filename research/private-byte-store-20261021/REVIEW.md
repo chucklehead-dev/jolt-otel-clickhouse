@@ -26,3 +26,12 @@ demonstrated native exploit. No global optimize-level3 was enabled.
 
 No source/format/persistence model proof is inferred from these controls.
 Codex owns the native access reasoning, complete tests and qualification.
+
+## Follow-up on the corrected source
+
+Claude read-only55220 returned terminal0 against453fe44: no blockers found;
+both numeric formatter outputs now use checked stores, remaining fast-store
+callers are bounded internal bytes, and lexical formatter controls exercise
+the intended rejection without replacing process-global primitives. No tests
+were run by the reviewer. This is independent source review, not machine proof.
+The finalized native workload began only after both reviewer and build ended.

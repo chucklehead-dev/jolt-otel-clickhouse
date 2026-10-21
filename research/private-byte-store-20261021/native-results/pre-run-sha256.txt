@@ -1,0 +1,8 @@
+451126d9b356bc2e7c3af209be5ebb4011ebd7ca4cc8346d13e8ed3f718eb8f5  src/otel/exporter/chdb.clj
+169e8359b597bb005f0d21e87d0c7a347690441114d060117137447591a5aa2b  incubator/codec/src/jolt/codec/json.ss
+8203101bf2639ae7fd5bd3bb1e947e435d804796f0c55cc86a93db991c5dd7bd  research/fused-typed-field-slots-20261021/app/deps.edn
+4c7faff9f0981208b8e0b727d5db7c3f51a73c1998c1670c701939edc3289332  research/fused-typed-field-slots-20261021/app/src/perf/field_slot_pipeline.clj
+b8888e60b332bc1d19566be1db6b0a4abf1ce199a671b0fde74a74780dc86367  research/scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj
+702dda478703aae460a28c8ac8276485d16e33b175357331deb13a42831c50eb  /home/chuck/ai-src/evidence/private-byte-store-native-20261021.VuK0qtxe/baseline-app
+8176d81601da6969e92408f0b05574240d4197893c8aae62038763402ebfe461  /home/chuck/ai-src/evidence/private-byte-store-native-20261021.VuK0qtxe/candidate-v2-app
+a7d22ade86e1de82b187adf572b569a6034600ce932c52b0acb8c97b82430557  /home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so

@@ -1,0 +1,3 @@
+359276	/home/chuck/ai-src/evidence/private-byte-store-native-20261021.VuK0qtxe/B2/objects
+22732	/home/chuck/ai-src/evidence/private-byte-store-native-20261021.VuK0qtxe/B2/scratch-writer
+381772	/home/chuck/ai-src/evidence/private-byte-store-native-20261021.VuK0qtxe/B2/scratch-reader
