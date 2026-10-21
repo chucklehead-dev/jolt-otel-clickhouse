@@ -81,3 +81,10 @@ encoder control, then actual Durable independent recovery before adoption.
 The ~25ms earlier frozen-normalization ceiling was never enough alone for the
 overall target. Larger projection fusion and bounded ordered overlap remain
 separate possible work, not benefits claimed by this small mechanism.
+
+Claude read-only review of exact implementation commit `dbbe399`: APPROVE, no
+blockers. The `text` helper's `(view-box value)` is a Scheme cond clause: test
+the bare `view-box` flag, then return raw `value`; it does not call the box at
+that point. Actual boxing occurs only after all admission/policy checks. See
+`claude-review.txt` and `review-resolution.md`. Source/standalone/count controls
+were independently run by Codex, not delegated.
