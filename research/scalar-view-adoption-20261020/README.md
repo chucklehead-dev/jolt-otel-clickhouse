@@ -21,6 +21,10 @@ consumer-oracle gap without changing runtime behavior.
 
 ## Local qualification
 
+Exact d885c9b also passed hosted stock-library CI run39535716190. Claude final
+pin/native-CI/PR-text review approved with no blockers; see review-resolution.md
+for two factual clarifications to its prose. All final PR checks remain required.
+
 - Actual published SDK+codec view gate:3tests/19assertions.
 - Existing published library/consumer regression:71/553.
 - Existing inferred-shape gate against new exact pins:4/15.
