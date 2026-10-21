@@ -59,8 +59,12 @@ stock executable, `JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0`:
 /home/chuck/ai-src/tools/jolt-with-chez-10.4.1 \
   env JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0 \
   /home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt \
-  -Srepro build -m perf.value-reuse-pipeline -o /absolute/owned/value-reuse-app
+  build -m perf.value-reuse-pipeline -o /absolute/owned/value-reuse-app
 ```
+
+Keep `build` first on stock0.8.23: its early build-subsystem detector does not
+peel `-Srepro`, causing an unbound `jolt.host/build-binary` before compilation.
+`JOLT_NO_USER_DEPS=1` supplies the same user-dependency isolation here.
 
 Run that SAME binary from a neutral directory, with a fresh absolute root per
 run and `JOLT_CHDB_LIB` pointing at26.9.0. Arguments are `ROOT views` or
