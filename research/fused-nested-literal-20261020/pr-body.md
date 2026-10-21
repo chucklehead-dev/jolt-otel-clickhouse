@@ -46,7 +46,12 @@ own candidate namespace; the old71-test gate is unchanged, not weakened.
   full fields, types, exact timestamps and multiplicities:700000 rows total.
 - Cached controls:12.2k and10.0k confirmed rows/s. Fused+cached:13.5k and13.6k.
   Fused estimated allocation is about0.8% higher. Control drift is -18.3%, so
-  this is promising but NOT a precise causal speedup or population-tail claim.
+  this is NOT a precise causal speedup or population-tail claim. A subsequent
+  same-process ORIGINAL published byte-kernel control did NOT confirm a win:
+  p50 per5k original175.27ms, candidate classic182.06ms, fused194.79ms.
+  Allocation also rose9768→9801→9930B/row. Full bytes matched with changed-event
+  controls; CPU tracked wall and GC did not explain all large samples. See
+  `research/fused-nested-literal-20261020/original-kernel.md` and its raw report.
 - Direct public exporter calls, not a live SDK queue or Oscope/Langfuse/S3
   throughput result. Native timings precede the preflight-only follow-up;
   that follow-up has its own source/standalone tests, unchanged byte kernel.
@@ -58,8 +63,11 @@ Full scripts, raw small reports, caveats and retention receipts:
 
 ## Draft gates
 
-Before adoption/merge, isolate original/default-encoder regression cost rather
-than comparing only two strategies in the candidate encoder, and qualify any
+The original/default-encoder screen is now complete and NEGATIVE: this draft
+has NOT cleared the performance adoption gate. Do not enable its exporter
+integration or merge it as a demonstrated throughput improvement. Further
+work needs a changed mechanism/explanation and matched original controls,
+not an unchanged rerun seeking favorable timings. Independently qualify any
 actual exporter capability selection. Do not add retries or pool drifting
 controls into a target claim. Existing temporary stores/build intermediates
 were retired after validated recovery; only small evidence and one explicitly
