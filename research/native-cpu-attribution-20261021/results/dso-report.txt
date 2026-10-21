@@ -1,0 +1,23 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cpu-clock:u'
+# Event count (approx.): 17341706375
+#
+# Overhead       Samples        Period  Shared Object       
+# ........  ............  ............  ....................
+#
+    54.25%          1872    9407034000  [JIT] tid 2778170   
+    34.60%          1194    5999999250  libchdb.so          
+     3.71%           128     643216000  app                 
+     3.30%           114     572864250  libcrypto.so.3      
+     2.26%            78     391959750  libc.so.6           
+     1.83%            63     316582875  ld-linux-x86-64.so.2
+     0.06%             2      10050250  [vdso]              
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

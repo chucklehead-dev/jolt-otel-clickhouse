@@ -1,0 +1,24 @@
+
+/home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000009021400 <query_stable@@Base-0x5a07480>:
+     9021400:	62 f1 7c 48 10 04 3e 	vmovups (%rsi,%rdi,1),%zmm0
+     9021407:	62 f1 7c 48 10 4c 3e 	vmovups 0x40(%rsi,%rdi,1),%zmm1
+     902140e:	01 
+     902140f:	62 f1 7c 48 10 54 3e 	vmovups 0x80(%rsi,%rdi,1),%zmm2
+     9021416:	02 
+     9021417:	62 f1 7c 48 10 5c 3e 	vmovups 0xc0(%rsi,%rdi,1),%zmm3
+     902141e:	03 
+     902141f:	62 f1 7c 48 11 5c 39 	vmovups %zmm3,0xc0(%rcx,%rdi,1)
+     9021426:	03 
+     9021427:	62 f1 7c 48 11 54 39 	vmovups %zmm2,0x80(%rcx,%rdi,1)
+     902142e:	02 
+     902142f:	62 f1 7c 48 11 4c 39 	vmovups %zmm1,0x40(%rcx,%rdi,1)
+     9021436:	01 
+     9021437:	62 f1 7c 48 11 04 39 	vmovups %zmm0,(%rcx,%rdi,1)
+     902143e:	48 81 c7 00 01 00 00 	add    $0x100,%rdi
+     9021445:	48 39 d7             	cmp    %rdx,%rdi
+     9021448:	72 b6                	jb     9021400 <query_stable@@Base-0x5a07480>

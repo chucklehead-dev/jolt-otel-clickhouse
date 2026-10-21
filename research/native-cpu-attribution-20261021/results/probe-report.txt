@@ -1,0 +1,21 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 198  of event 'cpu-clock:u'
+# Event count (approx.): 994974750
+#
+# Overhead       Samples  Command  Shared Object   Symbol                              IPC   [IPC Coverage]
+# ........  ............  .......  ..............  ..................................  ....................
+#
+    86.36%           171  openssl  libcrypto.so.3  [.] sha256_block_data_order_shaext  -      -            
+     2.02%             4  openssl  libc.so.6       [.] _int_free                       -      -            
+     2.02%             4  openssl  libc.so.6       [.] cfree@GLIBC_2.2.5               -      -            
+     1.52%             3  openssl  libcrypto.so.3  [.] SHA256_Init                     -      -            
+     1.01%             2  openssl  libcrypto.so.3  [.] evp_md_init_internal            -      -            
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

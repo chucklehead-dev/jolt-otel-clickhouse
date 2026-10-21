@@ -1,0 +1,36 @@
+:public-pipeline-batch {:round 0, :nanos 454562260}
+:public-pipeline-batch {:round 1, :nanos 374430776}
+:public-pipeline-batch {:round 2, :nanos 425895833}
+:public-pipeline-batch {:round 3, :nanos 391407264}
+:public-pipeline-batch {:round 4, :nanos 439811900}
+:public-pipeline-batch {:round 5, :nanos 324637894}
+:public-pipeline-batch {:round 6, :nanos 381901168}
+:public-pipeline-batch {:round 7, :nanos 447087980}
+:public-pipeline-batch {:round 8, :nanos 401665741}
+:public-pipeline-batch {:round 9, :nanos 448403255}
+:public-pipeline-batch {:round 10, :nanos 359801385}
+:public-pipeline-batch {:round 11, :nanos 491160533}
+:public-pipeline-batch {:round 12, :nanos 490020501}
+:public-pipeline-batch {:round 13, :nanos 511351289}
+:public-pipeline-batch {:round 14, :nanos 369658509}
+:public-pipeline-batch {:round 15, :nanos 348476271}
+:public-pipeline-batch {:round 16, :nanos 584774618}
+:public-pipeline-batch {:round 17, :nanos 444950779}
+:public-pipeline-batch {:round 18, :nanos 505702365}
+:public-pipeline-batch {:round 19, :nanos 436766915}
+:public-pipeline-batch {:round 20, :nanos 460980862}
+:public-pipeline-batch {:round 21, :nanos 436592071}
+:public-pipeline-batch {:round 22, :nanos 408482197}
+:public-pipeline-batch {:round 23, :nanos 421469966}
+:public-pipeline-batch {:round 24, :nanos 454066687}
+:public-pipeline-batch {:round 25, :nanos 392756183}
+:public-pipeline-batch {:round 26, :nanos 432224100}
+:public-pipeline-batch {:round 27, :nanos 462519526}
+:public-pipeline-batch {:round 28, :nanos 363984173}
+:public-pipeline-batch {:round 29, :nanos 417610112}
+:public-pipeline-batch {:round 30, :nanos 462703262}
+:public-pipeline-batch {:round 31, :nanos 452150613}
+:public-pipeline-complete {:rows 175000, :mode release}
+:field-slot-selection fused :factory-calls 1 :selected 1
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.188 MB /home/chuck/ai-src/evidence/native-cpu-20261021.SBYw1g1j/perf.data (3451 samples) ]

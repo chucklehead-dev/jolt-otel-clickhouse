@@ -1,0 +1,11 @@
+Doing sha256 ops for 1s on 1024 size blocks: 974090 sha256 ops in 0.98s
+version: 3.6.3
+built on: Tue Jun  9 11:46:57 2026 UTC
+options: bn(64,64)
+compiler: gcc -fPIC -pthread -m64 -Wa,--noexecstack -Wall -O3 -DOPENSSL_USE_NODELETE -DL_ENDIAN -DOPENSSL_PIC -DOPENSSL_BUILDING_OPENSSL -DNDEBUG
+CPUINFO: OPENSSL_ia32cap=0xfffab2235f8bffff:0x18405fc6f1bf27ab:0x00000000bc100510:0x0000000000000000:0x0000000000000000
+The 'numbers' are in 1000s of bytes per second processed.
+type           1024 bytes
+sha256         1017824.65k
+[ perf record: Woken up 1 times to write data ]
+[ perf record: Captured and wrote 0.009 MB /home/chuck/.cache/native-perf-tools-20261021/probe.data (198 samples) ]

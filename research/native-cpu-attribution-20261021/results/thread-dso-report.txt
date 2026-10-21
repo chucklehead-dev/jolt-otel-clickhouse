@@ -1,0 +1,47 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cpu-clock:u'
+# Event count (approx.): 17341706375
+#
+# Overhead       Samples        Period      Pid:Command     Command     Shared Object       
+# ........  ............  ............  ..................  ..........  ....................
+#
+    46.80%          1615    8115576875  2778170:app         app         [JIT] tid 2778170   
+    12.32%           425    2135678125  2778265:ThreadPool  ThreadPool  libchdb.so          
+     9.13%           315    1582914375  2778187:ThreadPool  MergeMutat  libchdb.so          
+     7.39%           255    1281406875  2778189:app         app         [JIT] tid 2778170   
+     7.10%           245    1231155625  2778188:ThreadPool  MergeMutat  libchdb.so          
+     3.36%           116     582914500  2778170:app         app         app                 
+     3.27%           113     567839125  2778189:app         app         libcrypto.so.3      
+     3.19%           110     552763750  2778189:app         app         libchdb.so          
+     1.59%            55     276381875  2778170:app         app         libc.so.6           
+     1.54%            53     266331625  2778170:app         app         libchdb.so          
+     1.13%            39     195979875  2778265:ThreadPool  RuntimeDat  libchdb.so          
+     1.01%            35     175879375  2778170:app         app         ld-linux-x86-64.so.2
+     0.58%            20     100502500  2778189:app         app         libc.so.6           
+     0.43%            15      75376875  2778265:ThreadPool  ThreadPool  ld-linux-x86-64.so.2
+     0.35%            12      60301500  2778189:app         app         app                 
+     0.23%             8      40201000  2778188:ThreadPool  MergeMutat  ld-linux-x86-64.so.2
+     0.09%             3      15075375  2778189:app         app         ld-linux-x86-64.so.2
+     0.06%             2      10050250  2778187:ThreadPool  MergeMutat  ld-linux-x86-64.so.2
+     0.06%             2      10050250  2778219:ThreadPool  QueryPipel  libchdb.so          
+     0.06%             2      10050250  2778265:ThreadPool  ThreadPool  [vdso]              
+     0.03%             1       5025125  2778170:app         app         libcrypto.so.3      
+     0.03%             1       5025125  2778179:app         app         libchdb.so          
+     0.03%             1       5025125  2778183:app         app         libchdb.so          
+     0.03%             1       5025125  2778185:ThreadPool  BgSchPool   libchdb.so          
+     0.03%             1       5025125  2778186:ThreadPool  PoolDelayE  libc.so.6           
+     0.03%             1       5025125  2778187:ThreadPool  MergeMutat  libc.so.6           
+     0.03%             1       5025125  2778188:ThreadPool  MergeMutat  [JIT] tid 2778170   
+     0.03%             1       5025125  2778199:ThreadPool  BackupAsyn  libchdb.so          
+     0.03%             1       5025125  2778219:ThreadPool  QueryPullP  libchdb.so          
+     0.03%             1       5025125  2778265:ThreadPool  RuntimeDat  [JIT] tid 2778170   
+     0.03%             1       5025125  2778265:ThreadPool  RuntimeDat  libc.so.6           
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

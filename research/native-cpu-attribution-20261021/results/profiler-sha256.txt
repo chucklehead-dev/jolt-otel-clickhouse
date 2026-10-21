@@ -1,0 +1,3 @@
+7bf31034e1914ff171c2b82c48e1f17b5123b7e63e1d4ef0582877c45cc17cd0  /home/chuck/.cache/native-perf-tools-20261021/linux-tools-6.8.0-147_6.8.0-147.147_amd64.deb
+fb03496824a22ffb70c67a92a66c4e369bbbefc934078a1fecda564364793d56  /home/chuck/.cache/native-perf-tools-20261021/libtraceevent1_1%3a1.8.2-1ubuntu2.1_amd64.deb
+2927eb0973fd937bdd417622531c95f1e6e19307a29c3e05a2c6198e12af6e56  /home/chuck/.cache/native-perf-tools-20261021/extracted/usr/lib/linux-tools-6.8.0-147/perf

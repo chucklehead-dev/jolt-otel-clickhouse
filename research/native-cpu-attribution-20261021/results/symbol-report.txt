@@ -1,0 +1,26 @@
+# To display the perf.data header info, please use --header/--header-only options.
+#
+#
+# Total Lost Samples: 0
+#
+# Samples: 3K of event 'cpu-clock:u'
+# Event count (approx.): 17341706375
+#
+# Overhead       Samples  Shared Object         Symbol                                 IPC   [IPC Coverage]
+# ........  ............  ....................  .....................................  ....................
+#
+     1.77%            61  libc.so.6             [.] __memmove_evex_unaligned_erms      -      -            
+     1.42%            49  [JIT] tid 2778170     [.] 0x00000000675ddbd9                 -      -            
+     1.22%            42  libchdb.so            [.] 0x000000000902041f                 -      -            
+     0.99%            34  ld-linux-x86-64.so.2  [.] _dl_relocate_object                -      -            
+     0.81%            28  app                   [.] sweep_generation_pass.isra.0       -      -            
+     0.81%            28  ld-linux-x86-64.so.2  [.] __tls_get_addr                     -      -            
+     0.70%            24  libchdb.so            [.] 0x000000000902040f                 -      -            
+     0.64%            22  libchdb.so            [.] __tls_get_addr@plt                 -      -            
+     0.55%            19  libchdb.so            [.] 0x0000000009020417                 -      -            
+     0.52%            18  app                   [.] LZ4_decompress_safe                -      -            
+
+
+#
+# (Cannot load tips.txt file, please install perf!)
+#

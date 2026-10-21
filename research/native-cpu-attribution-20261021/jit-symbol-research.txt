@@ -1,0 +1,22 @@
+Write and ExitPlanMode aren't available in this session, so I'll deliver the research answer directly here instead of via the plan file.
+
+## Can stock Chez (no fork) give perf reliable JIT symbol names/ranges? Not demonstrated.
+
+**Public API (csug/debug.stex, §Object Inspector):** `(inspect/object proc)`'s `'code` message exposes only `'name` (debug.stex:1211–1218 — "name of the variable to which the procedure was originally bound... may not always be accurate"), `'realm` (:1220–1223, from `compile-procedure-realm`), `'source`/`'source-path` (:1225–1246, requires `generate-inspector-information` at compile time), and `'free-count` (:1248–1250). **No address, length, or entry-point is public.** One code object can back many closures, so even a correct name is one label per object, not per call site.
+
+**Private internals (s/inspect.ss) — not a public contract:** `$code-name`, `$code-info`, `$code-length` (s/inspect.ss:2501–2503, reads `code-length-disp`), `$code-reloc-size`/`$code-reloc` (:2495–2506), `$code-free-count`, `$code-arity-mask`, `$code-pinfo*`. These `$`-prefixed primitives are the only place address/length data lives; using them means depending on undocumented, version-fragile internals.
+
+**Mappings go stale — code objects move.** c/gc.c:39–40: "it doesn't move anymore. In the case of code objects, relocations may be discarded when the code object moves into a static [generation]." Code is GC-relocatable until promoted to static; any address→name table built once is invalidated by later collections unless captured only post-promotion or rebuilt every GC. No such hook is documented in the inspected files.
+
+**Execution counters ≠ sampled CPU.** s/pdhtml.ss's `profile-counts`/`profile-dump`/`profile-dump-html` (:105–108, 248–250, 576–584) are source-position **execution-count** instrumentation gated by compiling with `compile-profile`. They report block-hit counts, not PC-sampled CPU time, and emit no address ranges — a different mechanism from the `cpu-clock:u` PC/TID samples in results/, and not a substitute for them.
+
+**Requested distinctions:**
+- Counters vs sampled CPU: `profile-*` counts hits; perf's data is PC sampling — unrelated mechanisms.
+- Code-object vs procedure address: only object-level naming exists; no per-closure/per-callsite address map.
+- Shared code/closures: one `$code-name` per shared code object, best-effort, possibly wrong per the doc's own caveat.
+- GC moves/stale mappings: confirmed (c/gc.c:39–40); needs re-validation per GC until static promotion.
+- Source-info/build modes: name/source data needs `generate-inspector-information` and/or `compile-profile` at compile time; without those, even the internals return nothing.
+
+**Conclusion:** stock Chez v10.4.1 has no stable, public, address-keyed symbol table suited to perf JIT resolution, and its one built-in profiler is instrumentation-based, not a time sampler. Closing the 54.25% anonymous-JIT gap from pure Scheme would mean leaning on private `$code-*` internals plus a GC-relocation-safe capture strategy — neither validated nor rejected by the files in scope.
+
+**Minimal next probe (not performed, outside the bounded file set):** check c/gc.c and c/types.h for any callback fired on code-object creation/relocation/static-promotion. If none exists, a live perf-map/jitdump feed isn't practical without a runtime patch — that single fact is the actual fork/no-fork decision point.

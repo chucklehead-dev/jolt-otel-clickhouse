@@ -1,0 +1,3 @@
+b16729499f9c905f2659757efc0931d682efddd4b2d493e7ff1e86b6ecf75546  /home/chuck/ai-src/evidence/native-cpu-20261021.SBYw1g1j/perf.data
+8cb3ee822dd1e4ddcb4c57f7f9e9bfc70ac089947ae6785c759b7ece1c58d7e0  /home/chuck/ai-src/evidence/native-cpu-20261021.SBYw1g1j/samples-offsets.txt
+702dda478703aae460a28c8ac8276485d16e33b175357331deb13a42831c50eb  /home/chuck/ai-src/evidence/native-cpu-20261021.SBYw1g1j/app
