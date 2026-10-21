@@ -17,11 +17,21 @@ ownership constants have concrete executable instances.
 
 ## State and initial acceptance
 
-Current executable coverage is the reservation/publication/retirement core.
-Shutdown, cancellation and positioned flush transitions are still to be added;
-their retained fields are not evidence that those contracts have been checked.
-Do not enable concurrent production export based on this partial gate.
+Current executable coverage is the reservation/publication/retirement core,
+plus one bounded increment: an admission fence and a cancellation transition
+that build on the existing `accepting`/`cancelled` fields. Shutdown and
+positioned flush transitions are still to be added; their retained fields are
+not evidence that those contracts have been checked. Do not enable concurrent
+production export based on this partial gate.
 Publication completion and SDK settlement are intentionally separate actions.
+Fencing stops new SDK acceptance only; it does not itself block exporter
+admission or writer submission of already-accepted batches. Cancellation may
+only follow an active fence and additionally blocks NEW exporter admission
+and NEW writer submission; it does not reach backward into stages already
+past submission, so an already writer-admitted request still starts,
+completes, settles, releases and retires. A batch that is admitted/prepared
+but not yet submitted when cancellation lands can only abort, never submit;
+it must never reach `SdkSucceeded`.
 
 ```quint target/formal/quint/boundedPreparation.qnt +=
 module boundedPreparationOwnership {
@@ -84,6 +94,15 @@ module boundedPreparation {
     rawQueue: s.rawQueue.append(batch),
     batches: s.batches.set(batch, {...s.batches.get(batch), stage: Queued}),
   }
+  // Fence stops NEW SDK acceptance only; already-queued/admitted batches keep
+  // draining through reservation, admission, submission and publication.
+  pure def canFence(s: PipelineState): bool = s.accepting
+  pure def applyFence(s: PipelineState): PipelineState = {...s, accepting: false}
+  // Cancellation may only follow an active fence; it additionally blocks NEW
+  // exporter admission and NEW writer submission (canAdmit/canSubmit below),
+  // without reaching backward into already-submitted stages.
+  pure def canCancel(s: PipelineState): bool = not(s.accepting) and not(s.cancelled)
+  pure def applyCancel(s: PipelineState): PipelineState = {...s, cancelled: true}
   pure def occupiesSlot(b: BatchState): bool = Set(
     Preparing, Prepared, PublicationQueued, Publishing, AwaitingRetirement
   ).contains(b.stage)
@@ -189,6 +208,12 @@ module boundedPreparation {
   action accept(batch: Batch): bool = all {
     canAccept(state, batch), state' = applyAccept(state, batch),
   }
+  action fence = all {
+    canFence(state), state' = applyFence(state),
+  }
+  action cancel = all {
+    canCancel(state), state' = applyCancel(state),
+  }
   action reserve(batch: Batch): bool = all {
     canReserve(state, batch), state' = applyReserve(state, batch),
   }
@@ -258,14 +283,23 @@ module boundedPreparation {
     state.batches.get(state.admittedOrder.nth(i)).stage == Publishing and
       state.admittedOrder.indices().exists(j => j > i and
         state.batches.get(state.admittedOrder.nth(j)).sdkResult == SdkFailed))
+  val fenceActiveReached = not(state.accepting)
+  val cancellationActiveReached = state.cancelled
+  val blockedAdmissionUnderCancellationReached = state.cancelled and
+    BATCHES.exists(b => state.batches.get(b).stage == Preparing and
+      not(state.batches.get(b).exporterAdmitted))
+  val drainAfterCancellationReached = state.cancelled and
+    BATCHES.exists(b => state.batches.get(b).stage == Retired and
+      state.batches.get(b).sdkResult == SdkSucceeded)
   action step = {
     nondet batch = BATCHES.oneOf()
     nondet charge = 1.to(RESERVATION).oneOf()
     nondet confirmed = Set(true, false).oneOf()
     any {
-      accept(batch), reserve(batch), admit(batch), prepare(batch, charge),
-      abortPreparation(batch), submit(batch), startPublication(batch),
-      complete(batch, confirmed), settle(batch), release(batch), retire(batch),
+      accept(batch), fence, cancel, reserve(batch), admit(batch),
+      prepare(batch, charge), abortPreparation(batch), submit(batch),
+      startPublication(batch), complete(batch, confirmed), settle(batch),
+      release(batch), retire(batch),
     }
   }
 }
@@ -292,6 +326,15 @@ abstract writer's `Confirmed` outcome trusts the receipt classification; the
 SDK adapter still needs runtime controls rejecting local/admission receipts.
 Preparation failure disposes its encoded-byte charge immediately, while the
 slot remains occupied through counter settlement and admission release.
+Two further scenarios demonstrate the fence/cancellation increment: a
+pre-writer-admission trace, where a batch cancelled before submission can
+only abort and never reach `SdkSucceeded`, while a different not-yet-admitted
+batch is blocked from new exporter admission; and a post-writer-admission
+trace, where a batch already submitted before cancellation still starts,
+completes, settles, releases and retires successfully, while a different
+batch reserved after cancellation is blocked from both admission and
+submission. Negative controls show cancellation guarded strictly behind an
+active fence, and a fence alone blocking only new acceptance.
 
 ```quint target/formal/quint/boundedPreparation_test.qnt +=
 module boundedPreparationCoreTest {
@@ -376,6 +419,43 @@ module boundedPreparationCoreTest {
     .then(admit(A)).then(all { state' = {...state, batches: state.batches.set(A,
       {...state.batches.get(A), stage: Retired})} })
     .expect(not(retirementIsSettled))
+
+  run fenceAllowsDrainTest = init.then(accept(A))
+    .then(fence)
+    .expect(fenceActiveReached and not(canAccept(state, B)))
+    .then(reserve(A)).then(admit(A)).then(prepare(A, 4)).then(submit(A))
+    .then(startPublication(A)).then(complete(A, true)).then(settle(A))
+    .then(release(A)).then(retire(A))
+    .expect(state.exportedRows == 1 and state.batches.get(A).stage == Retired)
+
+  run preSubmissionCancellationTest = init.then(accept(A)).then(accept(C))
+    .then(reserve(A)).then(admit(A)).then(prepare(A, 4))
+    .then(fence).then(cancel)
+    .expect(cancellationActiveReached and not(canSubmit(state, A)))
+    .then(abortPreparation(A)).then(settle(A)).then(release(A)).then(retire(A))
+    .expect(state.exportedRows == 0 and state.failedRows == 1 and
+      state.batches.get(A).sdkResult == SdkFailed)
+    .then(reserve(C))
+    .expect(not(canAdmit(state, C)) and blockedAdmissionUnderCancellationReached)
+
+  run postSubmissionCancellationDrainTest = init.then(accept(A)).then(accept(B))
+    .then(reserve(A)).then(admit(A)).then(prepare(A, 4)).then(submit(A))
+    .then(fence).then(cancel)
+    .expect(cancellationActiveReached and canStart(state, A))
+    .then(startPublication(A))
+    .then(complete(A, true)).then(settle(A)).then(release(A)).then(retire(A))
+    .expect(drainAfterCancellationReached and state.exportedRows == 1 and
+      state.batches.get(A).stage == Retired)
+    .then(reserve(B))
+    .expect(not(canAdmit(state, B)) and not(canSubmit(state, B)))
+
+  run cancelRequiresFenceControlTest = init
+    .expect(not(canCancel(state)))
+    .then(fence)
+    .expect(canCancel(state))
+
+  run fenceBlocksNewAcceptanceControlTest = init.then(fence)
+    .expect(not(canAccept(state, A)))
 }
 ```
 
@@ -383,10 +463,15 @@ Run the core checks with `bash scripts/check-bounded-preparation-quint.sh`.
 This command runs only sampled simulation and deterministic controls, never
 Apalache. Update the model before changing a modeled implementation boundary.
 
-Validated on Quint 0.32.0: nine deterministic scenarios/controls and 10,000
-sampled traces of at most 40 steps (input seed 141), with seven safety
-predicates and all seven required witnesses reached. Actual overlap appeared
-in 1,194 traces; a later failed batch behind an active publication appeared in
-537. These are bounded design checks, not runtime qualification or a liveness
-proof. Most sampled traces include a failure; the all-success reuse path is
-also exercised explicitly by `overlapAndRetirementTest`.
+The reservation/publication/retirement core was previously validated on
+Quint 0.32.0 (nine deterministic scenarios/controls and 10,000 sampled traces
+of at most 40 steps, seed 141, seven safety predicates and all seven required
+witnesses reached). The fence/cancellation increment separately passed all
+14 deterministic scenarios/controls and 10,000 sampled traces with the same
+40-step bound and input seed 141. All 11 required witnesses were reached.
+Cancellation is chosen aggressively by this sampler: only five traces reached
+actual overlap, versus 1,194 in the prior unfenced core run. The explicit
+scenarios retain the all-success overlap/reuse path and demonstrate native
+publication starting AFTER cancellation for a request admitted BEFORE it.
+These remain bounded design checks, not runtime qualification, a liveness
+proof or exhaustive coverage of interleavings.

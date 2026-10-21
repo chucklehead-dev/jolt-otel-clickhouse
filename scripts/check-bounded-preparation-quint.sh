@@ -24,10 +24,10 @@ quint run "$model" --main boundedPreparationBorrowed --max-steps 40 \
 sample_log=target/formal/quint/bounded-preparation-core-sampled.log
 quint run "$model" --main boundedPreparationOwned \
   --invariants noEarlySuccess boundedReservations coveredEncoding orderedPublication onePublisher countersAgree retirementIsSettled \
-  --witnesses accepted overlapReached fullSlotsReached publicationNotRetiredReached allRetiredReached failureReached failureBehindPublicationReached \
+  --witnesses accepted overlapReached fullSlotsReached publicationNotRetiredReached allRetiredReached failureReached failureBehindPublicationReached fenceActiveReached cancellationActiveReached blockedAdmissionUnderCancellationReached drainAfterCancellationReached \
   --max-steps 40 --max-samples 10000 --seed 141 \
   --backend typescript --verbosity 1 | tee "$sample_log"
-for witness in accepted overlapReached fullSlotsReached publicationNotRetiredReached allRetiredReached failureReached failureBehindPublicationReached; do
+for witness in accepted overlapReached fullSlotsReached publicationNotRetiredReached allRetiredReached failureReached failureBehindPublicationReached fenceActiveReached cancellationActiveReached blockedAdmissionUnderCancellationReached drainAfterCancellationReached; do
   if ! grep -Eq "^${witness} was witnessed in [1-9][0-9]* trace" "$sample_log"; then
     echo "required witness was not reached: $witness" >&2
     exit 1
