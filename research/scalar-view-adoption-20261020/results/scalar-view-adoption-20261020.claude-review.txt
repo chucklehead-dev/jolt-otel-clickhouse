@@ -1,0 +1,35 @@
+## Review: d885c9b (parent a373c1b) — adoption delta only
+
+**Scope verified via direct file read** (Bash/git-diff tools unavailable in this plan-mode session; inspected current worktree state at d885c9b plus cross-references to parent docs).
+
+### Dependency pins
+`deps.edn`: SDK pinned to `6cd57c86e0a93fc56af6cb10ee433b178b289e3b` consistently across the base dep, `:scalar-views-test`, `:stock-shape-plans-test`, and `:stock-scalar-views-test` aliases. Codec component pinned to `68ee1ca8f2826c930ff668ea9532c0a3f498dc41` in `:stock-span-codec` and reused verbatim in `:stock-shape-plans-test`/`:stock-scalar-views-test` args. Crypto (`5effcc8`), chDB driver (`3314b79`), data.json (`0f51b99`) are untouched. The `jolt-crypto` exclusion comment on the SDK dep is present and consistent with prior reviewed behavior (consumer owns the exact crypto provider, independent of traversal order).
+
+### Dependency oracle (`chdb_dependency_test.clj`)
+`otel-root`/`chdb-root` constants match the new pins exactly. The negative-control ladder correctly rejects the immediately-prior SDK SHA (`37c684a2...`) and a long list of older SDK milestones, plus prior chDB SHAs. No new "before scalar-views" milestone check exists, but that's consistent with the deps.edn comment stating shape-plans and encoder-only views land in the *same* merged SHA — there's no intermediate commit to discriminate against, so this isn't a gap.
+
+### Stock published codec root (`chdb_stock_published_codec_test.clj`)
+`published-root` correctly updated to `68ee1ca8f2826c930ff668ea9532c0a3f498dc41`; negative assertions still check against the superseded SHA and wrong-owner/wrong-subpath mutations. Assertion `(= 71 (:test result))` matches the PR's "existing71/553" claim for test count (assertion count not independently verifiable without execution, but the shape is right).
+
+### Scalar-views test & truthy-view fix (`chdb_scalar_views_test.clj`)
+Three deftests match the PR's "3/19" claim in shape. The targeted fix is present and correct: `opaque-output-preserves-wire-and-changed-exporter-policy-fallback` now asserts `(is view "nil/false decline is not proof that an opaque view was selected")` *before* `(is (not (map? view)))` — this closes exactly the gap the research doc describes (a falsy decline could previously masquerade as a non-map "view"). `-main` arg-checking against `expected-sdk`/`expected-codec` resource paths is unchanged in logic, just fed the new SHAs via the `:stock-scalar-views-test` alias.
+
+### Mixed native gate (`chdb_mixed_codec_native.clj`)
+Confirmed: dynamic event attributes (`"flag" false "count" index`) force distinct sorted roots per span to exercise fresh-view construction rather than only cache hits (comment at line ~90 matches intent). `:experimental-span-shape-plans? true :experimental-span-scalar-views? true` are both enabled in the exporter options passed to `write!`. Routing assertion `[:owned :string :string :string :string]` confirms spans stay on the owned statement path while logs/metrics stay on configured String SQL — matches "owned spans/configured logs+metrics" claim. 12-row total (`8` spans + `1` log + `3` metric-kind groups via `inputs/collected`) matches "12 rows" claims for both raw-ticks and auto wire modes in the workflow.
+
+### Workflow Git-only gate
+`experimental-codec-stock.yml` adds `-M:scalar-views-test` (SDK resolved from Git, no codec alias) and `-M:stock-span-codec:stock-scalar-views-test` (both SDK+codec resolved from Git, exact-coordinate assertions via `-main` args) with explicit comments disclaiming local-root overlay. No checksum/pinned-tool steps were altered elsewhere in the file. This correctly implements "published-only" adoption testing without weakening existing stock-library checks above/below it.
+
+### README / CHANGELOG
+README's flag-combination example (lines 156-161) includes `:experimental-span-scalar-views? true` alongside all four prerequisite flags (`codec`, `payload-cache`, `shape-plans`, plus both cache flags), matching the "requires the existing explicit codec, payload-cache and shape-plan options" claim. CHANGELOG's Unreleased entry is consistent and makes no unsupported throughput/latency claims.
+
+### PR body honesty
+`pr-body.md` correctly scopes the merge target as a branch in casselc/otel, not SDK main ("merged into consumer branch," "does not merge... into SDK main"), explicitly disclaims throughput/p99 wins ("does not establish a throughput or tail win," "No ... target-throughput claim"), and flags the GLM audit timeout as yielding no evidence rather than silently omitting it. This matches the companion README in `research/scalar-view-adoption-20261020/`.
+
+### Nonblocking notes
+1. The `:scalar-views-test` alias (no SHA args) only sanity-runs scalar-views tests without resource-identity assertions; exact-coordinate enforcement lives solely in `:stock-scalar-views-test`. This is intentional per the workflow's two-step design but is worth a one-line comment in deps.edn for future readers, since the asymmetry isn't obvious from the alias name alone.
+2. `chdb_published_scope_capability_test.clj` SHAs (`05fa8b86`, `0af10081`, `98e93e2a`) are unrelated to this delta's scalar-views pins — they're pre-existing nested-fragments capability controls, unaffected by and not exercising the new scalar-views coordinates. No action needed; noting only so it isn't mistaken for scalar-views coverage.
+
+### Verdict: **APPROVE**
+
+No runtime/serialization code changed in this delta — only pins, test coordinate expectations, the new truthy-view assertion, workflow gates, and docs. All inspected expectations are internally consistent, the truthy-view fix is correctly implemented, and the PR body's claims (allocation-only, no throughput/p99 goal) are accurate and match the CHANGELOG/README.

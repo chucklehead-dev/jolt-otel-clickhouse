@@ -5,6 +5,15 @@
 ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
 ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
 (define-record-type ffc-json-text (fields bytes))
+;; Trusted scalar-text plan output, not a public map and not raw JSON. Schema
+;; indexes are static; each view owns fresh slots, never a source-map/tree loan.
+(define-record-type ffc-json-scalar-map (fields template values))
+(define (ffc-json-scalar-map-box template values)
+  (unless (and (pmap? template) (vector? values)
+               (= (pmap-cnt template) (vector-length values))
+               (<= (vector-length values) 128))
+    (error 'scalar-text-view "invalid trusted view"))
+  (make-ffc-json-scalar-map template values))
 ;; Explicit row view: a private fixed-width native vector plus an immutable
 ;; persistent suffix. Neither native storage nor a mutable output alias escapes.
 (define-record-type ffc-json-row (fields base suffix))
@@ -55,6 +64,7 @@
         (map-insertions (if shared-cache? (ffc-fragments-insertions shared-state) 0))
         (map-retained (if shared-cache? (ffc-fragments-retained shared-state) 0))
         (map-flat? #f))
+    (define scalar-values #f)
     (define (ensure-space!)
       (when (fx=? used (bytevector-length tail))
         (when (fx>=? (fx+ completed used) budget) (error 'ffc-json "byte limit exceeded"))
@@ -230,6 +240,16 @@
               (set! map-flat? previous-flat)))))
     (define (vector-entry! v printed?)
       (when printed? (byte! 44)) (emit! v (fx+ container-depth 1)) #t)
+    (define (scalar-text-entry! k ordinal printed?)
+      (when printed? (byte! 44))
+      (key! k) (byte! 58)
+      (when (fx>=? container-depth max-depth) (error 'ffc-json "depth limit exceeded"))
+      (let ((value (vector-ref scalar-values ordinal)))
+        (cond ((string? value) (string! value))
+              ((boolean? value) (string! (if value "true" "false")))
+              ((fixnum? value) (byte! 34) (integer! value) (byte! 34))
+              (else (error 'scalar-text-view "invalid trusted scalar"))))
+      #t)
     (define (emit! x depth)
       (when (fx>? depth max-depth) (error 'ffc-json "depth limit exceeded"))
       (cond
@@ -241,6 +261,15 @@
        ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
        ((keyword? x) (string! (keyword-t-name x)))
        ((symbol-t? x) (string! (symbol-t-name x)))
+       ((ffc-json-scalar-map? x)
+        (byte! 123)
+        (let ((previous container-depth) (previous-values scalar-values))
+          (set! container-depth depth)
+          (set! scalar-values (ffc-json-scalar-map-values x))
+          (ffc-map-fold (ffc-json-scalar-map-template x) scalar-text-entry! #f)
+          (set! scalar-values previous-values)
+          (set! container-depth previous))
+        (byte! 125))
        ((ffc-json-row? x)
         (byte! 91)
         (let ((previous container-depth) (base (ffc-json-row-base x)))

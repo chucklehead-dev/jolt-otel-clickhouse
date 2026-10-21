@@ -1,0 +1,7 @@
+451126d9b356bc2e7c3af209be5ebb4011ebd7ca4cc8346d13e8ed3f718eb8f5  src/otel/exporter/chdb.clj
+5b9cc251976491faa16c51d493e1fd32a90c13108cb1ea1f70e3facdd18e9166  incubator/codec/src/jolt/codec/json.ss
+9d7c62070ce6256cad3d54dba955e0622c903be1e1767ceabd24adeb617d778f  incubator/codec/src/jolt/codec/scalar_text/plan.ss
+2153ee19decf202ab0af7d40bd01e5319aa369cb2fd1a4fbcf31248c82b9346a  research/scalar-view-exporter-20261020/app/deps.edn
+b8888e60b332bc1d19566be1db6b0a4abf1ce199a671b0fde74a74780dc86367  research/scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj
+4b2de965d0c5b7753df3568806664968554d8ca5bd9121807ad163048702e7e6  /home/chuck/ai-src/worktrees/otel-scalar-text-projection-handoff-20261020/src/otel/any_value.clj
+52939f31b2e5e8be9ba3df15e53393185342fba8a4819d3cbc4374400d7bd538  /tmp/scalar-view-exporter-build.WPkhaOuf/public-pipeline

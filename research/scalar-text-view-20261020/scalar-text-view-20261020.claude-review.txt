@@ -1,0 +1,26 @@
+I'm unable to write a plan file or call ExitPlanMode in this session (both tools are unavailable), so I'll deliver the review directly as text, per the task's actual request.
+
+## Review: commit dbbe399 — scalar-text trusted view
+
+**Verdict: APPROVE**
+
+No blockers. The view path is additive and gated: the default factory (`native-plan-factory`) calls `@factory-maker false`, so `view-box` is `#f` and `plan.ss`'s final branch (`(if view-box (view-box template values) (if (hnode? root) (make-pmap ...) ...))`) takes the original `make-pmap` branch unchanged — plain-map output semantics are untouched for every existing caller. Only `native-view-plan-factory` (new, separately named, explicitly research-only) supplies a real box.
+
+**Policy guards are shared, not view-gated.** `fill!`'s value-type/length checks (`boolean?`/`fixnum?`/`string?`+`maximum`) run identically in both modes; `current?` (live Var-anchor re-check) runs both before and after `fill!` regardless of `view-box`; `collect-keys`/`learn!` in planner.ss (key geometry, uniqueness, char budget, cycle bounding) are untouched. The `text` helper (plan.ss:34) — `(cond (view-box value) ((string? value) value) ...)` — is a cond clause whose *test* is the bare symbol `view-box` (truthy ⇒ keep the raw value for boxing; falsy ⇒ eagerly stringify), not an application of `view-box` to `value`. Easy to misread on a skim, but correct — confirmed by the mechanism-control test's 0/0 vs 1/5 construction counts on the 17-field fixture.
+
+**Output ownership** is enforced at the boundary: `ffc-json-scalar-map-box` validates `pmap?` template, `vector?` values, matching counts, ≤128 length, before boxing; the lookup lambda always allocates a fresh `(make-vector n)` per call (`(not (identical? one two))` holds; mutating a source map afterward doesn't affect a prior view — exercised directly in `view_test.clj`). The template is schema-only key/ordinal geometry, never source-map-derived after learning.
+
+**Raw fixnum/Boolean STRING emission** (`scalar-text-entry!`) matches the admitted-value contract: only `string?`/`boolean?`/`fixnum?` are reachable given `fill!`'s admission (the `else` error is dead code for valid plans — a reasonable defensive bound for an internal trusted bridge, not a public API). Integer emission reuses existing `integer!`/digits scratch, matching the allocation claim. The depth check (`container-depth >= max-depth`) is algebraically identical to the ordinary `map-entry!`/`emit!` child-depth check, so the 127-ok/128-reject boundary is preserved exactly and matches between plain and view outputs in tests. Key+colon bytes are written before the depth check fires on violation, mirroring the pre-existing `map-entry!` pattern — any error aborts the whole encode before a bytevector is assembled, so no partial output escapes.
+
+**Budget enforcement** is fully shared — view bytes flow through the same `byte!`/`ensure-space!`/`budget` accounting as every other value type. `budgets-failure-order-and-outputs-remain-independent` cross-checks byte-for-byte equality and throw/no-throw behavior between plain and view encodings at the exact limit boundary, and confirms identical stop-after-first-failure ordering.
+
+**Reentry/per-invocation state**: `scalar-values` is a fresh `define` inside the per-call `let*` in the `define-ffc-json-encoder` macro body — no cross-call leakage. Nesting a scalar-text view inside an ordinary map/vector (or vice versa) uses the same save/restore pattern already applied to `container-depth` elsewhere, so arbitrary nesting depth is handled safely.
+
+**Unsupported inputs / live policy changes** decline identically between plan and view lookups (`existing-policy-admission-and-decline-are-shared`), including `with-redefs` live-anchor changes and the full bad-input matrix.
+
+### Non-blocking notes
+1. plan.ss:34 — add a one-line comment clarifying that `(view-box value)` is a cond test on the bare flag, not a call of `view-box` on `value`; the grouping invites misparsing.
+2. The micro-benchmark framing in the README is honestly scoped (allocation-only win, ~3% time delta, shared encoder across arms so the new dispatch branch isn't isolated, explicitly not an end-to-end claim) — flagging only as confirmation it isn't overstated, no action needed.
+3. `ffc-json-scalar-map-box` trusts that `template`'s pmap values are valid ordinals into `values` without independently re-verifying that invariant — acceptable given it's documented as an internal trusted bridge ("not authorization to skip policy"), not a publicly reachable constructor.
+
+No SDK map-returning-converter or Durable integration is present in this diff, consistent with stated scope; `open-codec`/`write-nested`/`encode-prefixed-records` contracts are unmodified.

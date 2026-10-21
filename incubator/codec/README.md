@@ -1,5 +1,14 @@
 # Experimental explicit JSON codec
 
+An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
+adds a separate trusted encoder output strategy without changing the existing
+plain-map converter. Do not pass its factory to that map-returning API. The
+exporter selects the separate SDK handoff with `:experimental-span-scalar-views?`
+and its codec/cache/shape-plan prerequisites. Local Durable recovery and lower
+allocation are verified; no throughput/tail improvement, Oscope adoption or new
+S3 performance qualification is claimed. See the
+[integration evidence](../../research/scalar-view-exporter-20261020/README.md).
+
 ## Optional bounded scalar-text shape plans
 
 `jolt.codec.scalar-text.experimental` supplies an independent trusted native
@@ -96,7 +105,7 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The combined source and Linux standalone library gates run 39 tests / 468 assertions,
+The combined source and Linux standalone library gates run 43 tests / 596 assertions,
 including the leaf-resolution mechanism and nested-scope controls.
 
 ## Use as an independent Git dependency
@@ -108,7 +117,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
+   :git/sha "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
    :deps/root "incubator/codec"}}}
 ```
 
@@ -260,7 +269,7 @@ experimental; component improvements do not establish the Durable targets.
 
 The `packaging` project supplies only library/test source roots and no external
 dependencies. On official stock Jolt 0.8.23, a default Linux standalone binary
-runs **39 tests / 468 assertions**, including dynamic sorted-map operation
+runs **43 tests / 596 assertions**, including dynamic sorted-map operation
 checks, nested calls and caches. A separate traversal-only binary runs
 **5 / 51**, with the JSON namespace absent. These are functional packaging
 checks, not throughput measurements or a stable collection-layout ABI.

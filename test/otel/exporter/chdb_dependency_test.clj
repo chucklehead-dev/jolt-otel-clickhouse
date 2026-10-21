@@ -7,7 +7,7 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/14f58e5a57d6cd1760451a426e40d8cddcf53949/")
+  "https___github.com_casselc_otel.git/6cd57c86e0a93fc56af6cb10ee433b178b289e3b/")
 
 (def ^:private prior-otel-root
   "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
@@ -96,7 +96,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/14f58e5a57d6cd1760451a426e40d8cddcf53949/"
+  (let [fixture-root "https___github.com_casselc_otel.git/6cd57c86e0a93fc56af6cb10ee433b178b289e3b/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -109,39 +109,39 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
     (check "SDK before owned scalar-map capability is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "37c684a2c370fc82fde82331635973bce87a52b3"))))
     (check "SDK before sorted scalar normalization is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "697f58bd5b4925f72339694bedbace97bdc869bb"))))
     (check "SDK before batch-ready wakeup is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "d93846e40b837dcecb546fb59f6cb05ca639f054"))))
     (check "SDK before per-reader policy is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
     (check "SDK before definition-owned helper qualification is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"))))
     (check "SDK before bounded string admission is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "14ffd741351373f07d96aa070b0f9853d7daf8ab"))))
     (check "SDK before stock traversal injection is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "7878a2eb4340519d6843d13490a5a7c99ebade8a"))))
     (check "SDK before bounded shape plans is rejected" false
            (boolean (oracle (str/replace source
-                             "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+                             "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
                              "3366a3322c3ea4024057f6278e50c999864171e8"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))

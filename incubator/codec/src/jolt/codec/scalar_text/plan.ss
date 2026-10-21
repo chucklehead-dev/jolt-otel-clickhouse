@@ -2,7 +2,8 @@
 ;; The owner supplies its original policy anchors, not current caller snapshots.
 ;; Build hash geometry from static keys once, then clone it with fresh values.
 ;; Private layout qualification belongs at this one boundary, on stock 0.8.23.
-(begin
+(lambda (view-box)
+ (begin
   (unless (and
     (eq? (record-type-uid (record-type-descriptor pmap)) 'chez-pmap-v6)
     (equal? (record-type-field-names (record-type-descriptor pmap)) '#(root cnt hasheq meta))
@@ -31,7 +32,7 @@
                         (vector-ref anchors (+ i 1)))
                    (loop (+ i 2))))))
       (define (text value)
-        (cond ((string? value) value) ((eq? value #t) "true")
+        (cond (view-box value) ((string? value) value) ((eq? value #t) "true")
               ((eq? value #f) "false") (else (jolt-fixnum->string value))))
       (define (fill! tree values)
         (let ((seen 0) (ordinal 0))
@@ -83,11 +84,12 @@
                  (eqv? (jolt-ref-get m kw-cnt) n) (current?)
                  (let ((values (make-vector n)))
                    (and (fill! (jolt-ref-get m kw-tree) values) (current?)
-                        (if (hnode? root)
+                        (if view-box (view-box template values)
+                         (if (hnode? root)
                             (make-pmap (copy-node root values) n)
                             (let* ((size (vector-length root)) (out (make-vector size)))
                               (do ((i 0 (+ i 2))) ((= i size))
                                 (vector-set! out i (vector-ref root i))
                                 (vector-set! out (+ i 1)
                                   (vector-ref values (vector-ref root (+ i 1)))))
-                              (make-pmap out n))))))))))))
+                              (make-pmap out n))))))))))))))
