@@ -1,0 +1,2 @@
+750240	/tmp/scalar-view-exporter-map.J6Q9eXXJ
+376780	/tmp/scalar-view-exporter-build.WPkhaOuf

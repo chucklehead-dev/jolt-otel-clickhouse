@@ -26,6 +26,14 @@
              {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
               :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
               :deps/root "incubator/codec"}}}
+           :scalar-views-test
+           {:extra-paths ["incubator/codec/src" "incubator/codec/test"]
+            :extra-deps
+            {io.github.casselc/otel
+             {:git/url "https://github.com/casselc/otel.git"
+              :git/sha "023fe33d455608b86289ac0c042719ca3153f8da"
+              :exclusions [jolt-lang/jolt-crypto]}}
+            :main-opts ["-m" "otel.exporter.chdb-scalar-views-test"]}
            :stock-span-codec-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-stock-published-codec-test"]}

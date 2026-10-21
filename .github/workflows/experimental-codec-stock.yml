@@ -84,6 +84,9 @@ jobs:
           # incubator source. The gate checks both actual resource identities.
           (cd ../.. && "$task_bin" -Srepro \
             -M:stock-span-codec:stock-shape-plans-test)
+          # New SDK handoff is test-only; default SDK/library pins stay intact.
+          # This resolves the actual published Git SDK, not a local-root overlay.
+          (cd ../.. && "$task_bin" -Srepro -M:scalar-views-test)
           # Actual old/current Git components, not a mocked missing Var.
           (cd ../.. && for task_case in \
             '05fa8b86f38b0d1872322822fe68bf729b483613:absent' \
