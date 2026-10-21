@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Prototype a separate trusted scalar-text view in the optional stock-Jolt codec:
+  share learned key geometry, keep fresh value slots and write numeric text
+  without temporary Strings. Existing map-returning APIs are unchanged; SDK/
+  exporter adoption and end-to-end performance qualification remain pending.
+
 - Reuse stock Jolt's in-range sorted-node accessors in the optional scalar
   shape-plan walker after its existing node/type/size checks. Avoid repeated
   generic index validation without changing normalization, bounds or output;

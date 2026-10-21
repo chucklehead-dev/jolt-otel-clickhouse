@@ -91,7 +91,7 @@
           (scheme/eval-string
             (str "(let ((reads 0) (original-nth pvec-nth!))"
                  " (let ((pvec-nth! (lambda (v i) (set! reads (+ reads 1)) (original-nth v i))))"
-                 " (let ((factory " source "))"
+                 " (let ((factory (" source " #f)))"
                  " (jolt-vector factory (lambda () (set! reads 0)) (lambda () reads)))))"))
           p (factory [[#'policy original-policy]] 100 prototype 8 8192)
           m (fixture n)]

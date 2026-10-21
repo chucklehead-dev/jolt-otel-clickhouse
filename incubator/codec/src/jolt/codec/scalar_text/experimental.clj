@@ -8,10 +8,11 @@
         planner (io/resource "jolt/codec/scalar_text/planner.ss")]
     (when-not (and plan planner)
       (throw (ex-info "Missing scalar-text plan resources" {})))
-    (str "(let ((compile-one " (slurp plan) ")) " (slurp planner) ")")))
+    (str "(lambda (view-box) (let ((compile-one (" (slurp plan) " view-box))) " (slurp planner) "))")))
 
 (def ^:private source (embedded))
-(def ^:private factory (delay (scheme/eval-string source)))
+(def ^:private factory-maker (delay (scheme/eval-string source)))
+(def ^:private factory (delay (@factory-maker false)))
 
 (defn native-plan-factory
   "Internal trusted bridge, qualified on stock Jolt0.8.23, not a stable ABI.
@@ -35,3 +36,13 @@
   Unsupported layouts/constructor options throw; unsupported input declines.
   This is not authorization to skip an owner's canonicalization policy."
   [] @factory)
+
+(defn native-view-plan-factory
+  "Research-only trusted encoder bridge. Same admission/anchors/bounds as the
+  plain-map plan, but emits an opaque view through the supplied native box.
+  NOT suitable for scalar-string-map-payload-converter: it promises plain maps.
+  Box must be callback-free and retain only template/independently owned slots."
+  [native-box]
+  (when-not (ifn? native-box)
+    (throw (ex-info "Expected native view constructor" {:type ::invalid-view-box})))
+  (@factory-maker native-box))
