@@ -50,6 +50,13 @@ This is an incubating library, not a data.json replacement. It walks ordinary
 Jolt data directly in Chez and writes to private byte buffers. It does not
 replace JSONWriter methods or register global Scheme helpers.
 
+Private punctuation/escape/digit stores reuse the encoder's existing capacity
+guard; external numeric formatter text keeps checked stores. This requires no
+compiler fork or global unsafe mode. A local 5k-row confirmed Durable comparison
+observed about 9% higher window throughput with unchanged allocation and full
+independent recovery. This is not a population-tail or 25k/20k target claim;
+see the [measurements and scope](https://github.com/chucklehead-dev/jolt-otel-clickhouse/tree/008fbdc1eac88a26ef9d8b48b725e78f274dd624/research/private-byte-store-20261021/native-results).
+
 The library itself has no dependencies beyond Jolt. Its tests run on the
 official Jolt 0.8.23 release. The exporter with published SDK/driver pins also
 passed stock-runtime writes and independent readback. The complete Oscope
@@ -105,8 +112,8 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The combined source and Linux standalone library gates run 43 tests / 596 assertions,
-including the leaf-resolution mechanism and nested-scope controls.
+The source and Linux standalone library gates include leaf-resolution
+mechanism and nested-scope controls alongside the codec tests.
 
 ## Use as an independent Git dependency
 
@@ -117,7 +124,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
+   :git/sha "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
    :deps/root "incubator/codec"}}}
 ```
 

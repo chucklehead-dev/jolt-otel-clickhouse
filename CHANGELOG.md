@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Avoid redundant checked stores for locally bounded bytes in the optional
+  stock-Jolt codec, after its existing capacity/output-budget guard. Keep
+  runtime numeric formatter output on checked stores and add invalid-formatter
+  controls. Refresh the optional published component pin; root SDK/driver pins
+  are unchanged. No value, wire format, ownership or Durable confirmation change.
+
 - Collect small typed span projections directly into invocation-owned field
   slots on the selected native path, avoiding temporary location maps and
   vectors. Keep the original value/status classifier, live helper behavior and
