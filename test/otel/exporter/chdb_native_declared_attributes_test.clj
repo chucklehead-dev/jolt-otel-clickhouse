@@ -263,7 +263,10 @@
 (deftest indexed-plan-is-selected-once-and-retains-live-status-projection
   (let [{:keys [capability target vector-projector]} (vectors/plans false)
         builds (atom 0) original-builder @#'p/indexed-vector-projector
-        indexed (with-redefs [p/indexed-vector-projector
+        ;; This test owns the indexed fallback's mechanism, not whichever
+        ;; faster projector a supported input may now select by default.
+        indexed (with-redefs [native/load-trace-field-slots! (fn [& _] nil)
+                              p/indexed-vector-projector
                               (fn [& args] (swap! builds inc) (apply original-builder args))]
                   (p/trace-vector-projector capability target true))
         span (@#'fixture/span {"checkout.count" 7 "checkout.complete" false "checkout.name" ""})
@@ -286,7 +289,8 @@
     (is (= (vector-projector span) (indexed span)))
     ;; Reversing physical field order is a real rejected control, not a green
     ;; plan-construction check disconnected from the produced vector.
-    (let [wrong (with-redefs [p/indexed-vector-projector
+    (let [wrong (with-redefs [native/load-trace-field-slots! (fn [& _] nil)
+                             p/indexed-vector-projector
                              (fn [locations wanted plan]
                                (original-builder locations wanted (vec (reverse plan))))]
                   (p/trace-vector-projector capability target true))]
@@ -393,11 +397,14 @@
     (is (= {"checkout.count" [1 2]} (collect attrs wanted)))
     (is (= {"checkout.count" [999]} @nested))))
 
-(deftest actual-native-projector-selects-small-map-collector
+(deftest indexed-fallback-projector-selects-small-map-collector
   (let [{:keys [capability target]} (vectors/plans false)
         selected (atom 0)
         collect (native/load-declared-collector! #'p/key-string #'clojure.core/contains?)
-        project (p/trace-vector-projector capability target true)]
+        ;; Keep the old collector's branch witness live. The new field-slot
+        ;; path has its own fallback-throws and wrong-folder controls.
+        project (with-redefs [native/load-trace-field-slots! (fn [& _] nil)]
+                  (p/trace-vector-projector capability target true))]
     (with-redefs [p/small-declared-collector
                   (delay (fn [attrs wanted]
                            (let [out (collect attrs wanted)]

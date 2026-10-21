@@ -116,3 +116,20 @@ Keep defaults and consumer pins unchanged. S3, SDK queue, Oscope and
 Langfuse are separate integration gates, not inferred from this component.
 The larger Revision B overlap proposal still awaits explicit scope approval;
 this serial pure-row optimization neither implements nor bypasses that gate.
+
+### First PR CI regression and bounded test repair
+
+PR157 at `4570dbf` passed stock-library and scoped-S3 checks, but the legacy
+native-projection suite failed two branch-selection witnesses. Their output
+equivalence checks remained green:the new direct branch legitimately bypassed
+the indexed collector those tests intended to observe/mutate. Both tests now
+explicitly decline ONLY the new constructor while building the fallback under
+test. The reversed-field-order mutant and positive collector witness remain
+asserted; default field-slot selection has its own fallback-throws/wrong-folder
+controls in the separate stock suite.
+
+Local unchanged authenticated qualified runtime SHA256
+`06a2ccb858c072bfcd74ce94d96eb95f008d75e0fb1f46117728602572189811`
+now passes24tests/321assertions; stock0.8.23 still passes8/561. This is a
+test-routing repair, not a product compatibility fix or a reason to repeat
+unchanged timed native runs. Final-head hosted checks must still pass.
