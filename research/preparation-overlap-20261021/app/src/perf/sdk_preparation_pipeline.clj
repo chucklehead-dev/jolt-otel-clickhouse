@@ -48,14 +48,28 @@
   lifecycle/SettlementWitness
   (settlement-status [_] (lifecycle/settlement-status delegate)))
 
-(defn- observed-preparation [adapter samples active n queued warmups total anchors]
+(defn- host-delta [before after]
+  {:wall-nanos (- (:nanos after) (:nanos before))
+   :cpu-nanos (- (:cpu-nanos after) (:cpu-nanos before))
+   :gc-count (- (:gc-count after) (:gc-count before))
+   :gc-real-nanos (- (:gc-nanos after) (:gc-nanos before))
+   ;; Heap is current, not cumulative. Add reclaimed bytes only as a coarse
+   ;; allocation estimate; counters are non-atomic and process-wide.
+   :estimated-allocated-bytes (- (+ (:heap after) (:gc-bytes after))
+                                (+ (:heap before) (:gc-bytes before)))})
+
+(defn- observed-preparation [adapter samples active n queued warmups total anchors & [profile?]]
   (assoc adapter
     :prepare! (fn [cap spans]
                 (let [index (start-sample! samples spans n queued)]
                   (swap! active assoc cap index)
-                  (let [ok ((:prepare! adapter) cap spans)]
+                  (let [before (when profile? (fixture/counters))
+                        ok ((:prepare! adapter) cap spans)
+                        after (when profile? (fixture/counters))]
                     (ensure! (true? ok) :prepared)
                     (swap! samples update index assoc :prepared (System/nanoTime))
+                    (when profile?
+                      (swap! samples update index assoc :preparation-host-delta (host-delta before after)))
                     ok)))
     :submit! (fn [cap]
                (let [ok ((:submit! adapter) cap)]
@@ -79,7 +93,7 @@
     (mapv (fn [p] (/ (nth sorted (dec (long (Math/ceil (* p size))))) 1e6))
           [0.5 0.9 0.95 0.99])))
 
-(defn- report! [root arm mode n rounds warmups samples producer anchors stats]
+(defn- report! [root arm mode n rounds warmups samples producer anchors stats profile?]
   (let [all @samples measured (subvec all warmups)
         completed (mapv :confirmed all)
         cadence (mapv (fn [i] (- (nth completed i) (nth completed (dec i))))
@@ -110,18 +124,23 @@
                (/ (- (+ (:heap after) (:gc-bytes after)) (+ (:heap before) (:gc-bytes before)))
                   (double (* n rounds)))
                :counter-snapshots-non-atomic true :population-tail-qualified false
+               :preparation-host-diagnostics? profile?
+               :phase-counters-scope :process-wide-not-thread-local
                :diagnostic-printing-in-window true
                :independent-recovery-qualified false :native-package "26.9.0"}))))
 
-(defn -main [& [root arm n-text rounds-text warmups-text mode-text]]
+(defn -main [& [root arm n-text rounds-text warmups-text mode-text diagnostic-text]]
   (let [n (Long/parseLong (or n-text "5000"))
         rounds (Long/parseLong (or rounds-text "32"))
         warmups (Long/parseLong (or warmups-text "3")) total (+ rounds warmups)
-        mode (or mode-text "source-functional")]
+        mode (or mode-text "source-functional")
+        diagnostic (or diagnostic-text "none") profile? (= diagnostic "phase-counters")]
     (ensure! (and root (.isAbsolute (java.io.File. root))) :absolute-owned-root)
     (ensure! (not (.exists (java.io.File. (str root "/objects")))) :fresh-store)
     (ensure! (contains? #{"synchronous" "overlap"} arm) :arm)
     (ensure! (contains? #{"source-functional" "release"} mode) :execution-mode)
+    (ensure! (contains? #{"none" "phase-counters"} diagnostic) :diagnostic-mode)
+    (ensure! (or (not profile?) (= arm "overlap")) :diagnostic-preparation-arm)
     (ensure! (and (<= 1 n 10000) (<= 2 rounds 64) (<= 1 warmups 5)) :bounded-geometry)
     (native/ensure-loaded!) (ensure! (= "26.9.0" (native/chdb-version)) :native-version)
     (.mkdirs (java.io.File. (str root "/scratch-writer")))
@@ -150,7 +169,7 @@
             config (if (= arm "overlap")
                      (let [config (exporter/experimental-span-batch-options target base)]
                        (update config :experimental-span-preparation
-                         #(observed-preparation % samples active n queued warmups total anchors)))
+                         #(observed-preparation % samples active n queued warmups total anchors profile?)))
                      base)
             rows (fixture/fixture n)
             owner (sdk/batch-processor observed config)]
@@ -173,7 +192,7 @@
           (ensure! (empty? @active) :all-capabilities-retired)
           (let [stored (:n (jdbc/fetch-one connection "SELECT count() AS n FROM otel_traces"))]
             (ensure! (= (* n total) stored) :stored-count))
-          (report! root arm mode n rounds warmups samples producer anchors (sdk/batch-processor-stats owner))
+          (report! root arm mode n rounds warmups samples producer anchors (sdk/batch-processor-stats owner) profile?)
           (println :sdk-preparation-screen-writer-complete arm)
           (finally
             (deliver queued true)

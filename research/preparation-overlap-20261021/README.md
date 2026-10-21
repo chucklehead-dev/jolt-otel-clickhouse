@@ -73,6 +73,15 @@ Keep raw samples and incremental receipts. Do not run timed comparisons during
 another compiler, model, profiler or agent review workload. A first sequential
 pair is only a screen; qualify promising changes with matched order controls.
 
+For a separate preparation diagnostic, append `phase-counters` after the mode
+argument on the `overlap` arm. It adds two host-counter snapshots per preparation
+and stores scalar deltas in `:preparation-host-delta` on each sample. The default
+`none` takes no additional phase snapshots. These process-wide, non-atomic
+counters include concurrent publisher/collector work; they do not isolate
+preparation-thread CPU or allocation. A falling live heap is not an allocation
+reduction. Diagnostic runs have extra observer overhead and must not replace
+the matched throughput receipts above.
+
 ## Independent recovery
 
 `perf.sdk-preparation-recovery` is source-only and not linked into the timed

@@ -2,6 +2,7 @@
   "Source-only observer controls, never linked into the timed app."
   (:require [clojure.test :refer [deftest is run-tests]]
             [otel.sdk.preparation :as preparation]
+            [perf.public-pipeline :as fixture]
             [perf.sdk-preparation-pipeline :as pipeline]))
 
 (defn- observe [adapter active]
@@ -38,6 +39,23 @@
       (is (true? (:preparation-unsettled? @state)))
       (is (= 1 (:exported-span-count @state)) "delivery and resource proof are separate")
       (is (thrown? Exception (preparation/require-settled! state))))))
+
+(deftest preparation-counter-diagnostics-are-opt-in-and-scalar
+  (doseq [profile? [false true]]
+    (let [queued (promise) samples (atom []) calls (atom 0)
+          before {:nanos 10 :cpu-nanos 20 :gc-count 1 :gc-nanos 30 :heap 100 :gc-bytes 1000}
+          ;; Falling live heap alone must not be misreported as allocation.
+          after {:nanos 110 :cpu-nanos 100 :gc-count 2 :gc-nanos 50 :heap 50 :gc-bytes 1200}
+          adapter (#'pipeline/observed-preparation {:prepare! (fn [_ _] true)}
+                    samples (atom {}) 1 queued 1 1 (atom {}) profile?)]
+      (deliver queued true)
+      (with-redefs [fixture/counters (fn [] (if (= 1 (swap! calls inc)) before after))]
+        (is (true? ((:prepare! adapter) :cap [{}]))))
+      (is (= (if profile? 2 0) @calls))
+      (is (= (when profile?
+               {:wall-nanos 100 :cpu-nanos 80 :gc-count 1 :gc-real-nanos 20
+                :estimated-allocated-bytes 150})
+             (:preparation-host-delta (first @samples)))))))
 
 (defn -main [& _]
   (let [r (run-tests 'perf.sdk-preparation-pipeline-test)]
