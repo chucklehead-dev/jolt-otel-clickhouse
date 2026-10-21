@@ -11,6 +11,11 @@
   recovery is checked for both ownership modes; defaults are unchanged and
   complete lifecycle/performance qualification is still required.
 
+- Add an explicit native cancellation control for bounded span preparation:
+  hold real WAL publication while the next batch is prepared, fence shutdown,
+  and independently recover only the admitted batch. Exercise owned and
+  borrowed publisher cleanup without treating cancellation as delivery success.
+
 - Avoid redundant checked stores for locally bounded bytes in the optional
   stock-Jolt codec, after its existing capacity/output-budget guard. Keep
   runtime numeric formatter output on checked stores and add invalid-formatter
