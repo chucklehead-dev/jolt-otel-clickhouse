@@ -1,7 +1,8 @@
 # Real SDK preparation screen
 
 Research only. This exercises the real SDK worker, exporter and local Durable
-writer. It is not an Oscope repin/default or a published throughput claim.
+writer. [Finite local results](RESULTS.md) are not an Oscope repin/default or a
+production throughput/latency guarantee.
 
 The app reuses the existing public rich typed fixture and schema installer
 from `research/scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj`.
