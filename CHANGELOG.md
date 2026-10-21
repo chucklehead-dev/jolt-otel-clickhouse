@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Prototype an additive trusted compiled scalar-key view in the independent
+  stock-Jolt codec. Pre-encode bounded schema keys and preserve value-slot order;
+  existing factories, exporter flags and defaults remain unchanged. Component
+  results do not establish a Durable throughput or tail improvement.
+
 - Wire an explicit `:experimental-span-scalar-views?` exporter opt-in to the
   separate SDK encoder handoff, with missing-capability checks before storage.
   Requires the existing codec/payload-cache/shape-plan options; feature defaults

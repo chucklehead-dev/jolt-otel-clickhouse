@@ -2,7 +2,7 @@
 ;; The owner supplies its original policy anchors, not current caller snapshots.
 ;; Build hash geometry from static keys once, then clone it with fresh values.
 ;; Private layout qualification belongs at this one boundary, on stock 0.8.23.
-(lambda (view-box)
+(lambda (view-box compile-view?)
  (begin
   (unless (and
     (eq? (record-type-uid (record-type-descriptor pmap)) 'chez-pmap-v6)
@@ -78,13 +78,14 @@
           (vector-set! anchors (+ (* 2 i) 1) (pvec-nth! entry 1))))
       (let ((template (jolt-persistent! builder)))
         (unless (= n (pmap-cnt template)) (error 'fixed-shape "Duplicate schema keys"))
-        (let ((root (pmap-root template)))
+        (let ((root (pmap-root template))
+              (compiled-box (and compile-view? (view-box template))))
           (lambda (m)
             (and (htable-sorted-map? m) (eq? (jolt-ref-get m kw-ops) stock-ops)
                  (eqv? (jolt-ref-get m kw-cnt) n) (current?)
                  (let ((values (make-vector n)))
                    (and (fill! (jolt-ref-get m kw-tree) values) (current?)
-                        (if view-box (view-box template values)
+                        (if view-box (if compiled-box (compiled-box values) (view-box template values))
                          (if (hnode? root)
                             (make-pmap (copy-node root values) n)
                             (let* ((size (vector-length root)) (out (make-vector size)))

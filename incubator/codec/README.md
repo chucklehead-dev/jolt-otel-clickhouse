@@ -1,5 +1,12 @@
 # Experimental explicit JSON codec
 
+An unadopted [compiled-key prototype](../../research/compiled-scalar-keys-20261020/README.md)
+adds `native-compiled-scalar-text-view-factory` and
+`scalar-text/native-compiled-view-plan-factory` as trusted research bridges.
+It compiles bounded schema key fragments/slot order once instead of walking and
+escaping template keys for each output. Existing factories remain unchanged;
+there is no new exporter flag/default or demonstrated Durable throughput gain.
+
 An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
 adds a separate trusted encoder output strategy without changing the existing
 plain-map converter. Do not pass its factory to that map-returning API. The

@@ -8,11 +8,11 @@
         planner (io/resource "jolt/codec/scalar_text/planner.ss")]
     (when-not (and plan planner)
       (throw (ex-info "Missing scalar-text plan resources" {})))
-    (str "(lambda (view-box) (let ((compile-one (" (slurp plan) " view-box))) " (slurp planner) "))")))
+    (str "(lambda (view-box compile-view?) (let ((compile-one (" (slurp plan) " view-box compile-view?))) " (slurp planner) "))")))
 
 (def ^:private source (embedded))
 (def ^:private factory-maker (delay (scheme/eval-string source)))
-(def ^:private factory (delay (@factory-maker false)))
+(def ^:private factory (delay (@factory-maker false false)))
 
 (defn native-plan-factory
   "Internal trusted bridge, qualified on stock Jolt0.8.23, not a stable ABI.
@@ -45,4 +45,13 @@
   [native-box]
   (when-not (ifn? native-box)
     (throw (ex-info "Expected native view constructor" {:type ::invalid-view-box})))
-  (@factory-maker native-box))
+  (@factory-maker native-box false))
+
+(defn native-compiled-view-plan-factory
+  "Research-only additive variant: native-factory compiles each template once
+  to a value-slot constructor. Admission, order and budgets are unchanged.
+  Existing plain-map and uncompiled-view factories retain their contracts."
+  [native-factory]
+  (when-not (ifn? native-factory)
+    (throw (ex-info "Expected native schema compiler" {:type ::invalid-view-box})))
+  (@factory-maker native-factory true))
