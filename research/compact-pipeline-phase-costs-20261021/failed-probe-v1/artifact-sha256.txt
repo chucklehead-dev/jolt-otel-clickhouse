@@ -1,0 +1,3 @@
+99afc16420ae8c8f2f835d508d3c988a3f13a2f768f75f3e868e38ec2811932d  /home/chuck/ai-src/evidence/compact-phase-costs-20261021.LhpfPTQP/phase-costs-app
+7bf7acae4b4bcb5c27b3651fa4a94d2d4e6a7fc43b5b821def2f8be3d6f00e94  /home/chuck/.cache/jolt-stock-v0.8.23-codec/jolt-v0.8.23-x86_64-linux/jolt
+a7d22ade86e1de82b187adf572b569a6034600ce932c52b0acb8c97b82430557  /home/chuck/.cache/jolt-chdb/26.9.0/linux-amd64/libchdb.so

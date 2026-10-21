@@ -1,0 +1,21 @@
+Both the plan-file Write tool and ExitPlanMode are unavailable in this session, so I'm delivering the review directly as the requested text output instead.
+
+## Review: compact-pipeline-phase-costs-20261021 (read-only, source only)
+
+**Blockers:** None. No scope violations, fabricated counts, or math inconsistencies in the reviewed files.
+
+**Verdict on the diagnostic:** V2 (`results/`, the live `compact_phase_costs.clj`) is internally sound and honestly reported. It wraps `exporter/prepare-closed-compact-rows`, `codec/encode-prefixed-records`, `owned/try-snapshot`, and `owned/precompute-wal` via `with-redefs` around captured original fn values, and asserts exactly 35 preparations / 32 non-warmup samples / the required phases `{:prepare-total :normalize-project-encode :wal-preparation}` present with positive nanos — all matching `phase-costs.edn`. `summarize.bb`'s cross-checks (writer row/batch/round/warmup counts, reader pass/row/group/trace/multiplicity fields, `prepare-total.nanos ≥ writer.nanos` per round) hold against the actual data.
+
+Quantile math checks out: nearest-rank p99 over n=32 lands on index 31 (the max), so "p99 is the maximum, not population-tail qualification" is mathematically forced, not just hedging. Inclusive-time arithmetic reconciles exactly: `prepare-total − normalize-project-encode − wal-preparation ≈ 21.92ms` (owned-snapshot + validation/wrapping/probe overhead), and `mean-callback − prepare-total = outside-preparation` to the reported decimal. Allocation-per-row figures (9,414 / 2,124 / 13,276 B, ~60% of the 15,709 B/row whole-window figure from the *original* app's own counters in `writer.edn`) trace back correctly.
+
+Critically, `chdb.clj` confirms `publish-prepared-compact-insert!` — the actual `execute-durable-sql!` call — is never wrapped by the V2 probe. So measured phases genuinely stop at preparation; the 42%/223ms "outside preparation" residual correctly includes the real native write/ack, admission, and dispatch, and the README correctly refuses to attribute it to a phase. `owned-snapshot` never appears in any of the 32 samples despite being wrapped — consistent with the README's inlining hypothesis (`chdb.clj` calls `owned-statement/try-snapshot` directly, which a release AOT build can link past the Var indirection `with-redefs` depends on), stated as plausible, not proven.
+
+**V1 (`failed-probe-v1/`) genuinely failed as described.** Its `probe.clj` adds a `publish-confirmed` wrap plus a `(= 34 @ordinal)` / `(= 35 @publications)` assertion pair; no `phase-costs.edn` exists for it, confirming "no usable phase receipt." Its `writer.edn`/`reader.edn` (175,000 rows, `:passed true`) are independent of the probe failure and legitimately support "V1's independent recovery also passed." One minor gap: `failed-probe-v1/prebuild-source-sha256.txt` hashes only 4 files vs. 10 for V2, omitting codec/traversal sources `probe.clj` depends on — immaterial to V1's attribution claims, but a completeness gap worth knowing about if a full V1 provenance chain is ever needed.
+
+**Honest attribution limits (confirmed, not just asserted):**
+- Preparation ≠ publication — the real DB write/ack is entirely outside the 3 measured phases; the 42% residual is explicitly not isolated native execution.
+- Non-atomic, estimated allocation — snapshot-diff byte counts, not an allocation-site profile; GC can straddle snapshot boundaries.
+- No paired overhead control — private-var redefs perturb timing, so absolute rates aren't comparable to an uninstrumented binary.
+- **This is source review, not execution/native proof.** I did not run the app, the reader, or `summarize.bb`. I verified arithmetic/logical consistency of the already-written receipts and the code that produced them — not that the native run occurred exactly as described. The sha256 files, `summary.edn`, and `phase-costs.edn` are mutually consistent and plausible, but their provenance ultimately rests on trusting the retired native artifacts recorded in `artifact-sha256.txt`, which I neither re-executed nor re-hashed.
+
+No policy/ack work is skipped by the instrumentation; required counts, inclusive timings, quantiles, and allocation claims all check out against the data as written.

@@ -1,0 +1,13 @@
+**Verdict: No blockers.**
+
+**Output-lifetime check passes.** The nested-JSON opaque values embedded in captured `physical-rows` come from `(:nested context)`, which calls `with-nested-text-writer`'s `prepare` fn (`experimental.clj:118-133`). Its docstring explicitly guarantees: "On callback return/throw the cache is cleared and retained writers reject... **Outputs made during the scope remain independent**." So values captured into `prepared` during the single `encode-full rows true` call (whose writer scope spans the whole batch, `chdb.clj:1347-1350`) stay valid after that scope closes — later `encode-wire` calls reusing those rows aren't touching torn-down state. This matches the script's own comment and the README's claim that complete output, including nested JSON String fields, is byte-equal.
+
+**Byte-equality coverage is real.** The four `assert (equal? expected ...)` checks (lines 42-45) compare the *entire* encoded bytevector, covering nested JSON, not just outer scalar columns. Three negative controls (changed event name, changed attribute, changed physical-row field) correctly flip to not-equal, so the check isn't vacuous.
+
+**Percentile geometry is a disclosed artifact, not a bug.** `quantile` is `nth (sort xs) (dec (ceil (p*n)))` with n=16/arm. `ceil(0.95*16)=16` and `ceil(0.99*16)=16` both index the max element, so p95==p99 necessarily. The README caveats this explicitly ("sample p99 is the maximum, not population-tail qualification"), and the edn data confirms it (449.369563 / 158.996932 repeated for both percentiles).
+
+**Conservative-exclusion claims hold.** `:preprojection-in-timed-wire-arm false`, `:prepared-rows-retained true`, `:preprojection-retention-accounted false` match the code: rows are captured once outside the timed loop (lines 38-40), and `encode-wire` only re-encodes already-built rows — normalization, row construction, and nested-JSON preparation occur solely in the `:full` arm. Retention cost of the kept batch is real but excluded from measured wire-arm allocation, as disclosed.
+
+**Typed-source control caveat is accurate.** The `:attributes "count"` mutation (line 44) changes both the generic attribute map and the typed projector's shared source, so it's correctly self-disclosed as not an isolated typed-projection oracle.
+
+No execution performed — source-only read of the four required files plus `chdb.clj`/`experimental.clj` for the lifetime question. Didn't need the optional comparison files to resolve this.
