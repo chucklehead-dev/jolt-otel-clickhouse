@@ -38,6 +38,12 @@
 
 (deftest fused-nested-literal-remains-a-json-string
   (let [c (codec/open-codec)]
+    (let [scalar (fn [value _ _] (.getBytes (codec/write-nested c value) "UTF-8"))]
+      (is (nil? (#'codec/qualify-nested-text! scalar
+                   (fn [value _ _] (codec/prepare-nested-literal c value)))))
+      (is (nil? (codec/with-nested-literal-writer c
+                   (fn [write] (#'codec/qualify-nested-text! scalar
+                                (fn [value _ _] (write value))))))))
     (doseq [value [nil false true 0 -9223372036854775808 18446744073709551615
                   123456789012345678901234567890N 1.25 :name
                   "quote\"slash/\\\n\tλ😀" [] {} [1 false nil "é😀"]

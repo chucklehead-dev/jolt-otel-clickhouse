@@ -34,6 +34,10 @@
                     (= "{\"a\":1}" (String. (scalar {"a" 1} 100 128) "UTF-8")))
         (throw (ex-info "Unsupported experimental codec runtime" {:type ::unavailable})))
       (qualify-nested-text! scalar nested)
+      (qualify-nested-text! scalar nested-literal)
+      (let [[prepare finish] (literal-scope)]
+        (try (qualify-nested-text! scalar prepare)
+             (finally (finish))))
       [scalar project (traversal/native-pmap-folder walk) nested cached-project
        row-box row-append row-width nested-scope scalar-map-box nested-literal literal-scope])))
 
@@ -43,7 +47,8 @@
   []
   (nth @backend 9))
 
-(deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width nested-scope])
+(deftype ^:private Codec [tag scalar project fold nested row-box row-append row-width nested-scope
+                        literal literal-scope])
 (defn open-codec
   "Open a stateless explicit codec. Optional :flat-map-cache? (default false)
   enables bounded, per-invocation String->String pmap byte reuse in record
@@ -54,9 +59,9 @@
    (when-not (and (map? options) (every? #{:flat-map-cache?} (keys options))
                   (boolean? (get options :flat-map-cache? false)))
      (throw (ex-info "Invalid experimental codec options" {:type ::invalid-options})))
-   (let [[scalar project fold nested cached-project row-box row-append row-width nested-scope] @backend]
+   (let [[scalar project fold nested cached-project row-box row-append row-width nested-scope _ literal literal-scope] @backend]
      (Codec. seal scalar (if (:flat-map-cache? options) cached-project project) fold nested
-             row-box row-append row-width nested-scope))))
+             row-box row-append row-width nested-scope literal literal-scope))))
 (defn- require-codec! [codec]
   (when-not (and (instance? Codec codec) (identical? seal (.-tag codec)))
     (throw (ex-info "Invalid experimental codec" {:type ::invalid-codec})))
@@ -122,7 +127,7 @@
   [codec value]
   (require-codec! codec)
   (if (and (vector? value) (empty? value)) "[]"
-    ((nth @backend 10) value 67108864 128)))
+    ((.-literal codec) value 67108864 128)))
 
 (defn with-nested-text-writer
   "Call use-writer with a synchronous nested-text encoder for one payload.
@@ -149,7 +154,7 @@
   (require-codec! codec)
   (when-not (ifn? use-writer)
     (throw (ex-info "Invalid nested-literal scope callback" {:type ::invalid-scope-callback})))
-  (let [[prepare finish] ((nth @backend 11))]
+  (let [[prepare finish] ((.-literal-scope codec))]
     (try (use-writer (fn [value] (prepare value 67108864 128)))
          (finally (finish)))))
 

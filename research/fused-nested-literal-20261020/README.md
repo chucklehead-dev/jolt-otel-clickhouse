@@ -131,3 +131,10 @@ jolt -Srepro -Sdeps '{:paths ["src" "test" "incubator/codec/src" "incubator/code
 
 No dataset/store is generated. Retain small scripts/results; retire successful
 exact standalone build only after copied receipts and checksum.
+
+The subsequent [actual Durable comparison](native-comparison.md) is separate
+from this component screen:700000 full physical rows recovered across A/B/B/A,
+stable fused rates around13.5k/s but drifting controls. It does not meet the
+overall target or isolate original/default-encoder overhead. Current frontend
+preflight/Codec-field follow-up passes source +standalone46/769; original
+measured byte kernel is unchanged. No exporter option/default/PR added yet.

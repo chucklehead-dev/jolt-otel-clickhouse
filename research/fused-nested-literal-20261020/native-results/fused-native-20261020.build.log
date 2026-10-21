@@ -1,0 +1,8 @@
+jolt build: 5 :jolt/native libraries are loaded at runtime — the binary needs them on the host; declare :static {:archive "…"} to link one in:
+  crypto — libcrypto.so.3, libcrypto.so.1.1, libcrypto.so
+  ssl — libssl.so.3, libssl.so.1.1, libssl.so
+  sqlite3 — libsqlite3.so.0, libsqlite3.so
+  pq (optional) — libpq.so.5, libpq.so
+  z — libz.so.1, libz.so
+jolt build: compiling perf.fused-pipeline (release mode, self-contained)
+jolt build: wrote /tmp/fused-native-build.nURperDq/fused-pipeline
