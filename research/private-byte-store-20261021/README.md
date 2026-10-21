@@ -1,4 +1,11 @@
-# Private byte-store specialization: candidate, not yet adopted
+# Private byte-store specialization: qualified local candidate
+
+Native qualification completed: all700,000 physical rows independently
+recovered; both directional window-rate pairs favor the candidate, pooled
+13.4k ->14.7k rows/s (~9.2%). Targets remain unmet. See
+[complete native evidence](native-results/README.md).
+Minimal product PR158 is separate from this research history; no adoption
+claim is made before its final-head CI and guarded merge.
 
 Product base exporter a6cbf939; research parent
 581b50259e37b79ee51f7b1a881fad60150ec22f. Official stock Jolt 0.8.23/Chez10.4.1.
@@ -35,14 +42,17 @@ preserving prior catchable rejection of an out-of-byte formatter character.
 
 ## Source gate and component screen
 
-Independent final library gate **43 tests / 645 assertions**, zero failures/errors.
+Independent final library source AND Linux standalone gates each pass
+**43 tests / 645 assertions**, zero failures/errors.
 Added tests cover zero/exact/one-byte-short budgets with nil/booleans, 64-bit
 extrema, finite/subnormal floats, all ASCII controls/delimiters and Unicode
 expansion. Lexical formatter mutants returning out-of-byte Unicode fail at the
 CHECKED store for both float/bignum paths; a valid formatter control succeeds
 so a compile/setup error cannot masquerade as rejection. Existing chunk,
 depth, reentry, cached fragments, records, row-view and ownership tests pass.
-This is source execution; native qualification is pending.
+The standalone executable runs from a neutral `/tmp` directory with no declared
+ecosystem dependencies. Actual Git-resolved exporter gate71/602, published
+shape-plan4/15 and scalar-view3/19 also pass. Native results are separate below.
 
 One-process baseline/candidate/candidate/baseline, 16 samples/arm, rich 5,000
 spans with real SDK conversion/cache, typed projection, nested and outer JSON.

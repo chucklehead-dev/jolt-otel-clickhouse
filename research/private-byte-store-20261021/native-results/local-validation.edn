@@ -1,0 +1,14 @@
+{:product-head "950c59ded5343ed58f35fdb7f100f8e459795255"
+ :kernel-sha256 "169e8359b597bb005f0d21e87d0c7a347690441114d060117137447591a5aa2b"
+ :runtime :official-jolt-0.8.23 :chez "10.4.1"
+ :library-source {:tests 43 :assertions 645 :failures 0 :errors 0 :exit 0}
+ :library-standalone {:tests 43 :assertions 645 :failures 0 :errors 0 :exit 0
+                      :execution-cwd "/tmp" :declared-ecosystem-deps {}
+                      :binary-sha256 "2bd722ef2191d2fbf9bf842c747146aba6e2f6cb0c6b7a06558ea6b0c202d742"}
+ :git-resolved-codec "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
+ :published-exporter {:tests 71 :assertions 602 :failures 0 :errors 0 :exit 0}
+ :published-shape-plans {:tests 4 :assertions 15 :failures 0 :errors 0 :exit 0}
+ :published-scalar-views {:tests 3 :assertions 19 :failures 0 :errors 0 :exit 0}
+ :native-abba {:writer-and-independent-reader-exit 0 :physical-rows 700000
+               :receipt-mutations-rejected-per-run 9 :population-tail-qualified false
+               :target-qualified false}}
