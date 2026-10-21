@@ -14,8 +14,8 @@ printf 'EVIDENCE_ROOT=%s\n' "$task_root"
 base=("$wrapper" env JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0 JOLT_CHDB_LIB="$task_lib"
       "$task_jolt" -Srepro -Sdeps '{:paths ["src" "test"]}' -A:stock-span-codec)
 "${base[@]}" -Spath > "$task_root/classpath.txt"
-rg -q 'jolt-chdb.git/a752c0cd553fdce41087a261d081f390154f7b55/src' "$task_root/classpath.txt"
-rg -q 'casselc_otel.git/d8db5da817074829950ca0150301877a5bafbace/src' "$task_root/classpath.txt"
+rg -q 'jolt-chdb.git/312812f0dfeff5498a6d1aa29b0476a97d8b65f3/src' "$task_root/classpath.txt"
+rg -q 'casselc_otel.git/38278ab4cf3b7bad7ed817170ca7e380122068b3/src' "$task_root/classpath.txt"
 sources=(deps.edn src/otel/exporter/chdb.clj src/otel/exporter/chdb/preparation.clj
          test/otel/exporter/chdb_preparation_native_cancellation.clj
          test/otel/exporter/chdb_preparation_adapter_test.clj "$0" "$wrapper" "$task_jolt" "$task_lib")

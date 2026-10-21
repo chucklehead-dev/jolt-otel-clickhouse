@@ -181,6 +181,46 @@ enable preparation overlap. SDK/driver/data.json ecosystem forks are still
 selected by the exporter's exact pins. This is not a fully upstream-only
 dependency stack, complete Oscope qualification or a throughput-target claim.
 
+### Experimental preparation overlap
+
+For a dedicated **span-only** compact Durable exporter configured as above,
+the SDK can prepare the next batch while the existing writer confirms the
+current one. This is an explicit opt-in; constructing an exporter alone does
+not enable it.
+
+```clojure
+(require '[otel.sdk.export :as sdk])
+
+(def processor
+  (sdk/batch-processor
+    exporter
+    (chdb-export/experimental-span-batch-options
+      exporter {:max-export-batch-size 5000 :max-queue-size 10000})))
+```
+
+Use the returned options with exactly one processor for that exporter. Do not
+also export directly through it, change its converters/configuration, or
+administer its schema while preparation is active. Mixed-signal exporters
+cannot use this helper; give spans their own exporter if overlap is needed.
+
+At most two preparation slots are retained, including confirmed batches that
+have not yet retired. A slot remains occupied through resource release and
+is freed only on retirement. Success still means confirmed Durable
+publication, never just queue admission. `sdk/force-flush!` and `sdk/shutdown!`
+retain their success/failure results. A borrowed connection remains yours to
+close after processor settlement; exporter-owned connections are closed by
+the exporter. Do not treat a failed shutdown as permission to discard active
+resources.
+
+The optional `:max-prepared-bytes` processor option bounds reserved SQL and
+cached-WAL array capacity, not total heap/RSS or the bytes in the raw span
+queue. The reservation is conservative and must cover both slots; a smaller
+limit is rejected rather than silently reducing safety. See the
+[executable design and its limits](formal/quint/bounded-preparation.md).
+Local benchmark results and their workload restrictions are recorded in
+[the experiment report](research/preparation-overlap-20261021/RESULTS.md);
+they do not qualify this final dependency graph or Oscope defaults.
+
 ### Durable acknowledgement
 
 An explicit `:insert-format :json-compact-each-row` selects schema-ordered

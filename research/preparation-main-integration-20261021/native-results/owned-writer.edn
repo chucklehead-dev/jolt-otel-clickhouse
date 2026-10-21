@@ -1,0 +1,1 @@
+{:ownership "owned", :rows 4, :stats {:queue-size 0, :attempted-span-count 4, :exported-span-count 4, :failed-span-count 0, :dropped-count 0}, :publisher-terminated true}

@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Integrate the bounded preparation adapter with its approved literate model
+  and canonical SDK/confirmed-ticket driver pins. Add explicit stock-runtime
+  ownership and held-WAL cancellation/readback CI gates, and document the
+  span-only opt-in, reservation limits and connection ownership. Existing
+  synchronous and mixed-signal defaults remain unchanged.
+
 - Prototype explicit bounded span preparation options for a dedicated compact
   Durable exporter. Reserve SQL+cached-WAL array capacity before materializing,
   retain at most two slots through confirmed settlement and admission release,
