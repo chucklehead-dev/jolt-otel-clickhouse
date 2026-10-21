@@ -1,0 +1,5 @@
+Unhandled exception (AssertionError): Assert failed: (= 2 (count (str/split source (re-pattern (java.util.regex.Pattern/quote needle)) -1)))
+  at ./research/direct-scalar-normalization-sink-20261021/screen-inline.clj:11:1
+  trace:
+    user/replace-once (research/direct-scalar-normalization-sink-20261021/prototype.clj:9)
+    user/inline-context (research/direct-scalar-normalization-sink-20261021/inline.clj:12)

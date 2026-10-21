@@ -1,0 +1,1 @@
+{:isolated-stock-smoke true, :sizes [9 17 128], :sdk-source-read-as-data true, :sdk-json-exporter-driver-namespaces-loaded false, :performance-qualified false, :durable-qualified false}

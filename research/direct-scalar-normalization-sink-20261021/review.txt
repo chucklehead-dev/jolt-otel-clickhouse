@@ -1,0 +1,15 @@
+## Review: direct-scalar-normalization-sink research (prototype/inline prototypes)
+
+**Scope checked:** the 11 files listed, plus `incubator/codec/src/jolt/codec/json.ss` to verify splice targets. No shell/diff run; read-only.
+
+**Splice correctness (verified against source):** `prototype.clj`'s needle for `:sink`/`:unquoted-mutant` targets `map-entry!`'s exact body (json.ss:179–181), which is also reused unmodified at the generic-map fallback (json.ss:291) — but since the needle is the *definition* text, not a call site, `replace-once`'s exactly-one-match assertion correctly fires once. `inline.clj` patches the already-sink-patched `map-entry!` to validate type/length **before** writing `key!`/`:` (avoids partial-key writes on rejection) rather than after, which is a real correctness improvement over the plain `:sink` arm (which writes key+colon before validating `v`, relying on whole-buffer discard to hide it). No needle collision survives in the final files — the README's note about attempt-1's needle ambiguity is corroborated by the actual (narrowed) needle present now.
+
+**Highest real gap:** inline's `policy-source` replaces `(admitted? (pmap-root m))` with `#t`, dropping the SDK's hash-collision-bucket check entirely (confirmed by `checks-inline.clj`'s `"Aa"/"BB"` collision test — original declines, inline admits and encodes both). This is disclosed and tested, but the research doesn't establish *why* the SDK declines collision buckets — if that check protects against something beyond caution (e.g., a `pmap` fold-order guarantee the raw map doesn't provide), silently admitting it in inline is the one place semantic equivalence actually diverges, not just error-shape equivalence. Flag as the blocking item before any reuse, independent of the explicit non-adoption framing.
+
+**Benchmark framing risk:** the `:sink` arm's p99 (54.11ms) is worse than baseline's p99 (34.71ms) in the same run despite ~52% less allocation and a lower median — already stated plainly, but at n=16/arm in one shared process (`:copy`/`:sink`/`:sink`/`:copy` interleaved), that single high sample could be init/GC noise or a genuine tail regression; the data can't distinguish these, and nothing here should be read as "allocation win ⇒ latency win."
+
+**Minor:** `checks.clj`'s empty-input/zero-limit success check (`emit :sink [] 0 128`) has no `:copy` counterpart — trivial asymmetry, not a safety issue.
+
+**No fabricated or hidden claims found** — `README.md`'s scope/exclusion language matches what the `.clj`/`.edn`/`.log` files actually show.
+
+**Next step (bounded):** before any further iteration, get an answer on what `admitted?`'s collision check actually protects against in the real SDK; everything else here is self-consistent and adequately caveated.

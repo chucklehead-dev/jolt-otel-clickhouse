@@ -1,0 +1,5 @@
+2f65dbebdcededa5d5a3f9e3adece1f37bfffeb1588f8a56525226650ab3ad27  research/direct-scalar-normalization-sink-20261021/prototype.clj
+17c761a30fcf3477a679322154d4e570bff44350c1a37a462857b6f3f6764b9f  research/direct-scalar-normalization-sink-20261021/screen.clj
+5b9cc251976491faa16c51d493e1fd32a90c13108cb1ea1f70e3facdd18e9166  incubator/codec/src/jolt/codec/json.ss
+50ace14751960da9343f5cfc94dec5e30836a9352f4cc923bac7dc289710a53d  incubator/codec/src/jolt/traversal/kernel.ss
+179f1b12c596f09f26178c39a913e335c14b341819b7280fe99956be048e7ca8  /home/chuck/.jolt/gitlibs/https___github.com_casselc_otel.git/6cd57c86e0a93fc56af6cb10ee433b178b289e3b/resources/otel/scalar_string_map.ss

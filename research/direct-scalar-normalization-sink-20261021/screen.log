@@ -1,0 +1,1 @@
+{:copy {:p50-p90-p95-p99-ms [23.404741 34.296761 34.711648 34.711648], :median-estimated-bytes-per-map 1800.7168}, :sink {:p50-p90-p95-p99-ms [22.166271 38.628583 54.111214 54.111214], :median-estimated-bytes-per-map 858.1728}}

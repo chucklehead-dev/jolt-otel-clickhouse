@@ -1,0 +1,1 @@
+{:copy {:p50-p90-p95-p99-ms [17.712812 20.972759 21.336633 21.336633], :median-estimated-bytes-per-map 1800.7168}, :prevalidated {:p50-p90-p95-p99-ms [16.551438 18.204627 21.831829 21.831829], :median-estimated-bytes-per-map 858.1728}, :inline {:p50-p90-p95-p99-ms [15.864073 17.922283 19.31164 19.31164], :median-estimated-bytes-per-map 858.1696}}
