@@ -64,8 +64,12 @@ reviewer's source-only caveats. No population-tail claim is made.
 ## Corrected native-only result
 
 Confirmed window throughput: **32,366 rows/s**. Estimated managed allocation:
-**2,476B/row**, versus~17,206–17,211B/row through the SDK controls. Whole-process
+**2,476B/row**, versus~17,206–17,211B/row through the SDK controls. Observing-thread
 CPU is~42.25µs/row versus81–87.1µs/row. These are separate non-atomic snapshots.
+2026-10-21 correction: this was previously mislabeled "whole-process CPU".
+Jolt0.8.23 maps `cpu-nanos` to Chez `sstats-cpu` (thread CPU), so these readings
+do NOT account for publisher/native-worker CPU or establish process CPU headroom.
+The measured wall-clock rates/byte matching/recovery are unchanged.
 
 | Batch latency statistic | ms per5k | Reciprocal batch rows/s |
 | --- | ---: | ---: |
