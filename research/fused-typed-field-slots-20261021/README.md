@@ -43,8 +43,11 @@ global folder and is not a blanket stock-Jolt gate. An initial attempt on stock
 hit that pre-existing missing helper and also exposed this candidate's missing
 Scheme closing delimiter; that syntax error was fixed before the focused gate.
 Do not report the legacy attempt as passing or the delimiter error as baseline.
-The new gate supplies the independent traversal capability explicitly and has
-been added to stock CI; hosted green is still pending.
+The new gate supplies the independent traversal capability explicitly. Hosted
+stock-library CI at `f4b4e457600de951e8f8e62faacab6be9ca855cb` passed and its
+actual log records8tests/561assertions, not merely a green job status:
+[run39581595584](https://github.com/chucklehead-dev/jolt-otel-clickhouse/actions/runs/39581595584).
+This does not qualify a later head or the native throughput experiment below.
 
 Initial Claude source review found a missing continuation-bridge capability
 fence. The factory now checks presence/procedure/arity of `jolt-invoke3`, matching
@@ -53,6 +56,8 @@ A new test supplies a wrong-arity bridge in a local native `dynamic-wind` and
 restores it on every exit. All8/561 pass. The component timing below PRECEDES
 this constructor-only guard; its recorded hashes are historical, not rewritten
 to imply the newer tested source was timed. The hot per-span body is unchanged.
+The follow-up source review closed that finding without reporting a new blocker;
+neither review executed the tests or persistence comparison.
 
 ## Paired component screen
 
@@ -92,12 +97,22 @@ note. The benchmark reuses the existing workspace fixture, not a standalone
 distribution. No database/native build/bulk evidence has been created by this
 screen. No exhaustive/model run: no protocol transition changed.
 
+## Actual confirmed local Durable comparison
+
+The declared same-binary A/B/B/A comparison now independently recovered all
+700,000physical rows. Pooled confirmed window rate12,174 ->12,992rows/s (+6.71%)
+and estimated allocation15,706 ->14,808B/row (-5.72%). Both pairs favor the
+candidate rate; sample slow-tail latency is NOT improved. No target, SDK queue,
+S3 or Oscope qualification. See [all raw receipts and scope](native-results/README.md).
+
 ## Remaining adoption gates
 
-Independent source review; actual default-release public exporter ABBA with
-confirmed local Durable writes and independent older full-field/type/nanosecond/
-multiplicity recovery; final-head hosted CI. Keep all measurements/defaults/
-consumer pins unclaimed until these gates finish. S3, SDK queue, Oscope and
+Product-source review, focused tests, actual default-release public exporter
+ABBA and independent older full-field/type/nanosecond/multiplicity recovery
+have completed. Final research/report review and its allocation-control follow-up
+also completed; source-only reviews and Codex adjudication are retained under
+`native-results/`. Final-head hosted CI remains.
+Keep defaults and consumer pins unchanged. S3, SDK queue, Oscope and
 Langfuse are separate integration gates, not inferred from this component.
 The larger Revision B overlap proposal still awaits explicit scope approval;
 this serial pure-row optimization neither implements nor bypasses that gate.

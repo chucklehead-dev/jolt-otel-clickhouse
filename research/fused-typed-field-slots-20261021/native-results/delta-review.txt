@@ -1,0 +1,11 @@
+Source-only review (no commands run, no edits, no wider survey; labeled accordingly).
+
+**Prior findings — both resolved.**
+1. The "+1.79% within a ±0.0052% baseline-drift band" claim is explicitly rejected in `review-adjudication.md`: neither the endpoint drift nor two baseline runs defines statistical noise/significance, and near-equal baseline durations aren't evidence of duplication. `final-review.txt` is kept verbatim as a historical record; the adoption-facing `README.md` doesn't repeat that framing — it states both pairs favor the candidate rate and declines any tail/causal/target claim. Resolved via conservative downstream wording, not by rewriting the superseded review.
+2. Missing post-run hash snapshot — now resolved: `post-run-source-sha256.txt` and `post-run-source-check.txt` exist, hashes match `prebuild-source-sha256.txt` byte-for-byte (expected, source unchanged), check shows OK for all 7 paths.
+
+**New material (allocation recomputation + negative control).** `validate-native.bb`'s `:allocation-estimate` check now independently recomputes bytes/row from raw before/after heap+gc-bytes counters rather than trusting the writer's stored field, using the same 160,000-row denominator already used for rate (32×5,000, consistent, not a new magic number). `validate-controls.bb` adds a `:wrong-allocation` mutation; given the 1e-8 tolerance it's correctly rejected, and both `validator-controls*.edn` show it in `:rejected-controls` with `:positive-control true`. This closes the adjudication's "own correction" (previously-trusted computed field) with a matching negative control — no defect found.
+
+**Concrete remaining blockers** (per README "Remaining adoption gates"): final research/report review and final-head hosted CI haven't run; S3/SDK-queue/Oscope/Langfuse integration gates are separate and unexercised; the Revision B overlap proposal still awaits explicit scope approval (unrelated to this slice).
+
+No new benchmark or product-source change is implicated.

@@ -1,0 +1,7 @@
+8203101bf2639ae7fd5bd3bb1e947e435d804796f0c55cc86a93db991c5dd7bd  deps.edn
+4c7faff9f0981208b8e0b727d5db7c3f51a73c1998c1670c701939edc3289332  src/perf/field_slot_pipeline.clj
+b8888e60b332bc1d19566be1db6b0a4abf1ce199a671b0fde74a74780dc86367  ../../scalar-view-exporter-20261020/app/src/perf/public_pipeline.clj
+123440fc99059abaf452eb06ff0852d3b77cc052ea36ad0a1a09b47fd59d5e6c  ../../../src/otel/exporter/chdb/attribute_projection.clj
+d6f9e9dae5c1092f316e7c523abaa55c6232ebc49bd8d881d262caecced08fe1  ../../../src/otel/exporter/chdb/native_projection.clj
+8b09855619ce8153da590691dbbd4d23cd07db69f35b8ca9d7871f154d765a99  ../../../src/otel/exporter/chdb/native_trace_field_slots.ss
+451126d9b356bc2e7c3af209be5ebb4011ebd7ca4cc8346d13e8ed3f718eb8f5  ../../../src/otel/exporter/chdb.clj
