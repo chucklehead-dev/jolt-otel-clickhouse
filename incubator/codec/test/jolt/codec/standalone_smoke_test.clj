@@ -6,6 +6,7 @@
             [jolt.codec.experimental-test]
             [jolt.codec.row-view-test]
             [jolt.codec.nested-fragment-test]
+            [jolt.codec.fused-nested-literal-test]
             [jolt.codec.record-test]
             [jolt.codec.scalar-text.experimental-test]
             [jolt.codec.scalar-text.view-test]
@@ -19,6 +20,7 @@
                              'jolt.traversal.leaf-block-test
                              'jolt.codec.row-view-test
                              'jolt.codec.nested-fragment-test
+                             'jolt.codec.fused-nested-literal-test
                              'jolt.codec.record-test
                              'jolt.codec.scalar-text.experimental-test
                              'jolt.codec.scalar-text.view-test)]

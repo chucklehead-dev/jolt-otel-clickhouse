@@ -65,9 +65,29 @@ Existing source43/596 remained green before new tests. New/final source gate
 Unicode/supplementary values, bigint/false/nil, recursively nested literals,
 depth,64KiB crossings, fresh output after mutation/GC, before-next-row failure,
 cache-hit logical budgets, deterministic reuse counts and scope cleanup/error.
-The existing workflow's exact test-count expectations follow the added tests,
-not a weakened oracle. Standalone and peer review receipts are next; do not
-promote these component data into confirmed native throughput.
+The default Linux standalone binary executed from `/tmp` also passes46/767,
+SHA256baa16080b09bf570815e8a57911ec8df97cb5f75ef252092aa7a4b5bed0e6138
+before the test-namespace move below. Review is pending; do not promote these
+component data into confirmed native throughput.
+
+Hosted initial run39540211134 atc02c6aa passed candidate30/434, standalone46/767,
+reader gates and the stock Maven adapter, then failed the OLD published-codec
+consumer gate. New tests had been added to namespaces that this gate imports
+against old published68ee1ca. They referenced functions that correctly did not
+exist there, and made its expected71 tests become74. This is a test-version
+selection error, not evidence of a new encoder/ABI defect. Do not change the
+old gate to expect74 or weaken its missing-capability checks.
+
+New fusion tests/isolated instrumentation now live only in
+`jolt.codec.fused-nested-literal-test`, required by the candidate source/build
+gates. Original generic/nested-fragment test namespaces are byte-for-byte equal
+to the merged base. Old published gate remains71/553 and passes locally; new
+source gate remains46/767 and passes. Workflow candidate total30 includes the
+new namespace explicitly. No production implementation changed for this fix.
+It exposes an evidence-selection gap: adding a feature test to a reused test
+namespace changes BOTH current-source and intentionally older dependency gates.
+Use explicit feature namespace membership rather than treating all local tests
+as version-independent consumer contracts.
 
 Reproduce from the root with the mandatory wrapper/stock executable:
 

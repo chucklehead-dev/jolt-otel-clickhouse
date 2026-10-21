@@ -6,53 +6,6 @@
 (defn rejects? [f] (try (f) false (catch Throwable _ true)))
 (defn text [bytes] (String. bytes "UTF-8"))
 
-(deftest fused-nested-literal-remains-a-json-string
-  (let [c (codec/open-codec)]
-    (doseq [value [nil false true 0 -9223372036854775808 18446744073709551615
-                  123456789012345678901234567890N 1.25 :name
-                  "quote\"slash/\\\n\tλ😀" [] {} [1 false nil "é😀"]
-                  (sorted-map "escaped\"/\\😀" [1 false nil])
-                  (into {} (map (fn [n] [(str "key-" n) n]) (range 32)))]]
-      (let [old (codec/prepare-nested-text c value)
-            fused (codec/prepare-nested-literal c value)
-            expected (codec/encode-prefixed-records c "SQL\n" [old] vector 100000)
-            size (- (alength expected) 4)]
-        (is (= (text expected)
-               (text (codec/encode-prefixed-records c "SQL\n" [fused] vector size))))
-        (is (rejects? #(codec/encode-prefixed-records c "SQL\n" [fused] vector (dec size))))
-        (is (= (codec/write-nested c old) (codec/write-nested c fused)))))
-    (is (= "\"null\"" (codec/write-nested c (codec/prepare-nested-literal c nil))))
-    (is (rejects? #(codec/prepare-nested-literal c (Object.))))
-    (is (rejects? #(codec/prepare-nested-literal nil [])))
-    ;; A nested literal inside another must be escaped again, not spliced.
-    (let [old (codec/prepare-nested-text c {"x" "\"/\\😀"})
-          fused (codec/prepare-nested-literal c {"x" "\"/\\😀"})]
-      (is (= (codec/write-nested c (codec/prepare-nested-text c old))
-             (codec/write-nested c (codec/prepare-nested-literal c fused)))))))
-
-(deftest fused-inner-budgets-depth-chunks-and-output-ownership
-  (let [c (codec/open-codec) prepare (nth @@#'codec/backend 10)]
-    (doseq [n [0 1 1021 1022 1023 1024 1025 65530 65535 65536 70000]
-            suffix ["" "\"/\\😀\n"]]
-      (let [value {"text" (str (apply str (repeat n "x")) suffix)}
-            ordinary (codec/write-nested c value) limit (count ordinary)
-            old (codec/prepare-nested-text c value) fused (prepare value limit 128)]
-        (is (= (codec/write-nested c old) (codec/write-nested c fused)))
-        (is (rejects? #(prepare value (dec limit) 128)))
-        (let [a (codec/encode-prefixed-records c "" [fused] vector 300000)
-              before (text a) calls (atom 0)]
-          (is (rejects? #(codec/encode-prefixed-records c "" [fused :later]
-                           (fn [x] (swap! calls inc) [x]) (dec (alength a)))))
-          (is (= 1 @calls))
-          (aset-byte a 0 (byte 0)) (System/gc)
-          (is (= before (text (codec/encode-prefixed-records c "" [fused] vector 300000)))))))
-    (doseq [depth [127 128]]
-      (let [value (nth (iterate vector {"a" 1}) depth)
-            outcome (fn [f] (try [:ok (codec/write-nested c (f value))]
-                                (catch Throwable _ [:reject])))]
-        (is (= (outcome #(codec/prepare-nested-text c %))
-               (outcome #(codec/prepare-nested-literal c %))))))))
-
 (deftest startup-nested-text-smoke-rejects-raw-splice-mutant
   (let [c (codec/open-codec)
         scalar (fn [value _ _] (.getBytes (codec/write-nested c value) "UTF-8"))]
