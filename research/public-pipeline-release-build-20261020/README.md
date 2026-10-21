@@ -36,6 +36,9 @@ The gate checks canonical selected source roots, not just requested deps.edn
 coordinates. Exporter/codec local sources match the clean base above; the codec
 implementation matches the published `15b15f3` component. This is not a fully
 published-Git application dependency qualification or an upstream-only ecosystem.
+The printed `:all-active-classpath-under-home` field is informational; the
+accept/reject gate checks the four named dependency families. The actual hidden-
+source run supplies the separate execution proof, not that metadata flag.
 
 ## Canonical consumer measurements
 
@@ -125,3 +128,10 @@ roots and unsupported/custom-policy fallback; preserve original policy anchors,
 callback order, byte/depth limits, independent output ownership and confirmed-only
 success. A view/visitor cannot simply masquerade as a promised fresh plain map.
 No production cache of all fixture values or global runtime patch is acceptable.
+
+## Independent source review
+
+Claude read-only review of exact commit `0c6b435` approved with no blockers.
+The informational classpath flag was its only nonblocking note, clarified above.
+See `claude-review.txt` and `review-resolution.md`; review is not a substitute
+for the actual writer/reader commands and receipts.
