@@ -115,8 +115,9 @@ a complete fork-free exporter. No nREPL server was available; isolated stock
 processes kept source/selection provenance explicit. Do not rerun unchanged
 screens to seek favorable numbers.
 
-Keep this research unadopted pending independent review and an actual owner-
-integration design. A real fused adapter needs safe per-map rollback/fallback,
+Keep this research unadopted:independent review identified the admission gap
+below, and an actual owner-integration design is not implemented. A real fused
+adapter needs safe per-map rollback/fallback,
 original policy and callback order, current limits, no escaped input loans and
 separate rich-span/native recovery qualification. The existing #141 bounded
 preparation/publication proposal remains a distinct larger opportunity, still
