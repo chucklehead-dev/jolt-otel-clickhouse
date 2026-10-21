@@ -10,6 +10,7 @@
             [otel.exporter.chdb :as chdb-export]
             [otel.exporter.chdb-test-support :as test-support]
             [otel.exporter.chdb-insert-budget-test]
+            [otel.exporter.chdb-preparation-owner-test]
             [otel.exporter.chdb-keyword-attribute-names-test]
             [otel.exporter.chdb-scalar-attribute-test]
             [otel.exporter.chdb-enum-string-test]
@@ -876,6 +877,9 @@
     (check "timestamp wire regressions are nonempty" true (pos? (:test result)))
     (check "timestamp wire regressions pass" 0 (+ (:fail result) (:error result))))
   (ordinary-rows-test/run check)
+  (let [result (test/run-tests 'otel.exporter.chdb-preparation-owner-test)]
+    (check "preparation owner failures" 0 (:fail result))
+    (check "preparation owner errors" 0 (:error result)))
   (let [result (test/run-tests 'otel.exporter.chdb-insert-budget-test)]
     (check "insert byte-budget tests are nonempty" true (pos? (:test result)))
     (check "insert byte-budget tests pass" 0 (+ (:fail result) (:error result))))
