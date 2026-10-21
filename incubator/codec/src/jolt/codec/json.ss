@@ -85,6 +85,14 @@
     (define (ascii! text)
       (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
         (byte! (char->integer (string-ref text i)))))
+    (define (formatted-number! text)
+      ;; Preserve checked behavior at the runtime formatter boundary. Unlike
+      ;; literal punctuation/validated prefixes, its byte range is not proved
+      ;; locally. In particular, never silently truncate a non-byte character.
+      (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
+        (ensure-space!)
+        (bytevector-u8-set! tail used (char->integer (string-ref text i)))
+        (set! used (fx+ used 1))))
     (define (u16! cp)
       (ascii! "\\u")
       (do ((shift 12 (fx- shift 4))) ((fx<? shift 0))
@@ -160,7 +168,7 @@
       ;; Bignums retain a correct but allocating fallback. No false no-allocation
       ;; claim for arbitrary numeric sizes; telemetry's 64-bit range uses scratch.
       (if (not (<= -9223372036854775808 n 18446744073709551615))
-          (ascii! (number->string n))
+          (formatted-number! (number->string n))
           (let ((negative? (< n 0)))
             (let loop ((n n) (i 20))
               (let* ((small? (fixnum? n))
@@ -263,7 +271,7 @@
        ((string? x) (string! x))
        ((ffc-json-text? x) (encoded-text! (ffc-json-text-bytes x)))
        ((and (integer? x) (exact? x)) (integer! x))
-       ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
+       ((and (flonum? x) (finite? x)) (formatted-number! (jolt-flonum->string x)))
        ((keyword? x) (string! (keyword-t-name x)))
        ((symbol-t? x) (string! (symbol-t-name x)))
        ((ffc-json-scalar-map? x)

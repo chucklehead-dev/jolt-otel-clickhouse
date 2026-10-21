@@ -6,11 +6,13 @@ No compiler/data.json/SDK patch, global unsafe optimize-level, format, policy,
 acknowledgement or concurrency change. Selected ecosystem dependencies still
 include forks; stock-runtime qualification is not a fork-free whole application.
 
-Only production difference: `byte!` uses `#3%bytevector-u8-set!` AFTER the existing
+The fast helper `byte!` uses `#3%bytevector-u8-set!` AFTER the existing
 `ensure-space!` capacity/output-budget check. The clean-string loop already uses
 this private-store primitive with its own bound. This avoids redundant store
 type/bounds checks on punctuation, escapes, digits and encoded scalar bytes.
 No arbitrary public array, index, byte or callback receives this helper.
+Runtime float/bignum formatter output takes a separate CHECKED store path,
+preserving prior catchable rejection of an out-of-byte formatter character.
 
 ## Bounds argument to review
 
@@ -22,19 +24,23 @@ No arbitrary public array, index, byte or callback receives this helper.
   remaining budget and prior positive chunk capacity produce a positive next
   chunk and reset `used` to zero. An initial zero-capacity buffer has a zero
   budget and raises, not a zero-capacity write.
-- Every internal byte argument is unsigned: fixed JSON punctuation; hex/decimal
-  ASCII digits; validated ASCII prefix/formatter text; bytevector reads; or
+- Every fast-helper argument is unsigned: fixed JSON punctuation; hex/decimal
+  ASCII digits; validated ASCII prefix/literal text; bytevector reads; or
   bounded UTF scalar bit arithmetic. No generic input integer is passed directly
-  to the store. The native formatter/runtime primitives are trusted as before.
+  to the fast store. Formatter text stays on checked stores; no local byte-range
+  assumption about those formatter results is needed for memory access.
 - Inputs and private contexts obey existing immutability/nonconcurrency
   contracts. This is local source reasoning, NOT a machine-checked proof of all
   native/runtime behavior. Do not blanket-enable unsafe compilation.
 
 ## Source gate and component screen
 
-Independent library gate **43 tests / 623 assertions**, zero failures/errors.
+Independent final library gate **43 tests / 645 assertions**, zero failures/errors.
 Added tests cover zero/exact/one-byte-short budgets with nil/booleans, 64-bit
-extrema, all ASCII controls/delimiters and Unicode expansion. Existing chunk,
+extrema, finite/subnormal floats, all ASCII controls/delimiters and Unicode
+expansion. Lexical formatter mutants returning out-of-byte Unicode fail at the
+CHECKED store for both float/bignum paths; a valid formatter control succeeds
+so a compile/setup error cannot masquerade as rejection. Existing chunk,
 depth, reentry, cached fragments, records, row-view and ownership tests pass.
 This is source execution; native qualification is pending.
 
@@ -50,12 +56,22 @@ output bytes agree, and timestamp input changes are observed in both arms.
 | Baseline | 208.59 / 248.72 / 301.94 / 301.94 | 8870.58 |
 | Candidate | 177.43 / 226.00 / 273.56 / 273.56 | 8870.60 |
 
+This initial screen belongs to commit3d2e0bb, before the review-driven checked
+formatter lane was added. Those formatter paths are not present in the rich
+fixture, but a compiler-layout effect is not ruled out; do not label these
+timings measured final-head results. Final native qualification is separate.
 Observed p50 ~14.9% lower and sample p99/max ~9.4% lower, no allocation change.
 This is a promising SOURCE component result, not confirmed Durable throughput,
 release optimizer or population-tail qualification. Do not compare absolute
 times against older experiments or repeat unchanged runs for a favorable number.
 
 ## Native qualification plan (declared before runs)
+
+Initial candidate build9083a340bae36c48a9e454c87e39875907edf2d08d26c3569103fae0dabebf40
+was superseded BEFORE ANY native timing when review identified the formatter
+range assumption. Final kernel SHA256 is
+169e8359b597bb005f0d21e87d0c7a347690441114d060117137447591a5aa2b.
+Record the rebuilt executable separately; no favorable native repeat is involved.
 
 Reuse the verified archived baseline app SHA256
 702dda478703aae460a28c8ac8276485d16e33b175357331deb13a42831c50eb,

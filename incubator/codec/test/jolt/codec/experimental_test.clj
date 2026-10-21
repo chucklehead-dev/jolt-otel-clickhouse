@@ -1,10 +1,21 @@
 (ns jolt.codec.experimental-test
   (:require [clojure.test :refer [deftest is]]
+            [clojure.java.io :as io] [clojure.string :as str]
             [jolt.codec.experimental :as codec]
+            [jolt.traversal.experimental :as traversal]
             [jolt.scheme :as scheme]))
 
 (defn rejects? [f] (try (f) false (catch Throwable _ true)))
 (defn text [bytes] (String. bytes "UTF-8"))
+(defmacro ^:private embedded-json [] (slurp (io/resource "jolt/codec/json.ss")))
+(def ^:private formatter-control-factory
+  (delay
+    (scheme/eval-string
+      (str "(lambda (text ffc-map-fold ffc-vector-fold ffc-records-fold ffc-stock-sorted-map? ffc-stock-record?)"
+           " (let ((jolt-flonum->string (lambda (value) text))"
+           "       (number->string (lambda (value) text)))"
+           "   (let () " (embedded-json)
+           "     (lambda (value) (ffc-json-ascii-bytes value 1000 128)))))"))))
 
 (deftest startup-nested-text-smoke-rejects-raw-splice-mutant
   (let [c (codec/open-codec)
@@ -13,7 +24,17 @@
                  (fn [value _ _] (codec/prepare-nested-text c value)))))
     (is (= :jolt.codec.experimental/unavailable
            (try (#'codec/qualify-nested-text! scalar (fn [value _ _] value)) nil
-                (catch Throwable error (:type (ex-data error))))))))
+                (catch Throwable error (:type (ex-data error)))))))
+  ;; Compile the actual kernel with LEXICAL formatter substitutions, never
+  ;; replace global helpers. A valid control rules out a compile/setup error;
+  ;; out-of-byte Unicode must fail at the checked store, not silently truncate.
+  (let [kernels (traversal/native-kernels (traversal/open-traversal))
+        valid (apply @formatter-control-factory (into ["123"] kernels))
+        invalid (apply @formatter-control-factory (into ["λ"] kernels))]
+    (doseq [value [1.25 18446744073709551616]]
+      (is (= "123" (text (valid value))))
+      (let [message (try (invalid value) nil (catch Throwable error (ex-message error)))]
+        (is (and (string? message) (str/includes? message "bytevector-u8-set!")) message)))))
 
 (deftest hash-collision-bucket-keeps-source-sequence-order
   (let [c (codec/open-codec)
@@ -95,6 +116,7 @@
     ;; All public inputs still encounter byte-budget checks before any private
     ;; store, including empty initial buffers and expansion-heavy scalar text.
     (doseq [value [nil false true 0 -9223372036854775808 18446744073709551615
+                  18446744073709551616 0.0 -0.0 1.25 1.0e300 5.0e-324
                   "" (apply str (map char (range 128))) "éλ😀"]]
       (let [expected (str (codec/write-nested c value) "\n") size (count expected)]
         (is (= expected (text (codec/encode-prefixed-records c "" [value] identity size))))
