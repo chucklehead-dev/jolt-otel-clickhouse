@@ -133,7 +133,10 @@
         (let loop ((i 0) (cursor used))
           (cond
            ((fx=? i n) (set! used cursor))
-           ((fx=? cursor (bytevector-length tail))
+           ;; tail is always a private bytevector from make-bytevector or the
+           ;; qualified 1024-byte scratch. Keep the live cursor/capacity check;
+           ;; avoid repeating its bytevector tag check for every character.
+           ((fx=? cursor (#3%bytevector-length tail))
             (set! used cursor) (ensure-space!) (loop i used))
            (else
             ;; i<n and cursor<tail length above; text is a primitive String,
@@ -154,7 +157,7 @@
         (let loop ((i 0) (cursor used))
           (cond
            ((fx=? i n) (set! used cursor))
-           ((fx=? cursor (bytevector-length tail))
+           ((fx=? cursor (#3%bytevector-length tail))
             (set! used cursor) (ensure-space!) (loop i used))
            (else
             (let ((cp (#3%bytevector-u8-ref bytes i)))
