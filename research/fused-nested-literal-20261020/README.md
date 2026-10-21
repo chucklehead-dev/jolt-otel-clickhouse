@@ -89,6 +89,37 @@ namespace changes BOTH current-source and intentionally older dependency gates.
 Use explicit feature namespace membership rather than treating all local tests
 as version-independent consumer contracts.
 
+Corrected exact42c548f hosted stock run39540823873 is COMPLETED/SUCCESS,
+including candidate standalone and old published/native consumer gates. These
+native gates still select the old published codec, so their success is NOT
+native storage/performance qualification of the new fused representation.
+The source review process remains pending; no PR or adoption is proposed yet.
+
+## Larger layering opportunity to preserve
+
+Driver3314's owned path does NOT loan the managed SQL byte array to C. It
+copies it into `ffi/with-alloc` native storage and encloses classification,
+admitted execution and result consumption in that scope. The closed streaming
+path keeps that buffer through append/done/destroy before returning. This
+narrows the overlap lifetime question; it is not an audit of every native ABI
+or a proof that SDK settlement/cleanup is correct.
+
+A useful next immutable-byte handoff could avoid the extra snapshot copy and
+eventually fuse WAL preparation with encoded output. Preserve private immutable
+ownership, exact V1 replay bytes, bounds, and normal authorization/classification.
+Do NOT skip the placeholder scan just because a compact header matched: the
+current public owned statement can contain arbitrary ASCII payload, and its
+legacy lexical error behavior is part of the existing path. A producer-proven
+JSON payload/new explicit typed request would need its own representation and
+equivalence controls before eliminating redundant scans. This is a hypothesis,
+not an implemented/certified scan bypass or claimed performance gain.
+
+Production preparation/publication overlap remains gated on explicit approval
+of RevisionB at `exporter-preparation-overlap-20261019/formal/quint/bounded-preparation-type-sketch.md`.
+The Quint modeling skill's sign-off requirement was surfaced in a nonblocking
+question; no new model logic, exhaustive check or concurrent implementation
+was written while waiting. Synchronous fusion work proceeded independently.
+
 Reproduce from the root with the mandatory wrapper/stock executable:
 
 ```sh
