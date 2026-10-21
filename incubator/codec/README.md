@@ -112,8 +112,8 @@ Vector folds resolve and visit one leaf block at a time, including sliced
 vectors, rather than doing indexed lookup for every element. This improves
 native fold microbenchmarks but establishes no rich-encoding throughput or
 allocation gain; see [the paired experiment](../../research/vector-leaf-fold-20261019/README.md).
-The combined source and Linux standalone library gates run 43 tests / 596 assertions,
-including the leaf-resolution mechanism and nested-scope controls.
+The source and Linux standalone library gates include leaf-resolution
+mechanism and nested-scope controls alongside the codec tests.
 
 ## Use as an independent Git dependency
 
