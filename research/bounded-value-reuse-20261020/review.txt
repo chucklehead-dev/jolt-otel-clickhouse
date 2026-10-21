@@ -1,0 +1,29 @@
+Reviewed the frozen six-file patch (`value_reuse.ss`, `experimental.clj` additions, new test, smoke-test wiring, CHANGELOG, README) against e8f75e0, with the included unchanged context.
+
+**Correctness / equivalence**
+- `box`'s first-encounter branch always falls through to `original-box`, so a template's first call never returns a cache hit, matching the claimed semantics.
+- Cache entries are matched by `eq?` on the schema `template` object, allocated once per learned schema in `compile-one`. Distinct schemas can never collide; the same schema's template is stable across calls.
+- `fill!`'s `text` (unchanged context) short-circuits to the raw value when `view-box` is truthy — i.e. when wired to `native-value-reuse-plan-factory`, values stay raw (boolean/fixnum/string) through validation, and only `value_reuse.ss`'s own `text` stringifies, lazily, inside `materialize-root`. This is intentional deferral, not a missed conversion: `text` is idempotent on already-string input, and `same-values?`/`charge` are written consistently against raw values.
+- `same-values?` uses `eq?` for fixnums/booleans and `string=?` for strings — correct value-equality for the three admitted scalar types. A changed value (even an `eq?`-distinct but content-equal string) correctly still counts as a hit; a genuinely different value correctly falls back to `original-box`.
+
+**Cache alias / lifetime / order**
+- Each call to the returned factory closure allocates a fresh `cache` (`entries`/`used`/`charged`/`hits`/`materialized`) — no state leaks across separate planner instances or tests.
+- The materialized root is built once per entry (guarded by `(unless (vector-ref entry 2) ...)`) as a fresh immutable copy of the template's hash tree, then shared by reference across every subsequent hit's `make-pmap` wrapper. Wrappers are fresh per call (metadata-free); only the interior root is aliased, and it is never mutated after construction — matches the "fresh wrapper, shared private immutable root" claim and is backed by the `same-root?`/`nil? meta` assertions in the new test.
+- Entries append in encounter order and are never evicted/reordered; scan order has no correctness effect since templates are unique keys.
+
+**Budget / overflow**
+- `used < 8` and `charged + cost <= 16384` are both enforced before adding an entry. The hardcoded 8-slot array is always ≥ the enclosing `scalar-text-planner`'s own `max-plans` (independently capped at 8 in `plan.ss`), so it can never need more slots than it has.
+- A template that fails the budget check is never added and permanently falls back to `original-box` on every later call (re-checked each time, but `charged` never changes) — safe, bounded, no retry storm, no crash path. The boundary test (16383 fits exactly at `charged = 16384`; 16384 is declined outright) matches the implementation precisely.
+
+**Policy & fallback preservation**
+- Both `current?` (live Var-cell check) and `fill!`'s shape/type/length validation run unconditionally before `box` is reached, for both the plain and value-reuse-wired planners — the new path adds no bypass. The new test's `with-redefs` and malformed-value cases, plus the described stale-`same-values?` mutant, support this.
+
+**Test/claim support**
+- The five new tests cover: repeat/share-root across ordering and template-size variants, changed-value and fresh-string-equality fallback, exact budget boundary plus cache-full fallback, policy/validation non-bypass, and byte/depth-limit encoding parity with the plain path. Counts (5 tests; smoke-test total 55) are internally consistent with the diff.
+- Performance numbers in CHANGELOG/README are explicitly hedged as directional/non-adoption claims; no production or throughput claim is made in the patch text.
+
+**Blockers:** none found within scope.
+
+## APPROVE (scoped)
+
+Scoped to this exact six-file patch as reviewed. No exporter/SDK/default/pin/WAL/concurrency/ack behavior is touched; the new factory is additive and unwired from any adopted path. No performance or production-readiness claim is made or implied by this review; all execution remains with Codex.

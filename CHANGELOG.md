@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add an explicit bounded scalar-value reuse strategy to the independent codec.
+  Preserve learned admission/policy guards and fresh map wrappers while letting
+  repeated immutable values share normalized roots with the existing byte cache.
+  Retention is opt-in and bounded; no exporter/default/pin changes or Durable
+  throughput qualification are implied.
+
 - Wire an explicit `:experimental-span-scalar-views?` exporter opt-in to the
   separate SDK encoder handoff, with missing-capability checks before storage.
   Requires the existing codec/payload-cache/shape-plan options; feature defaults

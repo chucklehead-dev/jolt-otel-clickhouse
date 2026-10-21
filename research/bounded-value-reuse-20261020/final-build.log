@@ -1,0 +1,3 @@
+jolt build: compiling jolt.codec.standalone-smoke-test (release mode, self-contained)
+compiling /tmp/value-reuse-final-20261020.qcJX2F/codec-smoke.build/app-13.ss with output to /tmp/value-reuse-final-20261020.qcJX2F/codec-smoke.build/app-13.ss.so
+jolt build: wrote /tmp/value-reuse-final-20261020.qcJX2F/codec-smoke

@@ -1,0 +1,50 @@
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:74)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:75)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"Aa\":\"99\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:76)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:74)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:75)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"Aa\":\"true\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:76)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:74)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:75)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"Aa\":\"changed\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:76)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:74)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:75)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"Aa\":\"-123\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:76)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}" "{\"Aa\":\"-42\",\"BB\":\"0\",\"flag\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\"}"))
+
+Ran 49 tests. 801 assertions passed, 12 failures, 0 errors.

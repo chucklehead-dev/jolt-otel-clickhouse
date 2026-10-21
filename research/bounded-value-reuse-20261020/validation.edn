@@ -1,0 +1,18 @@
+{:base "f0aa75dd595dff82290fb2c19389d2a6ad02c1e6"
+ :runtime {:jolt "0.8.23" :chez "10.4.1" :stock-release true}
+ :source {:exit 0 :tests 49 :assertions 815 :log "final-source.log"}
+ :standalone {:exit 0 :tests 49 :assertions 815 :neutral-directory true
+              :log "final-standalone.log"
+              :sha256 "eb4f2ac399bb580fa6cb753c1bffec85f98d1d8eb28a9900f258cd8e6242f33c"}
+ :negative-controls {:alias {:exit 1 :passed 813 :failures 2 :log "final-alias-mutant.log"}
+                     :stale {:exit 1 :passed 803 :failures 12 :log "final-stale-mutant.log"}}
+ :sdk-owner {:exit 0 :tests 3 :assertions 67 :all-eight-anchors true
+             :preinstalled-replacement-rejected true :log "sdk-controls.log"}
+ :wire-cache {:exit 0 :baseline-hits 0 :reuse-hits 98 :maps 100
+              :full-output-bytes-equal true :output-bytes 37704
+              :log "wire-cache-control.log"}
+ :source-reviews {:initial "6dd868b5d5c72ff5c61d828502fa64c7f6672e3b1dab2b690494808ba9b40dc9"
+                  :alias-followup "b9982bab6fb072ec51a9879cd846c7fe0bb8fbf6395a36987cabebb716cbcaaf"
+                  :verdict :scoped-approve :execution-by-codex true}
+ :production-adopted false :native-durable-qualified false :s3-qualified false
+ :next :confirmed-native-comparison-and-independent-recovery}

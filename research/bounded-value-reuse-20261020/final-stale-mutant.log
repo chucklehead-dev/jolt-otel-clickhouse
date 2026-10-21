@@ -1,0 +1,50 @@
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:84)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:85)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"99\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:86)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:84)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:85)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"true\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:86)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:84)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:85)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"changed\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:86)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:84)
+expected: (not (map? v))
+  actual: false
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:85)
+expected: (= (codec/write-nested c (q 0 changed)) (codec/write-nested c v))
+  actual: (not (= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-123\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+FAIL in (changed-values-collisions-and-fresh-string-equality) (NO_SOURCE_PATH:86)
+expected: (not= expected (codec/write-nested c v))
+  actual: (not (not= "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}" "{\"key-2\":\"2\",\"key-8\":\"8\",\"key-3\":\"\\u03bb\\ud83d\\ude00\",\"key-4\":\"false\",\"text\":\"quote\\\"\\/\\\\\\n\\u03bb\\ud83d\\ude00\",\"key-5\":\"5\",\"BB\":\"0\",\"Aa\":\"-42\",\"key-1\":\"false\",\"key-7\":\"false\",\"key-6\":\"\\u03bb\\ud83d\\ude00\",\"flag\":\"false\",\"key-0\":\"\\u03bb\\ud83d\\ude00\"}"))
+
+Ran 49 tests. 803 assertions passed, 12 failures, 0 errors.

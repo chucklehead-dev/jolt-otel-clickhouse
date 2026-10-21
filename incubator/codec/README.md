@@ -1,5 +1,13 @@
 # Experimental explicit JSON codec
 
+An unadopted `native-value-reuse-plan-factory` strategy can connect scalar
+normalization to the existing byte cache for repeated equal context values.
+It keeps at most8 immutable snapshots/16384 charged characters per serial
+planner; changed values use the existing view path and owner policy checks
+remain mandatory. This explicit encoder-owner bridge changes no exporter
+flags/defaults/pins and must never be used as a plain-map converter. See the
+[bounded-reuse evidence and adoption gates](../../research/bounded-value-reuse-20261020/README.md).
+
 An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
 adds a separate trusted encoder output strategy without changing the existing
 plain-map converter. Do not pass its factory to that map-returning API. The

@@ -1,0 +1,10 @@
+
+FAIL in (first-repeat-does-not-retain-a-second-string-copy) (NO_SOURCE_PATH:47)
+expected: (identical? first-value (get result "a"))
+  actual: (not (identical? "kept-λ😀" "kept-λ😀"))
+
+FAIL in (first-repeat-does-not-retain-a-second-string-copy) (NO_SOURCE_PATH:48)
+expected: (not (identical? second-value (get result "a")))
+  actual: false
+
+Ran 49 tests. 811 assertions passed, 2 failures, 0 errors.

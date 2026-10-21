@@ -1,0 +1,1 @@
+{:scope :actual-encoder-fragment-hit-control, :maps 100, :baseline-wire-hits 0, :value-reuse-wire-hits 98, :full-output-bytes-equal true, :output-bytes 37704, :instrumented-existing-fragment-branch true, :timed false, :native-storage false}

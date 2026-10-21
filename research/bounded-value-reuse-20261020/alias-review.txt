@@ -1,0 +1,17 @@
+## Review: scalar-cache alias/accounting followup
+
+**Fix mechanism.** The one-line change replaces `(materialize-root template values)` with `(materialize-root template (vector-ref entry 1))` at `value_reuse.ss:164`. `entry 1` is the raw-values vector captured at first admission and already retained for the lifetime of the slot (it's the comparand `same-values?` checks on every call). Previously, the *current* call's `values` vector was used to materialize the cached root — on the first repeat with a content-equal-but-distinct String, that root would retain a second physical String object while `charge()` had only billed one. That's exactly the aliasing leak described: two retained Strings under one charged slot.
+
+By materializing from `entry 1` instead, the root's string content is built from the *same* String object that's already pinned by the slot. No second String is ever retained — root and `entry 1` now alias one object, matching the one-time charge.
+
+**Correctness of substitution.** `same-values?` only requires `string=?` for strings (not `eq?`), so `entry 1`'s string and the caller's `values` string can differ in identity but never in content when this branch runs. Swapping which vector feeds `text()` therefore cannot change encoded output — only which backing object is retained. For non-string scalars, `same-values?` requires `eq?`, so there's no difference at all. Net: encoded values are provably unchanged; only internal retention identity changes.
+
+**Scope check.** The diff is confined to this single line (plus comments); `charge`, `same-values?`, the slot-admission path, and all `original-box` fallback calls are untouched. Policy/shape checks, WAL/SDK/exporter paths are not touched, matching the stated no-go list.
+
+**Test coverage.** The new `first-repeat-does-not-retain-a-second-string-copy` test constructs a genuinely distinct-identity equal String via `subs`, forces a cache hit, and asserts the materialized result is `identical?` to the *first* String, not the second — a correct, direct regression test for this exact bug class. It also asserts the stats vector shows `charged = 1 + (count first-value)`, i.e., single-charge, consistent with the fix's intent.
+
+The accompanying "alias" mutant (reverting just this line) is reported to fail exactly 2 assertions (215/217 pass) — both from the new test's identity checks — confirming the test actually detects the reverted bug and nothing else shifts. The smoke-test count bump (55→56) is consistent with one added `deftest`.
+
+**Verdict:** The fix is minimal, correctly targets the described aliasing/retention defect, preserves encoded values and existing policy/fallback behavior, and is backed by a regression test whose mutant-kill result is internally consistent with the stated pass/fail counts. No correctness blockers found in the reviewed packet.
+
+**Scoped APPROVE** — alias/accounting fix only, as reviewed from source. No production/performance claim made or implied.
