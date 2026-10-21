@@ -86,14 +86,20 @@
             wrapped
             (assoc adapter
               :prepare! (fn [cap batch]
-                          (let [ok ((:prepare! adapter) cap batch)
-                                n (swap! prepared-count inc)]
-                            (swap! events conj [:prepared n])
-                            (case n
-                              1 (do (deliver first-prepared true)
-                                    (await! second-queued :second-queued-before-first-submit))
-                              2 (deliver second-prepared true))
-                            ok))
+                          (let [n (inc @prepared-count)]
+                            ;; Force B's actual materialization to begin only
+                            ;; AFTER the publisher has entered A's real WAL
+                            ;; put. Admission alone does not prove overlap.
+                            (when (= n 2) (await! entered :publisher-entered-before-second-preparation))
+                            (let [ok ((:prepare! adapter) cap batch)]
+                              (check! (true? ok) :real-preparation-completed)
+                              (swap! prepared-count inc)
+                              (swap! events conj [:prepared n])
+                              (case n
+                                1 (do (deliver first-prepared true)
+                                      (await! second-queued :second-queued-before-first-submit))
+                                2 (deliver second-prepared true))
+                              ok)))
               :submit! (fn [cap]
                          (let [ok ((:submit! adapter) cap)]
                            (when (true? ok) (swap! submitted-count inc))
