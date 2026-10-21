@@ -1,0 +1,16 @@
+**Verdict: APPROVE** (scoped to this follow-up's internal correctness; not a native-improvement qualification)
+
+**What I checked**
+
+*Capability wiring/scope cleanup*: The diff moves `prepare-nested-literal`/`with-nested-literal-writer` off raw `(nth @backend 10/11)` onto named `literal`/`literal-scope` fields on the `Codec` deftype. Field counts line up: `backend` yields a 12-element vector, `open-codec`'s destructure (`_` for `scalar-map-box`, `literal`↔`nested-literal`, `literal-scope`↔`literal-scope`) and the `Codec.` constructor args both match the new 11-field deftype order. At backend construction, both `nested-literal` and the `literal-scope`-produced `prepare` are smoke-tested via `qualify-nested-text!`, with `finish` called in a `finally` — matching the packet's claimed cleanup and closing the prior review's gap (previously only `nested`/`scalar` were smoke-tested).
+
+*Receipt arithmetic (non-vacuity)*: Recomputed `control-rate-drift-fraction` and `fused-allocation-increase-fraction` from the raw per-run rows/s and bytes-per-row in `fused-native-20261020.summary.edn` against `relative-change` — both match the stored/report values (-0.18307 and +0.00829) and the prose's "-18.3%" / "~0.83%". The table in `native-comparison.md` matches the edn exactly. `validate-native.bb`'s rate/quantile/window formulas are consistent with the recorded fields, and `summarize-native.bb` embeds its own sanity checks for `relative-change` (120/100→+0.2, 80/100→-0.2, identity→0) before applying it to real data, catching the kind of malformed-paren bug the packet says was already caught once.
+
+*Namespace isolation / claims*: `perf.fused-pipeline` only `with-redefs`-wraps `codec/with-nested-text-writer` around an unmodified `app/-main` call, asserts exact call count (35) and original fixture geometry before mutating `writer.edn` — a properly scoped research seam, not a production path change. Performance language throughout is consistently hedged (`causal-comparison-qualified false`, `target-qualified false`, no percentage-gain claim, explicit "cause... not established" for the CPU/GC gap).
+
+No blockers found.
+
+**Advisory gaps (non-blocking)**
+- Baseline (cached) control itself drifted -18.3% across two runs; only 4 total runs exist, so "both fused exceed both controls" rests on a noisy, small-N baseline — already flagged, but worth more A/B pairs before any stronger claim.
+- CPU (+1816ms) vs GC (+141ms) delta in the degraded cached run leaves ~1700ms unexplained — correctly called out as unestablished, not resolved.
+- Original (pre-change) encoder regression isolation is still pending (one control binary retained for that purpose) — correctly deferred, not yet done.

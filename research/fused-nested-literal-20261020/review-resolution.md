@@ -25,3 +25,20 @@ instead of adding another implicit late fallback or an unqualified default.
 "Default paths unaffected" in the source review is semantic, not proof of no
 shared-path performance/allocation overhead. All benchmark arms share the
 candidate encoder. No causality/native-throughput/tail qualification follows.
+
+## Frozen follow-up completed
+
+After the actual native comparison, source checkpoint
+ddb1e1ab7b6b9dc1e884c988ab824e0fd822ea29 closed both advisory notes: explicit
+Codec fields and startup smoke/cleanup for both fused capabilities. Source and
+neutral-directory standalone46/769 pass; byte kernel remains c02c6aa.
+
+Final follow-up reviewed only the immutable source/test/scalar-evidence packet
+`evidence/fused-native-final-review-20261020/packet.md`, SHA256
+154f2060ab36c273ecd940eb379644f3ab6b6b530966c549960e2d985334dbd6.
+The packet was not edited while review ran. Claude returned APPROVE with no
+blockers for wiring, arithmetic, scope-selection/validation and bounded claims.
+It reiterated that original-encoder regression isolation and a precise causal/
+tail claim remain unfinished. See final-review.txt. This supersedes the
+pending-final-packet gate, not those performance/adoption gates or the earlier
+moving-tree caveat. No review is claimed to have personally executed the runs.
