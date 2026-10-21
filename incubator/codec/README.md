@@ -1,9 +1,13 @@
 # Experimental explicit JSON codec
 
-An unintegrated [scalar-text view prototype](../../research/scalar-text-view-20261020/README.md)
+An optional [scalar-text view](../../research/scalar-text-view-20261020/README.md)
 adds a separate trusted encoder output strategy without changing the existing
-plain-map converter. Do not pass its factory to that map-returning API. SDK
-handoff, actual exporter/Durable qualification and adoption remain pending.
+plain-map converter. Do not pass its factory to that map-returning API. The
+exporter selects the separate SDK handoff with `:experimental-span-scalar-views?`
+and its codec/cache/shape-plan prerequisites. Local Durable recovery and lower
+allocation are verified; no throughput/tail improvement, Oscope adoption or new
+S3 performance qualification is claimed. See the
+[integration evidence](../../research/scalar-view-exporter-20261020/README.md).
 
 ## Optional bounded scalar-text shape plans
 
@@ -113,7 +117,7 @@ the parent exporter's dependencies:
 {:deps
  {io.github.chucklehead-dev/jolt-codec
   {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-   :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
+   :git/sha "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
    :deps/root "incubator/codec"}}}
 ```
 

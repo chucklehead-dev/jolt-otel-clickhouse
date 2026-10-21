@@ -1,5 +1,6 @@
 (ns otel.exporter.chdb-scalar-views-test
   (:require [clojure.test :refer [deftest is run-tests]]
+            [clojure.java.io :as io] [clojure.string :as str]
             [otel.exporter.chdb :as e] [jdbc.core :as jdbc]
             [otel.exporter.chdb-stock-payload-cache-test :as existing]
             [jolt.codec.experimental :as codec]))
@@ -50,13 +51,20 @@
     (is (= (bytes plain) (bytes views)))
     (let [project ((:payload-cache-factory views))]
       (is (map? (project m)))
-      (is (not (map? (project (into (sorted-map) m))))))
+      (let [view (project (into (sorted-map) m))]
+        (is view "nil/false decline is not proof that an opaque view was selected")
+        (is (not (map? view)))))
     (let [normal (bytes views)]
       (with-redefs-fn {#'e/value-string (fn [v] (str "custom:" v))}
         #(do (is (= (bytes plain) (bytes views)))
              (is (not= normal (bytes views))))))
     (is (= (bytes plain) (bytes views)))))
 
-(defn -main [& _]
+(defn -main [& [expected-sdk expected-codec]]
+  (when (or expected-sdk expected-codec)
+    (assert (and expected-sdk expected-codec))
+    (assert (str/includes? (str (io/resource "otel/any_value.clj")) expected-sdk))
+    (assert (str/ends-with? (str (io/resource "jolt/codec/scalar_text/experimental.clj"))
+                           (str "/" expected-codec "/incubator/codec/src/jolt/codec/scalar_text/experimental.clj"))))
   (let [r (run-tests 'otel.exporter.chdb-scalar-views-test)]
     (System/exit (if (zero? (+ (:fail r) (:error r))) 0 1))))

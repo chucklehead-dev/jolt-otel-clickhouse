@@ -4,13 +4,14 @@
 
 - Wire an explicit `:experimental-span-scalar-views?` exporter opt-in to the
   separate SDK encoder handoff, with missing-capability checks before storage.
-  Requires the existing codec/payload-cache/shape-plan options; defaults and
-  published application pins remain unchanged. Add a Git-SDK stock-runtime CI gate.
+  Requires the existing codec/payload-cache/shape-plan options; feature defaults
+  remain unchanged. Select the merged consumer SDK and published codec, with
+  actual Git dependency gates and mixed-signal native recovery checks.
 
-- Prototype a separate trusted scalar-text view in the optional stock-Jolt codec:
+- Add a separate trusted scalar-text view in the optional stock-Jolt codec:
   share learned key geometry, keep fresh value slots and write numeric text
-  without temporary Strings. Existing map-returning APIs are unchanged; SDK/
-  exporter adoption and end-to-end performance qualification remain pending.
+  without temporary Strings. Existing map-returning APIs are unchanged. Local
+  recovery and lower allocation are verified; no throughput or tail win is claimed.
 
 - Reuse stock Jolt's in-range sorted-node accessors in the optional scalar
   shape-plan walker after its existing node/type/size checks. Avoid repeated

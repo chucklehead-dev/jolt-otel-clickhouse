@@ -155,6 +155,8 @@ For a chDB 26.9.0 Durable writer connection, the opt-in exporter options are:
   :owned-statement-output? true
   :experimental-span-codec? true
   :experimental-span-payload-cache? true
+  :experimental-span-shape-plans? true
+  :experimental-span-scalar-views? true
   :experimental-span-flat-map-cache? true
   :experimental-span-nested-fragment-cache? true})
 ```
@@ -164,7 +166,12 @@ same options. The explicit codec applies to spans only; logs and metrics use
 the configured JSON writer and String SQL path, not the old optional native
 JSON backend. Their byte limits, typed fields and confirmed ACKs are unchanged.
 
-The cache options are also experimental and may be omitted. The nested cache
+The cache and view options are experimental and may be omitted. Shape plans
+learn bounded sets of repeated field names. Scalar views use that plan to avoid
+building temporary normalized maps and numeric Strings; they require both the
+payload cache and shape plans. They reduce allocation, but have not established
+a throughput or tail-latency improvement. Existing map-returning APIs are unchanged.
+The nested cache
 reuses bounded fragments and scratch storage within one synchronous payload;
 it does not retain telemetry in a global cache. The pinned published codec
 includes this capability. This path uses an

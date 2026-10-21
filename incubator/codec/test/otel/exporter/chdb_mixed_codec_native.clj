@@ -83,12 +83,15 @@
                                    :owned-compact-stream? true)))]
     (let [{:keys [capability projector]} (fixture/setup connection)
           spans (with-redefs [fixture/batch-size 8]
-                  (mapv (fn [span]
+                  (mapv (fn [index span]
                           (let [event {:name "native-λ😀"
                                        :timestamp-unix-nano (:start-time-unix-nano span)
-                                       :attributes (sorted-map "flag" false "count" 9)}]
+                                       ;; Dynamic values force distinct roots:
+                                       ;; after learning, exercise opaque views
+                                       ;; rather than only identity-cache hits.
+                                       :attributes (sorted-map "flag" false "count" index)}]
                             (assoc span :events [event])))
-                        (fixture/spans "mixed-native")))
+                        (range) (fixture/spans "mixed-native")))
           records [(assoc inputs/log-record :timestamp-unix-nano fixture/base-nanos)]
           resource {:attributes {"service.name" "mixed-native"}}
           expected (with-bindings {#'e/*timestamp-wire* (if (= wire :raw-ticks) :raw-ticks :iso-utc)
@@ -107,7 +110,8 @@
                          {:connection connection :signals inputs/all-signals :create-schema? false
                           :datetime64-wire wire :typed-span-descriptors capability
                           :experimental-span-payload-cache? true :experimental-span-flat-map-cache? true
-                          :experimental-span-nested-fragment-cache? true}))]
+                          :experimental-span-nested-fragment-cache? true
+                          :experimental-span-shape-plans? true :experimental-span-scalar-views? true}))]
       (try
         (with-redefs [row-encoder/open-encoder (fn [& _] (throw (ex-info "Legacy native writer loaded" {})))
                       durable/execute-owned-and-flush!

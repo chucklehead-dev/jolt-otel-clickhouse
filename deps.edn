@@ -5,9 +5,9 @@
          :git/sha "3314b79e8a234fafdf5231439a0323c878a40040"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "14f58e5a57d6cd1760451a426e40d8cddcf53949"
+         :git/sha "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
          ;; Includes reviewed decoder improvements and SDK-owned bounded
-         ;; scalar key-shape plans, plus the prior lifecycle/native helpers.
+         ;; scalar key-shape plans and encoder-only views, plus the prior helpers.
          ;; Shape plans remain opt-in; no consumer-owned private SDK anchors.
          ;; Keep its canonical crypto declaration excluded and select it
          ;; directly below so this exporter owns the exact provider and SHA,
@@ -24,14 +24,14 @@
            {:extra-deps
             {io.github.chucklehead-dev/jolt-codec
              {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
-              :git/sha "15b15f31d1f7261e84c10ef69868726f1226cd76"
+              :git/sha "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"
               :deps/root "incubator/codec"}}}
            :scalar-views-test
            {:extra-paths ["incubator/codec/src" "incubator/codec/test"]
             :extra-deps
             {io.github.casselc/otel
              {:git/url "https://github.com/casselc/otel.git"
-              :git/sha "023fe33d455608b86289ac0c042719ca3153f8da"
+              :git/sha "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
               :exclusions [jolt-lang/jolt-crypto]}}
             :main-opts ["-m" "otel.exporter.chdb-scalar-views-test"]}
            :stock-span-codec-test
@@ -40,8 +40,13 @@
            :stock-shape-plans-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-shape-plans-test"
-                        "14f58e5a57d6cd1760451a426e40d8cddcf53949"
-                        "15b15f31d1f7261e84c10ef69868726f1226cd76"]}
+                        "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
+                        "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"]}
+           :stock-scalar-views-test
+           {:extra-paths ["incubator/codec/test"]
+            :main-opts ["-m" "otel.exporter.chdb-scalar-views-test"
+                        "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
+                        "68ee1ca8f2826c930ff668ea9532c0a3f498dc41"]}
            :experimental-span-codec
            {:extra-paths ["incubator/codec/src"]}
            :experimental-span-codec-test
