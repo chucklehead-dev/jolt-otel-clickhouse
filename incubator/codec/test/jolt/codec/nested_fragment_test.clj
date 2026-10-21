@@ -18,7 +18,7 @@
                          " (let ((walks 0) (stores 0) (charged 0) (real-set! hashtable-set!))"
                          " (let ((ffc-map-fold (lambda (m v a) (set! walks (+ walks 1)) (real-fold m v a)))"
                          "       (hashtable-set! (lambda (h k v) (set! stores (+ stores 1))"
-                         "                         (set! charged (+ charged (bytevector-length v))) (real-set! h k v))))"
+                         "                         (set! charged (+ charged (bytevector-length (if (bytevector? v) v (car v))))) (real-set! h k v))))"
                          " (let () " @#'codec/json-source
                          " (define observed #f)"
                          " (define original-new ffc-new-fragments)"
@@ -32,8 +32,30 @@
                          "  (lambda () (jolt-vector (hashtable? (ffc-fragments-table observed))"
                          "    (ffc-fragments-insertions observed) (ffc-fragments-retained observed)"
                          "    (bytevector? (ffc-fragments-scratch observed))"
-                         "    (bytevector? (ffc-fragments-digits observed)))))))))"))]
+                         "    (bytevector? (ffc-fragments-digits observed))))"
+                         " ffc-json-nested-literal-scope)))))"))]
       (apply factory (traversal/native-kernels (traversal/open-traversal))))))
+
+(deftest fused-scope-reuses-escaped-fragments-with-logical-bounds-and-clear
+  (let [[_ stats _ render state open] @instrumented [write close] (open)
+        c (codec/open-codec) m (fixture) before (stats)
+        ordinary (codec/write-nested c m) limit (count ordinary)
+        one (write m limit 128) two (write m limit 128)]
+    (is (= (codec/write-nested c ordinary) (text (render one)) (text (render two))))
+    (is (= [1 1] (mapv - (subvec (stats) 0 2) (subvec before 0 2))))
+    (is (rejects? #(write m (dec limit) 128)))
+    (is (rejects? #(write [m] 100000 1)))
+    (is (not= (text (render one)) (text (render (write (assoc m "key-0" true) 100000 128)))))
+    (close)
+    (is (= [false 0 0 false false] (state)))
+    (is (rejects? #(write m 100000 128)))
+    (is (= (codec/write-nested c ordinary) (text (render one))))
+    (let [held (atom nil) marker (ex-info "stop" {})]
+      (is (identical? marker
+            (try (codec/with-nested-literal-writer c
+                   (fn [w] (reset! held w) (w m) (throw marker)))
+                 nil (catch Throwable error error))))
+      (is (rejects? #(@held m))))))
 
 (deftest maps-share-only-complete-scalar-fragments
   (let [[open stats _ render state] @instrumented

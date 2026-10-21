@@ -5,6 +5,7 @@
 ;; UTF-8 output; controls/quotes/slashes are escaped, Unicode scalars are literal.
 ;; Fresh invocation owns all state. Only the final, independent byte[] escapes.
 (define-record-type ffc-json-text (fields bytes))
+(define-record-type ffc-json-literal (fields bytes))
 ;; Trusted scalar-text plan output, not a public map and not raw JSON. Schema
 ;; indexes are static; each view owns fresh slots, never a source-map/tree loan.
 (define-record-type ffc-json-scalar-map (fields template values))
@@ -37,11 +38,16 @@
     ((_ encode-name flat-cache?)
      (define-ffc-json-encoder encode-name flat-cache? #f () #f))
     ((_ encode-name flat-cache? shared-cache? (extra-argument ...) shared-state)
+     (define-ffc-json-encoder encode-name flat-cache? shared-cache? (extra-argument ...) shared-state #f))
+    ((_ encode-name flat-cache? shared-cache? (extra-argument ...) shared-state stringified?)
      (define (encode-name value limit max-depth lines? escape-unicode? project prefix extra-argument ...)
   (unless (and (fixnum? limit) (fx>=? limit 0)
                (fixnum? max-depth) (fx>=? max-depth 0))
     (error 'ffc-json "invalid byte/depth limit"))
   (unless (string? prefix) (error 'ffc-json "prefix must be ASCII text"))
+  (when stringified?
+    (unless (and escape-unicode? (not lines?) (not project) (string=? prefix ""))
+      (error 'ffc-json "invalid stringified mode")))
   ;; A scope shares only ASCII nested JSON fragments, never another wire mode.
   (when shared-cache?
     (unless (and escape-unicode? (not lines?) (not project) (string=? prefix ""))
@@ -49,14 +55,14 @@
   (do ((i 0 (fx+ i 1))) ((fx=? i (string-length prefix)))
     (unless (fx<=? (char->integer (string-ref prefix i)) 127)
       (error 'ffc-json "prefix must be ASCII text")))
-  (let* ((budget (+ limit (string-length prefix)))
+  (let* ((budget (if stringified? (+ (* 2 limit) 2) (+ limit (string-length prefix))))
          (_ (unless (fixnum? budget) (error 'ffc-json "byte limit too large")))
          (tail (let ((capacity (min (if lines? 65536 1024) budget)))
                  ;; Only scratch is reused. A short budget still gets a
                  ;; clamped buffer: byte! relies on capacity to enforce it.
                  (if (and shared-cache? (fx=? capacity 1024))
                      (ffc-fragments-scratch shared-state) (make-bytevector capacity))))
-        (used 0) (completed 0) (parts '()) (container-depth 0)
+        (used 0) (completed 0) (parts '()) (container-depth 0) (logical-used 0)
         (digits (if shared-cache? (ffc-fragments-digits shared-state) (make-bytevector 21)))
         ;; Per-call weak roots; only independently copied, complete fragments.
         ;; Fixed bounds: 64 insertions, 128KiB retained, <=4KiB per fragment.
@@ -73,10 +79,24 @@
         (set! tail (make-bytevector
                     (min 65536 (fx* 2 (bytevector-length tail)) (fx- budget completed))))
         (set! used 0)))
-    (define (byte! b)
+    (define (sink-byte! b)
       (ensure-space!)
       (bytevector-u8-set! tail used b)
       (set! used (fx+ used 1)))
+    (define (byte! b)
+      (when stringified?
+        (when (fx>=? logical-used limit) (error 'ffc-json "byte limit exceeded"))
+        (set! logical-used (fx+ logical-used 1))
+        (when (or (fx=? b 34) (fx=? b 92) (fx=? b 47)) (sink-byte! 92)))
+      (sink-byte! b))
+    (define-syntax publish-cursor!
+      (syntax-rules ()
+        ((_ cursor)
+         (begin
+           (when stringified?
+             (set! logical-used (fx+ logical-used (fx- cursor used)))
+             (when (fx>? logical-used limit) (error 'ffc-json "byte limit exceeded")))
+           (set! used cursor)))))
     (define (ascii! text)
       (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
         (byte! (char->integer (string-ref text i)))))
@@ -119,9 +139,9 @@
       (let ((n (string-length text)))
         (let loop ((i 0) (cursor used))
           (cond
-           ((fx=? i n) (set! used cursor))
+           ((fx=? i n) (publish-cursor! cursor))
            ((fx=? cursor (bytevector-length tail))
-            (set! used cursor) (ensure-space!) (loop i used))
+            (publish-cursor! cursor) (ensure-space!) (loop i used))
            (else
             ;; i<n and cursor<tail length above; text is a primitive String,
             ;; tail is private. Unchecked operations never accept public arrays.
@@ -130,7 +150,7 @@
                        (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
                   (begin (#3%bytevector-u8-set! tail cursor cp)
                          (loop (fx+ i 1) (fx+ cursor 1)))
-                  (begin (set! used cursor) (escaped-char! cp)
+                  (begin (publish-cursor! cursor) (escaped-char! cp)
                          (loop (fx+ i 1) used))))))))
       (byte! 34))
     ;; This is encoded ASCII JSON used as a STRING field in outer JSON, not a
@@ -140,15 +160,15 @@
       (let ((n (bytevector-length bytes)))
         (let loop ((i 0) (cursor used))
           (cond
-           ((fx=? i n) (set! used cursor))
+           ((fx=? i n) (publish-cursor! cursor))
            ((fx=? cursor (bytevector-length tail))
-            (set! used cursor) (ensure-space!) (loop i used))
+            (publish-cursor! cursor) (ensure-space!) (loop i used))
            (else
             (let ((cp (#3%bytevector-u8-ref bytes i)))
               (if (and (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
                   (begin (#3%bytevector-u8-set! tail cursor cp)
                          (loop (fx+ i 1) (fx+ cursor 1)))
-                  (begin (set! used cursor) (escaped-char! cp)
+                  (begin (publish-cursor! cursor) (escaped-char! cp)
                          (loop (fx+ i 1) used))))))))
       (byte! 34))
     (define (integer! n)
@@ -189,11 +209,14 @@
                        (string? v)))
         (set! map-flat? #f))
       (map-entry! k v printed?))
-    (define (fragment! bytes depth)
+    (define (fragment! entry depth)
       ;; Every eligible map is nonempty and its scalar values are one level
       ;; below it. Reusing bytes must not bypass the current call's limits.
       (when (fx>=? depth max-depth) (error 'ffc-json "depth limit exceeded"))
-      (let ((n (bytevector-length bytes)))
+      (when stringified?
+        (set! logical-used (fx+ logical-used (cdr entry)))
+        (when (fx>? logical-used limit) (error 'ffc-json "byte limit exceeded")))
+      (let* ((bytes (if stringified? (car entry) entry)) (n (bytevector-length bytes)))
         (when (fx>? n (fx- budget (fx+ completed used)))
           (error 'ffc-json "byte limit exceeded"))
         (let loop ((offset 0))
@@ -203,6 +226,19 @@
               (bytevector-copy! bytes offset tail used take)
               (set! used (fx+ used take))
               (loop (fx+ offset take)))))))
+    (define (literal! bytes)
+      (if stringified?
+          (do ((i 0 (fx+ i 1))) ((fx=? i (bytevector-length bytes)))
+            (byte! (bytevector-u8-ref bytes i)))
+          (let ((n (bytevector-length bytes)))
+            (when (fx>? n (fx- budget (fx+ completed used)))
+              (error 'ffc-json "byte limit exceeded"))
+            (let loop ((offset 0))
+              (unless (fx=? offset n)
+                (ensure-space!)
+                (let ((take (fxmin (fx- n offset) (fx- (bytevector-length tail) used))))
+                  (bytevector-copy! bytes offset tail used take)
+                  (set! used (fx+ used take)) (loop (fx+ offset take))))))))
     (define (map! m depth)
       (let* ((candidate? (and flat-cache?
                              (if (pmap? m) (fx>=? (pmap-cnt m) 8)
@@ -214,7 +250,7 @@
              (cached (and root map-cache (hashtable-ref map-cache root #f))))
         (if cached (fragment! cached depth)
             (let ((previous container-depth) (previous-flat map-flat?)
-                  (start-tail tail) (start used)
+                  (start-tail tail) (start used) (start-logical logical-used)
                   (track? (and candidate? (fx<? map-insertions 64) (fx<? map-retained 131072))))
               (set! container-depth depth)
               (set! map-flat? #t)
@@ -229,7 +265,8 @@
                     (let ((bytes (make-bytevector charge)))
                       (bytevector-copy! tail start bytes 0 charge)
                       (unless map-cache (set! map-cache (make-weak-eq-hashtable)))
-                      (hashtable-set! map-cache root bytes)
+                      (hashtable-set! map-cache root
+                        (if stringified? (cons bytes (fx- logical-used start-logical)) bytes))
                       (set! map-insertions (fx+ map-insertions 1))
                       (set! map-retained (fx+ map-retained charge))
                       (when shared-cache?
@@ -257,6 +294,7 @@
        ((boolean? x) (ascii! (if x "true" "false")))
        ((string? x) (string! x))
        ((ffc-json-text? x) (encoded-text! (ffc-json-text-bytes x)))
+       ((ffc-json-literal? x) (literal! (ffc-json-literal-bytes x)))
        ((and (integer? x) (exact? x)) (integer! x))
        ((and (flonum? x) (finite? x)) (ascii! (jolt-flonum->string x)))
        ((keyword? x) (string! (keyword-t-name x)))
@@ -299,6 +337,7 @@
           (set! container-depth previous))
         (byte! 93))
        (else (error 'ffc-json "unsupported value"))))
+    (when stringified? (sink-byte! 34))
     (ascii! prefix)
     (if lines?
         (ffc-records-fold value
@@ -306,6 +345,7 @@
             (emit! (if project (jolt-invoke1 project row) row) 0)
             (byte! 10) #f) #f)
         (emit! value 0))
+    (when stringified? (sink-byte! 34))
     (let* ((total (fx+ completed used)) (out (make-bytevector total)))
       (let loop ((remaining (reverse parts)) (offset 0))
         (if (null? remaining)
@@ -320,6 +360,8 @@
 (define-ffc-json-encoder ffc-json-encode/plain #f)
 (define-ffc-json-encoder ffc-json-encode/cached #t)
 (define-ffc-json-encoder ffc-json-encode/shared #t #t (fragments) fragments)
+(define-ffc-json-encoder ffc-json-encode/stringified #f #f () #f #t)
+(define-ffc-json-encoder ffc-json-encode/stringified-shared #t #t (fragments) fragments #t)
 ;; Private dispatcher for mechanism tests. Public facades select a specialized
 ;; entry point directly, not a per-map mode switch in the disabled path.
 (define (ffc-json-encode value limit max-depth lines? escape-unicode? project prefix flat-cache?)
@@ -334,6 +376,9 @@
   (ffc-json-encode/plain value limit max-depth #f #t #f ""))
 (define (ffc-json-nested-text value limit max-depth)
   (make-ffc-json-text (jolt-array-vec (ffc-json-ascii-bytes value limit max-depth))))
+(define (ffc-json-nested-literal value limit max-depth)
+  (make-ffc-json-literal
+    (jolt-array-vec (ffc-json-encode/stringified value limit max-depth #f #t #f ""))))
 (define (ffc-json-ascii-lines-bytes rows limit max-depth)
   (ffc-json-encode/plain rows limit max-depth #t #t #f ""))
 (define (ffc-json-project-ascii-lines-bytes rows project limit max-depth)
@@ -352,6 +397,25 @@
            (make-ffc-json-text
             (jolt-array-vec
              (ffc-json-encode/shared value limit max-depth #f #t #f "" fragments)))))
+     (lambda ()
+       (set! active? #f)
+       (ffc-fragments-table-set! fragments #f)
+       (ffc-fragments-insertions-set! fragments 0)
+       (ffc-fragments-retained-set! fragments 0)
+       (ffc-fragments-scratch-set! fragments #f)
+       (ffc-fragments-digits-set! fragments #f)))))
+
+;; Separate scope: escaped fragments + their original logical byte counts.
+;; Never mix this table with the ordinary raw-ASCII fragment representation.
+(define (ffc-json-nested-literal-scope)
+  (let ((fragments (ffc-new-fragments)) (active? #t))
+    (jolt-vector
+     (lambda (value limit max-depth)
+       (unless active? (error 'ffc-json "nested-literal scope is closed"))
+       (if (and (pvec? value) (fx=? (pvec-count value) 0)) "[]"
+           (make-ffc-json-literal
+            (jolt-array-vec
+             (ffc-json-encode/stringified-shared value limit max-depth #f #t #f "" fragments)))))
      (lambda ()
        (set! active? #f)
        (ffc-fragments-table-set! fragments #f)

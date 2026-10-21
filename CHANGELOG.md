@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Prototype fused nested-JSON STRING output in the independent stock-Jolt codec,
+  with a separate bounded escaped-fragment cache. Existing APIs/defaults remain
+  unchanged; no exporter option or Durable performance qualification is added.
+
 - Wire an explicit `:experimental-span-scalar-views?` exporter opt-in to the
   separate SDK encoder handoff, with missing-capability checks before storage.
   Requires the existing codec/payload-cache/shape-plan options; feature defaults
