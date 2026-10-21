@@ -29,7 +29,12 @@
   (ensure! (true? ok) :confirmed-callback)
   (swap! samples update index assoc :confirmed (System/nanoTime))
   (when (= index (dec warmups)) (swap! anchors assoc :before (fixture/counters)))
-  (when (= index (dec total)) (swap! anchors assoc :after (fixture/counters))))
+  (when (= index (dec total)) (swap! anchors assoc :after (fixture/counters)))
+  ;; Retain completed scalar observations even if a later batch/process fails.
+  ;; Both arms pay this same coarse diagnostic cost, never once per row.
+  (println :sdk-preparation-batch
+           (select-keys (get @samples index) [:index :rows :started :prepared :submitted :confirmed]))
+  (flush))
 
 (defrecord ObservedExporter [delegate samples n queued warmups total anchors]
   sdk/SpanExporter
@@ -102,6 +107,7 @@
                (/ (- (+ (:heap after) (:gc-bytes after)) (+ (:heap before) (:gc-bytes before)))
                   (double (* n rounds)))
                :counter-snapshots-non-atomic true :population-tail-qualified false
+               :diagnostic-printing-in-window true
                :independent-recovery-qualified false :native-package "26.9.0"}))))
 
 (defn -main [& [root arm n-text rounds-text warmups-text mode-text]]

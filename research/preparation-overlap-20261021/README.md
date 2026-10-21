@@ -17,6 +17,9 @@ Both arms must use the SAME default release executable.
 exporter wrapper and scalar callback observations record confirmation; there
 are no private-Var probes, SDK redefinitions, direct drain calls or fabricated
 receipts. Capability-to-index bookkeeping is discarded on real retirement.
+Completed scalar batch observations are flushed to the run log incrementally,
+before attempting later batches. Both arms pay this coarse diagnostic-printing
+cost inside the cadence window; no telemetry bodies/attributes are logged.
 
 This is a **saturated-queue** screen. A startup-only first-warmup barrier lets
 the producer fill the declared count-bounded raw queue before encoding starts.
@@ -50,12 +53,14 @@ Use the mandatory workspace Chez10.4.1 wrapper, explicit stock Jolt binary,
 From `app/`, load/source-check first. Tiny functional invocations are:
 
 ```sh
-jolt -Srepro -m perf.sdk-preparation-pipeline /absolute/fresh/control synchronous 8 2 1 source-functional
-jolt -Srepro -m perf.sdk-preparation-pipeline /absolute/fresh/candidate overlap 8 2 1 source-functional
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 "$JOLT_BIN" -Srepro -m perf.sdk-preparation-pipeline /absolute/fresh/control synchronous 8 2 1 source-functional
+/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 "$JOLT_BIN" -Srepro -m perf.sdk-preparation-pipeline /absolute/fresh/candidate overlap 8 2 1 source-functional
 ```
 
-Build with **build first**, using `jolt build -m perf.sdk-preparation-pipeline
--o /absolute/owned/app`. Run that one binary with separate fresh roots:
+Build with **build first**, through the same wrapper:
+`/home/chuck/ai-src/tools/jolt-with-chez-10.4.1 "$JOLT_BIN" build
+-m perf.sdk-preparation-pipeline -o /absolute/owned/app`.
+Run that one binary with separate fresh roots:
 
 ```sh
 app /absolute/fresh/control synchronous 5000 32 3 release
