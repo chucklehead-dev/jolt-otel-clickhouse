@@ -1,0 +1,35 @@
+(require '[clojure.edn :as edn])
+(defn ensure! [condition label]
+  (when-not condition (throw (ex-info "Invalid fusion native receipt" {:label label}))))
+(let [[root arm] *command-line-args*
+      w (edn/read-string (slurp (str root "/writer.edn")))
+      r (edn/read-string (slurp (str root "/reader.edn")))
+      samples (:samples w)
+      quantile (fn [p] (nth (vec (sort (map :nanos samples)))
+                           (dec (long (Math/ceil (* p (count samples)))))))
+      close? (fn [a b] (< (Math/abs (- (double a) (double b))) 1.0e-8))]
+  (ensure! (contains? #{"cached" "fused-cached"} arm) :known-arm)
+  (ensure! (= arm (:nested-writer-arm w)) :arm)
+  (ensure! (= [175000 5000 32 3 35]
+              (mapv w [:stored-rows :batch-size :rounds :warmups :nested-scope-calls])) :geometry)
+  (ensure! (= (vec (range 32)) (mapv :round samples)) :all-rounds)
+  (ensure! (every? #(and (true? (:ok %)) (= 5000 (:rows %)) (pos? (:nanos %))) samples)
+           :every-confirmed-callback)
+  (ensure! (and (:research-constructor-selection w) (:shared-candidate-encoder w)
+                (:unmodified-public-fixture w) (false? (:live-sdk-queue w))) :research-scope)
+  (ensure! (>= (:confirmed-window-nanos w) (reduce + (map :nanos samples))) :window-includes-callbacks)
+  (ensure! (close? (:confirmed-rows-per-second w)
+                   (/ (* 1.0e9 5000 32) (:confirmed-window-nanos w))) :rate)
+  (ensure! (every? true? (map close? (:p50-p90-p95-p99-ms w)
+                             (map #(/ (quantile %) 1.0e6) [0.5 0.9 0.95 0.99]))) :quantiles)
+  (ensure! (= [true 175000 5000 625 true true 35 true]
+              (mapv r [:passed :rows :groups :trace-count :full-physical-rows-equal
+                       :typed-values-status :per-record-multiplicity :deterministic-tie-order]))
+           :independent-all-field-recovery)
+  (prn {:verified true :arm arm :independently-recovered-rows (:rows r)
+        :confirmed-rows-per-second (:confirmed-rows-per-second w)
+        :p50-p90-p95-p99-ms (:p50-p90-p95-p99-ms w)
+        :inverse-latency-rows-per-second (mapv #(/ 5.0e6 %) (:p50-p90-p95-p99-ms w))
+        :estimated-bytes-per-row (:estimated-bytes-per-row w)
+        :constructor-selection-count (:nested-scope-calls w)
+        :causal-comparison-qualified false :tail-qualified false :target-qualified false}))
