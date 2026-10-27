@@ -1275,6 +1275,9 @@
 
 (def ^:dynamic ^:private *experimental-nested-writer* nil)
 
+;; RESEARCH ONLY: one-binary mechanism control; never merge into product.
+(def ^:dynamic *research-hamt-selection* true)
+
 (defn- load-experimental-span-codec!
   ([] (load-experimental-span-codec! false false))
   ([payload-cache?]
@@ -1324,7 +1327,7 @@
                             (if scalar-views?
                               (do (when-not (and box (ifn? @box))
                                     (throw (ex-info "Experimental scalar views require their codec capability" {})))
-                                  (@factory (@box)))
+                                  (@factory (@box) *research-hamt-selection*))
                               (@factory))))
           cache-var (when payload-cache?
                       (ns-resolve 'otel.any-value

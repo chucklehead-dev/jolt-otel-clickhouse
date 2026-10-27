@@ -1,0 +1,1 @@
+{:lease-expires-at 1.792624073261E9, :lease-expires-utc "2026-10-21T23:07:53.261Z", :observed-now-utc "2026-10-27T12:52:43.705992194Z", :manifest-keys (:db :base :wal :seq), :manifest-sequence {}}

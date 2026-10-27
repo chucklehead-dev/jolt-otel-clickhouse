@@ -1,0 +1,21 @@
+:sdk-preparation-batch {:index 0, :rows 5000, :started 3587212681, :prepared 3865175160, :submitted 3865396275, :confirmed 4224255235}
+:sdk-preparation-batch {:index 1, :rows 5000, :started 3865459323, :prepared 4224065131, :submitted 4224800893, :confirmed 4592413378}
+:sdk-preparation-batch {:index 2, :rows 5000, :started 4224879900, :prepared 4592311210, :submitted 4592885089, :confirmed 4923791277}
+:sdk-preparation-batch {:index 3, :rows 5000, :started 4592925976, :prepared 4923688430, :submitted 4924288696, :confirmed 5211329853}
+:sdk-preparation-batch {:index 4, :rows 5000, :started 4924354217, :prepared 5204509212, :submitted 5211768304, :confirmed 5474157705}
+:sdk-preparation-batch {:index 5, :rows 5000, :started 5211806536, :prepared 5474084912, :submitted 5474506630, :confirmed 5739478837}
+:sdk-preparation-batch {:index 6, :rows 5000, :started 5474540849, :prepared 5739356591, :submitted 5739959894, :confirmed 5992491196}
+:sdk-preparation-batch {:index 7, :rows 5000, :started 5739999070, :prepared 5992399544, :submitted 5992881113, :confirmed 6258510713}
+:sdk-preparation-batch {:index 8, :rows 5000, :started 5992919554, :prepared 6258416855, :submitted 6258950436, :confirmed 6513557343}
+:sdk-preparation-batch {:index 9, :rows 5000, :started 6258993689, :prepared 6513458821, :submitted 6514009600, :confirmed 6822375342}
+:sdk-preparation-batch {:index 10, :rows 5000, :started 6514049440, :prepared 6822272025, :submitted 6822795654, :confirmed 7138038964}
+:sdk-preparation-batch {:index 11, :rows 5000, :started 6822830834, :prepared 7137932337, :submitted 7138533011, :confirmed 7494345701}
+:sdk-preparation-batch {:index 12, :rows 5000, :started 7138647456, :prepared 7494209908, :submitted 7494993742, :confirmed 8086061963}
+:sdk-preparation-batch {:index 13, :rows 5000, :started 7495063566, :prepared 8085954073, :submitted 8087404710, :confirmed 8531502217}
+:sdk-preparation-batch {:index 14, :rows 5000, :started 8087717402, :prepared 8531406097, :submitted 8531994638, :confirmed 8972647061}
+:sdk-preparation-batch {:index 15, :rows 5000, :started 8532041166, :prepared 8972520284, :submitted 8973258140, :confirmed 9326747116}
+Unhandled exception: The Durable writer cannot prove a live lease
+  ex-data: {:type :jdbc.chdb.durable.control/lease-fenced}
+  trace:
+    db.jdbc-shim/extension-operation (~/.jolt/gitlibs/https___github.com_casselc_db.git/cb06349c7ffe55e423021e402d4f182f4a27bcf7/clj/db/jdbc_shim.clj:101)
+    jfn$db.jdbc-shim/$1099511627827

@@ -1,0 +1,1 @@
+{:passed true, :rows 175000, :groups 5000, :copies 35, :comparison :sha256-canonical-all-decoded-physical-fields, :all-physical-types-equal true, :timestamps-and-event-timestamps-exact true, :independent-ordinary-json-oracle true}

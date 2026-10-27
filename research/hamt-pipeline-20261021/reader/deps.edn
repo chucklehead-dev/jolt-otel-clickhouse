@@ -1,0 +1,20 @@
+{:paths ["../../preparation-overlap-20261021/app/src"
+         "../../scalar-view-exporter-20261020/app/src"]
+ :deps {io.github.chucklehead-dev/jolt-otel-clickhouse {:local/root "../../.."}
+        io.github.chucklehead-dev/jolt-codec
+        {:git/url "https://github.com/chucklehead-dev/jolt-otel-clickhouse.git"
+         :git/sha "c75579b90a9089bcbdcb195ebd18d15d16ee0082"
+         :deps/root "incubator/codec"}
+        io.github.chucklehead-dev/jolt-chdb
+        {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
+         :git/sha "3314b79e8a234fafdf5231439a0323c878a40040"}
+        io.github.casselc/otel
+        {:git/url "https://github.com/casselc/otel.git"
+         :git/sha "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"
+         :exclusions [jolt-lang/jolt-crypto]}
+        jolt-lang/jolt-crypto
+        {:git/url "https://github.com/jolt-lang/jolt-crypto.git"
+         :git/sha "5effcc89a3258499a79a2a3d69edad9e7800d1bf"}
+        org.clojure/data.json
+        {:git/url "https://github.com/casselc/data.json.git"
+         :git/sha "3adc8c5d3a57a30d18f62bad9d1c7a5c1f6857e0"}}}
