@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Qualify the optional traversal and scalar-text shape kernels for Jolt's
+  fixed-field sorted wrappers and native vector nodes, retaining support for
+  the earlier tagged-table/persistent-vector layout. Preserve node/count/key
+  guards, policy fences and output semantics; no default or performance claim.
+
 - Integrate the bounded preparation adapter with its approved literate model
   and canonical SDK/confirmed-ticket driver pins. Add explicit stock-runtime
   ownership and held-WAL cancellation/readback CI gates, and document the

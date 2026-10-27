@@ -7,6 +7,22 @@
 (def policy (Object.))
 (def original-policy policy)
 (def prototype (sorted-map "a" 7 "b" "text" "c" false))
+(def native-nodes?
+  ((scheme/eval-string "(lambda (m) (eq? (record-type-uid (record-rtd m)) 'chez-scoll-v1))") prototype))
+(def altered-native-copy
+  (when native-nodes?
+    (scheme/eval-string
+      "(lambda (m field value)
+         (make-scoll* #f #f (scoll-kind m) (scoll-tag m)
+           (if (eq? field (keyword #f \"tree\")) value (scoll-tree m))
+           (if (eq? field (keyword #f \"cnt\")) value (scoll-cnt m))
+           (scoll-cmp m) (scoll-cmp-fn m)
+           (if (eq? field (keyword #f \"ops\")) value (scoll-ops m))))")))
+(defn altered-copy [m field value]
+  (if native-nodes?
+    (altered-native-copy m field value)
+    (let [copy (with-meta m {:test-copy true})]
+      (host/ref-put! copy field value) copy)))
 (defn planner
   ([] (planner 8 8192))
   ([count chars] ((shapes/native-plan-factory) [[#'policy original-policy]] 100 prototype count chars)))
@@ -59,17 +75,28 @@
       (is (true? (p2 1 m))) (is (= (oracle m) (p2 0 m))))))
 
 (deftest malformed-and-custom-inputs-never-run-callbacks
+  (when native-nodes?
+    (doseq [source ["(vector #f \"a\" 1 jolt-nil)"
+                    "(vector 'red \"a\" 1 jolt-nil jolt-nil)"
+                    "(vector #f 7 1 jolt-nil jolt-nil)"
+                    "(vector #f \"a\" (jolt-vector 1) jolt-nil jolt-nil)"
+                    "(vector #f \"a\" 1 #t jolt-nil)"]]
+      (let [p (planner) bad (altered-copy (sorted-map "a" 1) :tree (scheme/eval-string source))]
+        (is (false? (p 1 bad))) (is (= [0 0] (p 2 nil))))))
   (doseq [[field value] [[:cnt -1] [:cnt "one"] [:cnt 0]
                          [:tree [nil "a" 1 nil]] [:tree [nil "a" 1 :bad nil]]
                          [:tree [nil "a" 1 [nil "a" 2 nil nil] nil]]]]
-    (let [p (planner) m (sorted-map "a" 1)]
-      (host/ref-put! m field value) (is (false? (p 1 m))) (is (= [0 0] (p 2 nil)))))
+    (let [p (planner) m (altered-copy (sorted-map "a" 1) field value)]
+      (is (false? (p 1 m))) (is (= [0 0] (p 2 nil)))))
   (let [p (planner) m (fixture 16) calls (atom 0)]
-    (host/ref-put! m :ops (assoc (host/ref-get m :ops) :seq (fn [& _] (swap! calls inc))))
-    (is (false? (p 1 m))) (is (zero? @calls)))
+    (let [bad (altered-copy m :ops (assoc (host/ref-get m :ops) :seq (fn [& _] (swap! calls inc))))]
+      (is (false? (p 1 bad))) (is (zero? @calls))))
   (let [p (planner) m (fixture 1)
-        cycle (scheme/eval-string "(let ((v (jolt-vector #f \"key-0\" 1 jolt-nil jolt-nil))) (vector-set! (pvec-tail v) 3 v) v)")]
-    (host/ref-put! m :tree cycle) (is (false? (p 1 m))) (is (= [0 0] (p 2 nil)))))
+        cycle (scheme/eval-string
+                (if native-nodes?
+                  "(let ((v (vector #f \"key-0\" 1 jolt-nil jolt-nil))) (vector-set! v 3 v) v)"
+                  "(let ((v (jolt-vector #f \"key-0\" 1 jolt-nil jolt-nil))) (vector-set! (pvec-tail v) 3 v) v)"))]
+    (is (false? (p 1 (altered-copy m :tree cycle)))) (is (= [0 0] (p 2 nil)))))
 
 (deftest invalid-options-reject
   (doseq [[count chars] [[-1 1] [9 1] [1 -1] [1 8193] [1.0 1]]]
@@ -78,19 +105,22 @@
 (deftest checked-node-access-avoids-repeated-public-index-validation
   ;; Count actual generic indexing in an isolated kernel, not wall time. The
   ;; old implementation is the non-vacuity control: four reads per tree node.
-  ;; Every candidate node retains its pvec/count guards before native access.
+  ;; Every candidate node retains its representation/size guards before access.
+  ;; The instrumented alternative counts one indexed read per accessor on
+  ;; either runtime; it is not a timing comparison between different runtimes.
   (doseq [n [0 1 17 128] old? [false true]]
     (let [source (if old?
                    (reduce (fn [s [name index]]
                              (str/replace s (str "(" name " node)")
-                               (str "(pvec-nth! node " index ")")))
+                               (str "(counted-node-ref node " index ")")))
                      @#'shapes/source
                      [["sc-nd-key" 1] ["sc-nd-val" 2] ["sc-nd-left" 3] ["sc-nd-right" 4]])
                    @#'shapes/source)
           [factory reset-count! reads]
           (scheme/eval-string
             (str "(let ((reads 0) (original-nth pvec-nth!))"
-                 " (let ((pvec-nth! (lambda (v i) (set! reads (+ reads 1)) (original-nth v i))))"
+                 " (let ((counted-node-ref (lambda (v i) (set! reads (+ reads 1))"
+                 " (if (vector? v) (vector-ref v i) (original-nth v i)))))"
                  " (let ((factory (" source " #f)))"
                  " (jolt-vector factory (lambda () (set! reads 0)) (lambda () reads)))))"))
           p (factory [[#'policy original-policy]] 100 prototype 8 8192)
@@ -105,13 +135,22 @@
     (is (true? (p 1 original)))
     (doseq [tree [nil [] [nil "a" 1 nil] [nil "a" 1 :bad nil]
                  [nil "wrong-key" 1 nil nil] [nil "a" [1] nil nil]]]
-      (let [m (sorted-map "a" 1)]
-        (host/ref-put! m :tree tree)
+      (let [m (altered-copy (sorted-map "a" 1) :tree tree)]
         (is (false? (p 0 m)))))
-    (let [m (sorted-map "a" 1)]
-      (host/ref-put! m :tree (subvec [0 nil "a" 1 nil nil 0] 1 6))
+    (let [tree (if native-nodes?
+                 (scheme/eval-string "(vector #f \"a\" 1 jolt-nil jolt-nil)")
+                 (subvec [0 nil "a" 1 nil nil 0] 1 6))
+          m (altered-copy (sorted-map "a" 1) :tree tree)]
       (is (= {"a" "1"} (p 0 m))))
     (is (= [1 1] (p 2 nil)))))
+
+(deftest public-mutation-contract-is-runtime-specific
+  (let [m (sorted-map "a" 1)]
+    (if native-nodes?
+      (do (is (thrown? Throwable (host/ref-put! m :cnt 0)))
+          (is (= {"a" 1} m)))
+      (do (host/ref-put! m :cnt 0)
+          (is (= 0 (host/ref-get m :cnt)))))))
 
 (defn -main [& _]
   (let [r (run-tests 'jolt.codec.scalar-text.experimental-test)]

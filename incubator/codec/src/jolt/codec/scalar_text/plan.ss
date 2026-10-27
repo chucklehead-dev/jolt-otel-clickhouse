@@ -23,8 +23,14 @@
       (error 'fixed-shape "Invalid plan"))
     (let* ((n (pvec-count keys)) (ordered (make-vector n))
            (builder (jolt-transient-new empty-pmap))
+           (stock-rtd (record-rtd prototype))
+           (native-nodes? (eq? (record-type-uid stock-rtd) 'chez-scoll-v1))
            (stock-ops (jolt-ref-get prototype kw-ops))
            (anchors (make-vector (* 2 (pvec-count bindings)))))
+      (define (node? node)
+        (if native-nodes?
+            (and (vector? node) (= (vector-length node) 5) (boolean? (vector-ref node 0)))
+            (and (pvec? node) (= (pvec-count node) 5))))
       (define (current?)
         (let loop ((i 0))
           (or (= i (vector-length anchors))
@@ -38,7 +44,7 @@
         (let ((seen 0) (ordinal 0))
           (define (walk node)
             (or (jolt-nil? node)
-                (and (pvec? node) (= (pvec-count node) 5) (< seen n)
+                (and (node? node) (< seen n)
                      ;; Bound malformed/cyclic graphs before following children.
                      (begin (set! seen (+ seen 1)) #t)
                      (walk (sc-nd-left node))
@@ -66,6 +72,14 @@
                        (make-hcoll (hcoll-hash child) (copy-coll (hcoll-alist child) values)))
                       (else (cons (car child) (vector-ref values (cdr child))))))))
           (make-hnode (hnode-bm node) out)))
+      (unless (or
+                (and (eq? (record-type-uid stock-rtd) 'chez-htable-v2)
+                     (equal? (record-type-field-names stock-rtd) '#(h hc)))
+                (and native-nodes?
+                     (equal? (record-type-field-names stock-rtd) '#(kind tag tree cnt cmp cmp-fn ops))
+                     (eq? (record-type-uid (record-type-parent stock-rtd)) 'chez-htable-v2)
+                     (equal? (record-type-field-names (record-type-parent stock-rtd)) '#(h hc))))
+        (error 'fixed-shape "Unsupported sorted-map layout"))
       ;; The template retains schema keys/ordinal indexes, never source values.
       (do ((i 0 (+ i 1))) ((= i n))
         (let ((key (pvec-nth! keys i)))
@@ -80,7 +94,8 @@
         (unless (= n (pmap-cnt template)) (error 'fixed-shape "Duplicate schema keys"))
         (let ((root (pmap-root template)))
           (lambda (m)
-            (and (htable-sorted-map? m) (eq? (jolt-ref-get m kw-ops) stock-ops)
+            (and (htable-sorted-map? m) (eq? (record-rtd m) stock-rtd)
+                 (eq? (jolt-ref-get m kw-ops) stock-ops)
                  (eqv? (jolt-ref-get m kw-cnt) n) (current?)
                  (let ((values (make-vector n)))
                    (and (fill! (jolt-ref-get m kw-tree) values) (current?)
