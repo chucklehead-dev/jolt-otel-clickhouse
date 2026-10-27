@@ -5,7 +5,7 @@ umask 077
 research=$(cd -- "$(dirname -- "$0")" && pwd)
 qualification=$(cd -- "$research/../.." && pwd)
 run_root=${1:?absolute existing evidence root containing app and source-before.sha256}
-[[ "$run_root" == /home/chuck/ai-src/evidence/hamt-pipeline-release-20261021.* ]]
+[[ "$run_root" =~ ^/home/chuck/ai-src/evidence/hamt-pipeline-release-[0-9]{8}\.[[:alnum:]]+$ ]]
 [[ -d "$run_root" && ! -L "$run_root" && -x "$run_root/app" ]]
 run_root=$(realpath -e -- "$run_root")
 export JOLT_NO_USER_DEPS=1 JOLT_AOT_CACHE=0
@@ -37,7 +37,9 @@ fi
 for entry in 1-disabled 2-enabled 3-enabled 4-disabled; do
   mode=${entry#*-}
   printf 'starting %s\n' "$entry"
+  { date -u; cat /proc/loadavg /proc/pressure/cpu /proc/pressure/memory; } > "$run_root/$entry.host-before.log"
   "$run_root/app" "$run_root/$entry" "$mode" 5000 32 3 release > "$run_root/$entry.writer.log" 2>&1
+  { date -u; cat /proc/loadavg /proc/pressure/cpu /proc/pressure/memory; } > "$run_root/$entry.host-after.log"
   # Check inputs immediately after timed writer, before any recovery work.
   (cd "$qualification" && sha256sum -c "$run_root/source-before.sha256") > "$run_root/$entry.source-check.log"
   recover "$run_root/$entry" "$entry"
