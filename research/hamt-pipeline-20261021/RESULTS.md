@@ -39,7 +39,8 @@ failures/drops. The measured worker thread used 33.16 CPU seconds during a
 CPU and GC have different scopes and must not be subtracted as equivalents.
 Host load observed **after** that screen was 18.43/37.68/19.42; this is context,
 not a synchronized attribution of all performance variation to contention.
-Fresh independent recovery of this later control is tracked separately.
+Fresh independent older-stack recovery of this later control also passed for
+all 175,000 rows; its receipt is retained here. That store was then retired.
 
 ## Decision and next action
 
@@ -55,6 +56,24 @@ to construction, with no dynamic binding spanning worker lifetime. Then use a
 quiet host and a fresh complete matched campaign, preserving the old binary.
 The timing difference between the dynamic control and a constructor-only
 control is **not measured or established** by this screen.
+
+The separate rich-fixture exporter-handoff mechanism diagnostic now passes
+with both the original constructor binding and the later constructor-only atom
+patch: eight span-map inputs call the original copying helper 8 times disabled
+versus 1 enabled; enabled selects 7 opaque span views. Both arms select 23
+sorted views for the remaining resource/scope/event inputs. All nested encoded
+bytes match. This checks source mechanism and fallback equivalence, not worker
+activation counters, native pipeline timing or the reason for the mixed rates.
+
+Claude reviewed checkpoint `e22ecee` read-only and reproduced the table/receipt
+numbers from source, not by executing gates. Its follow-ups were the binding
+scope, missing requested-mode receipts and missing host-observation record.
+Those receipts/explicitly unsynchronized observation are now included, and the
+later manual selector avoids a worker-lifetime binding. The factory did capture
+the selected Boolean before worker startup in the measured code; the review's
+scope concern does not invalidate that narrower construction-time fact.
+The review does not establish dynamic binding or contention as a slowdown cause.
+The newer atom patch/diagnostic were tested by Codex after that review.
 
 No Quint scope, lease duration, admission/publication semantics or production
 configuration was changed. No exhaustive checks were rerun.

@@ -1,0 +1,29 @@
+Note: the Write and ExitPlanMode tools are unavailable in this session, so I'm delivering the review directly as my response rather than via a plan file.
+
+## Review: HAMT-pipeline checkpoint e22ecee (read-only, no execution)
+
+**1. Dynamic binding spans the whole worker lifetime — documented intent vs. actual code.**
+`hamt_pipeline.clj:14-15` wraps the *entire* `pipeline/-main` call (all writer threads, SDK batch processor, export work) in `(binding [exporter/*research-hamt-selection* ...] ...)`. The var is read once, at construction, inside `load-experimental-span-codec!` (`chdb.clj:1330`: `(@factory (@box) *research-hamt-selection*)`), on the same thread as the binding, so the value read for that run is correct. But README.md's claim that "the selected Boolean is captured by the factory before workers start" describes intended design, not what the diff (`results/research-selection.patch`) actually does — it only touches one call site and does nothing to scope the binding to construction. RESULTS.md itself lists "confine the research selector to construction, with no dynamic binding spanning worker lifetime" as unfinished future work, not something already done. This is a genuine mismatch between documentation and code. No code path in the reviewed files re-reads the var after construction, so there's **no direct evidence this contaminated the measurement** — but the structural risk (a long-lived dynamic binding available to any future/nested code on that thread) is real, and the construction-only claim is unsupported by the patch shown.
+
+**2. Incomplete fourth arm (A2 disabled): accurately described.**
+`4-disabled.writer.log` shows 16 successful batches then an unhandled `lease-fenced` exception, no `writer.edn` produced — matches RESULTS.md. `4-disabled.lease-clock-diagnostic.edn` confirms the lease expired `2026-10-21T23:07:53.261Z` against an observed clock of `2026-10-27T12:52:...`, consistent with correct expiry rejection rather than a bug. Well-supported by evidence.
+
+**3. Clock/lease and retained-control numbers mostly check out; one claim is unbacked.**
+`retained-old-drift.writer.edn` confirms cpu-nanos delta ≈33.16s, confirmed-window-nanos ≈35.04s, gc-nanos delta ≈1.08s — all match RESULTS.md's prose exactly. However, the "host load observed after that screen was 18.43/37.68/19.42" figure has **no corresponding file** anywhere in the reviewed `results/` directory. This is an unverifiable claim in the reviewed evidence set — not shown false, just not sourced here.
+
+**4. Current-host retained-control drift (4,566 rows/s vs. historical ~22,395) is correctly caveated, not overstated.**
+RESULTS.md explicitly warns CPU and GC are different scopes and must not be subtracted as equivalents, and that host load is not a synchronized attribution of the slowdown to contention. The receipt numbers support the raw figures; causation is correctly left open.
+
+**5. Recovery/comparison boundary is a genuine independent oracle.**
+`sdk_preparation_recovery.clj` runs oracle/actual/expected/compare as separate processes (required by chDB's one-storage-lifetime-per-process constraint), comparing canonical SHA256 of all decoded physical fields plus exact row multiplicity, using an independently-pinned older driver/SDK/JSON stack (`reader/deps.edn`). `1-disabled.reader.edn` (`:passed true, :copies 35`) confirms this ran and passed. Solid.
+
+**6. Table numbers reproduce exactly from writer receipts.** 12,204 / 9,658 / 13,457 rows/s and allocation figures in RESULTS.md match `1-disabled/2-enabled/3-enabled.writer.edn` exactly — no transcription defects found.
+
+**7. Evidentiary gap: no `hamt-mode.edn` receipts available.** `run-qualified.sh` copies each store's `hamt-mode.edn` (recording the actual `:hamt-views` boolean captured at construction) per arm, but none exist under `results/`. Arm identity is therefore verifiable here only via file naming, not via the construction-time receipt designed to confirm it.
+
+### Hypotheses (not established)
+- Whether the full-lifetime binding (finding 1) actually produced a measurable difference from a true constructor-only control is **not established** by this code — this review does not claim dynamic binding caused the slowdown, only that the scoping claim in README.md is unsupported by the shown patch.
+- Whether host contention explains the retained-binary throughput drift is explicitly left open by the authors and by this review.
+
+### Overall
+No evidence of falsified throughput numbers, silent data loss, or failures miscounted as successes. Defects found are: a documentation/implementation mismatch on binding scope, one unsourced host-load figure, and a missing receipt type for arm-identity verification.

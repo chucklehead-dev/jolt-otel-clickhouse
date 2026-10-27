@@ -11,5 +11,7 @@
         (pr-str {:hamt-views (= selection "enabled")
                  :control :same-binary-new-sdk-sorted-only-versus-hamt
                  :research-only-constructor-selection true}))
-  (binding [exporter/*research-hamt-selection* (= selection "enabled")]
-    (pipeline/-main root "overlap" n rounds warmups mode)))
+  ;; Research process owns exactly one storage lifetime. Read only during codec
+  ;; construction; no dynamic binding remains active while worker code runs.
+  (reset! exporter/research-hamt-selection (= selection "enabled"))
+  (pipeline/-main root "overlap" n rounds warmups mode))

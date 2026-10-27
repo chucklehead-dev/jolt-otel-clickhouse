@@ -1,0 +1,1 @@
+{:scope :source-rich-fixture-exporter-handoff-mechanism, :passed true, :rows 8, :both-arms-original-policy-anchors true, :worker-and-durable-used false, :timing-claim false, :arms [{:enabled? false, :copying-helper-calls {:span 8, :other 1}, :opaque-views {:span 0, :other 23}} {:enabled? true, :copying-helper-calls {:span 1, :other 1}, :opaque-views {:span 7, :other 23}}]}

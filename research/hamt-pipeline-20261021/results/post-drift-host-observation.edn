@@ -1,0 +1,8 @@
+{:scope :post-screen-unsynchronized-host-observation
+ :source :terminal-command-output-transcribed-from-this-session
+ :after-retained-old-drift-screen true
+ :load-average-1-5-15-minutes [18.43 37.68 19.42]
+ :cpu-pressure-some-average-10-60-300-seconds [1.51 10.81 18.66]
+ :memory-pressure-full-average-10-60-300-seconds [0.00 0.02 0.13]
+ :synchronized-with-writer-window false
+ :causal-attribution-established false}
