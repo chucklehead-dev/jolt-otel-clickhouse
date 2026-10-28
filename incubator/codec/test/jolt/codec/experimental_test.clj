@@ -7,6 +7,34 @@
 
 (defn rejects? [f] (try (f) false (catch Throwable _ true)))
 (defn text [bytes] (String. bytes "UTF-8"))
+
+(defn- ascii-json-reference [source]
+  (let [hex "0123456789abcdef"]
+    (str "\""
+      (apply str
+        (map (fn [character]
+               (let [cp (int character)]
+                 (case cp
+                   8 "\\b" 9 "\\t" 10 "\\n" 12 "\\f" 13 "\\r"
+                   34 "\\\"" 47 "\\/" 92 "\\\\"
+                   (if (< cp 32)
+                     (str "\\u00" (nth hex (quot cp 16)) (nth hex (mod cp 16)))
+                     (str character))))) source))
+      "\"")))
+
+(deftest guarded-cursor-advances-match-independent-wire-at-capacity-boundaries
+  (let [c (codec/open-codec)
+        source (apply str (map char (range 128)))
+        inner (ascii-json-reference source)]
+    (doseq [[value expected] [[source inner]
+                             [(codec/prepare-nested-text c source)
+                              (ascii-json-reference inner)]]
+            prefix-size [0 1021 65530]]
+      (let [prefix (apply str (repeat prefix-size "p"))
+            payload (str expected "\n") limit (count payload)]
+        (is (= (str prefix payload)
+               (text (codec/encode-prefixed-records c prefix [value] identity limit))))
+        (is (rejects? #(codec/encode-prefixed-records c prefix [value] identity (dec limit))))))))
 (defmacro ^:private embedded-json [] (slurp (io/resource "jolt/codec/json.ss")))
 (def ^:private formatter-control-factory
   (delay

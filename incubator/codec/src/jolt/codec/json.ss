@@ -79,9 +79,10 @@
       ;; bytes reach this helper (all 0..255), never caller array/index input.
       ;; ensure-space! either raises or establishes used < length(tail).
       ;; This is the same private-buffer bound used by the clean-string loop;
-      ;; keep the capacity/budget guard, remove only its redundant store check.
+      ;; Keep the capacity/budget guard. used<length(tail)<=65536 also proves
+      ;; that the following cursor increment cannot overflow a fixnum.
       (#3%bytevector-u8-set! tail used b)
-      (set! used (fx+ used 1)))
+      (set! used (#3%fx+ used 1)))
     (define (ascii! text)
       (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
         (byte! (char->integer (string-ref text i)))))
@@ -92,7 +93,7 @@
       (do ((i 0 (fx+ i 1))) ((fx=? i (string-length text)))
         (ensure-space!)
         (bytevector-u8-set! tail used (char->integer (string-ref text i)))
-        (set! used (fx+ used 1))))
+        (set! used (#3%fx+ used 1))))
     (define (u16! cp)
       (ascii! "\\u")
       (do ((shift 12 (fx- shift 4))) ((fx<? shift 0))
@@ -129,6 +130,8 @@
       (byte! 34)
       ;; Keep the clean ASCII cursor local; publish once before an escape,
       ;; a chunk change, or completion. Tail capacity itself enforces budget.
+      ;; In each body i<n and cursor<length(tail), so increments may reach the
+      ;; valid end position but cannot exceed input length/capacity or overflow.
       (let ((n (string-length text)))
         (let loop ((i 0) (cursor used))
           (cond
@@ -142,9 +145,9 @@
               (if (and (fx>=? cp 32) (fx<=? cp 127)
                        (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
                   (begin (#3%bytevector-u8-set! tail cursor cp)
-                         (loop (fx+ i 1) (fx+ cursor 1)))
+                         (loop (#3%fx+ i 1) (#3%fx+ cursor 1)))
                   (begin (set! used cursor) (escaped-char! cp)
-                         (loop (fx+ i 1) used))))))))
+                         (loop (#3%fx+ i 1) used))))))))
       (byte! 34))
     ;; This is encoded ASCII JSON used as a STRING field in outer JSON, not a
     ;; raw JSON splice. Bytes come only from this backend's private encoder.
@@ -160,9 +163,9 @@
             (let ((cp (#3%bytevector-u8-ref bytes i)))
               (if (and (not (fx=? cp 34)) (not (fx=? cp 92)) (not (fx=? cp 47)))
                   (begin (#3%bytevector-u8-set! tail cursor cp)
-                         (loop (fx+ i 1) (fx+ cursor 1)))
+                         (loop (#3%fx+ i 1) (#3%fx+ cursor 1)))
                   (begin (set! used cursor) (escaped-char! cp)
-                         (loop (fx+ i 1) used))))))))
+                         (loop (#3%fx+ i 1) used))))))))
       (byte! 34))
     (define (integer! n)
       ;; Bignums retain a correct but allocating fallback. No false no-allocation

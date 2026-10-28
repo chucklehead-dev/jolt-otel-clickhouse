@@ -23,6 +23,20 @@ permissions:
   contents: read
 
 jobs:
+  guarded-cursors:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Check source-pinned private cursor bounds and controls
+        shell: bash
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y z3
+          bash incubator/codec/scripts/check-guarded-cursors.sh
+
   stock-library:
     runs-on: ubuntu-24.04
     timeout-minutes: 8

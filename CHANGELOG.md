@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Avoid repeated overflow checks in the experimental ASCII codec's private
+  cursor advances after the existing input/capacity guards. Preserve byte limits,
+  formatted-value checks and wire bytes; add source-pinned arithmetic controls
+  and independent boundary wire tests. No default or ownership contract changes.
+
 - Update the canonical chDB and OTel SDK pins. Private owned query buffers avoid
   redundant initialization, and SDK initialization preserves explicitly supplied
   bounded span preparation options. Synchronous and mixed-signal defaults remain
