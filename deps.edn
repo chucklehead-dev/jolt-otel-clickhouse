@@ -2,10 +2,10 @@
  :jolt/min-version "0.8.6"
  :deps {io.github.chucklehead-dev/jolt-chdb
         {:git/url "https://github.com/chucklehead-dev/jolt-chdb.git"
-         :git/sha "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"}
+         :git/sha "b1435fe9821a86947b37e0112542047560ae2754"}
         io.github.casselc/otel
         {:git/url "https://github.com/casselc/otel.git"
-         :git/sha "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+         :git/sha "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
          ;; Includes reviewed decoder improvements and SDK-owned bounded
          ;; scalar key-shape plans and encoder-only views, plus the prior helpers.
          ;; Shape plans remain opt-in; no consumer-owned private SDK anchors.
@@ -48,12 +48,12 @@
            :stock-shape-plans-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-shape-plans-test"
-                        "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                        "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                         "c75579b90a9089bcbdcb195ebd18d15d16ee0082"]}
            :stock-scalar-views-test
            {:extra-paths ["incubator/codec/test"]
             :main-opts ["-m" "otel.exporter.chdb-scalar-views-test"
-                        "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                        "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                         "c75579b90a9089bcbdcb195ebd18d15d16ee0082"]}
            :experimental-span-codec
            {:extra-paths ["incubator/codec/src"]}

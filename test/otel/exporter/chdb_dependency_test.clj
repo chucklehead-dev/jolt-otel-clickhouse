@@ -7,7 +7,7 @@
   "https___github.com_jolt-lang_jolt-crypto.git/5effcc89a3258499a79a2a3d69edad9e7800d1bf/src")
 
 (def ^:private otel-root
-  "https___github.com_casselc_otel.git/38278ab4cf3b7bad7ed817170ca7e380122068b3/")
+  "https___github.com_casselc_otel.git/8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0/")
 
 (def ^:private prior-otel-root
   "https___github.com_casselc_otel.git/37c684a2c370fc82fde82331635973bce87a52b3/")
@@ -16,7 +16,7 @@
   "{:deps {io.github.casselc/otel {:git/url \"https://github.com/casselc/otel.git\" :git/sha \"37c684a2c370fc82fde82331635973bce87a52b3\" :exclusions [jolt-lang/jolt-crypto]}}}")
 
 (def ^:private chdb-root
-  "https___github.com_chucklehead-dev_jolt-chdb.git/312812f0dfeff5498a6d1aa29b0476a97d8b65f3/")
+  "https___github.com_chucklehead-dev_jolt-chdb.git/b1435fe9821a86947b37e0112542047560ae2754/")
 
 (def ^:private prior-chdb-root
   "https___github.com_chucklehead-dev_jolt-chdb.git/677219027d68702a18ee826b55ee1f2ccc3d172d/")
@@ -96,7 +96,7 @@
 
 (defn run-oracle-controls! [check]
   ;; Freeze the approved witness independently of the implementation oracle.
-  (let [fixture-root "https___github.com_casselc_otel.git/38278ab4cf3b7bad7ed817170ca7e380122068b3/"
+  (let [fixture-root "https___github.com_casselc_otel.git/8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src")
@@ -109,43 +109,43 @@
            (boolean (oracle (str source ":" root "src/../resources"))))
     (check "SDK before bounded preparation is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "6cd57c86e0a93fc56af6cb10ee433b178b289e3b"))))
     (check "SDK old reviewed SHA is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "8110c12f058e1d6902fe6dad0f370d9a8b3a2ec2"))))
     (check "SDK before owned scalar-map capability is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "37c684a2c370fc82fde82331635973bce87a52b3"))))
     (check "SDK before sorted scalar normalization is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "697f58bd5b4925f72339694bedbace97bdc869bb"))))
     (check "SDK before batch-ready wakeup is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "d93846e40b837dcecb546fb59f6cb05ca639f054"))))
     (check "SDK before per-reader policy is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "ff8e2e4ab8fe0b8b3f8410cb202d47b1c29267a1"))))
     (check "SDK before definition-owned helper qualification is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "e8435b381ee0cafd7d1cb5cb7b8639c551544042"))))
     (check "SDK before bounded string admission is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "14ffd741351373f07d96aa070b0f9853d7daf8ab"))))
     (check "SDK before stock traversal injection is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "7878a2eb4340519d6843d13490a5a7c99ebade8a"))))
     (check "SDK before bounded shape plans is rejected" false
            (boolean (oracle (str/replace source
-                             "38278ab4cf3b7bad7ed817170ca7e380122068b3"
+                             "8cd99fe4d2333e7ac5b1a2fd5aab009bd05acfc0"
                              "3366a3322c3ea4024057f6278e50c999864171e8"))))
     (check "SDK distinct checkout at same SHA is rejected" false
            (boolean (oracle (str source ":" other "src"))))
@@ -184,7 +184,7 @@
     (check "data.json missing provider is rejected" false (boolean (oracle "./test")))))
 
 (defn- run-chdb-oracle-controls! [check]
-  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/312812f0dfeff5498a6d1aa29b0476a97d8b65f3/"
+  (let [fixture-root "https___github.com_chucklehead-dev_jolt-chdb.git/b1435fe9821a86947b37e0112542047560ae2754/"
         root (str "/public-fixture/a/" fixture-root)
         other (str "/public-fixture/b/" fixture-root)
         source (str root "src") resources (str root "resources")
@@ -194,25 +194,25 @@
            (oracle (str source ":" resources)))
     (check "chDB before confirmed request tickets is rejected" false
            (oracle (str/replace source
-                                "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"
+                                "b1435fe9821a86947b37e0112542047560ae2754"
                                 "3314b79e8a234fafdf5231439a0323c878a40040")))
     (check "chDB prior revision is rejected" false
            (oracle (str/replace source
-                                "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"
+                                "b1435fe9821a86947b37e0112542047560ae2754"
                                 "677219027d68702a18ee826b55ee1f2ccc3d172d")))
     (check "chDB previous root pin is rejected" false
            (oracle (str/replace source
-                                "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"
+                                "b1435fe9821a86947b37e0112542047560ae2754"
                                 "af3a902be39fc466246b39864cdf77879032c87a")))
     (check "chDB duplicate source provider is rejected" false
            (oracle (str source ":" source)))
     (check "chDB before prefixed encoder API is rejected" false
            (oracle (str/replace source
-                                "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"
+                                "b1435fe9821a86947b37e0112542047560ae2754"
                                 "bad991ad191ffb57d90ff86795ccbeb3992bf186")))
     (check "chDB before private prepared WAL is rejected" false
            (oracle (str/replace source
-                                "312812f0dfeff5498a6d1aa29b0476a97d8b65f3"
+                                "b1435fe9821a86947b37e0112542047560ae2754"
                                 "3d766fa295b0e98c30f275d0a334db92e6dd998c")))
     (check "chDB distinct checkout at same SHA is rejected" false
            (oracle (str source ":" other "resources")))

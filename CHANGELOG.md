@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+- Update the canonical chDB and OTel SDK pins. Private owned query buffers avoid
+  redundant initialization, and SDK initialization preserves explicitly supplied
+  bounded span preparation options. Synchronous and mixed-signal defaults remain
+  unchanged; preparation still requires its dedicated span exporter.
+
 - Integrate the bounded preparation adapter with its approved literate model
   and canonical SDK/confirmed-ticket driver pins. Add explicit stock-runtime
   ownership and held-WAL cancellation/readback CI gates, and document the
