@@ -67,11 +67,39 @@ synthetic stores and restored packaging scratch; the evidence directory is
 about 65 MiB including one retained executable. Original failure archive and
 older control binaries are untouched.
 
+## Matched library-graph stable screen
+
+Official 0.8.23 was built with the same SDK/codec/driver graph, source entrypoint,
+fixture, options and batch/sample geometry. It was measured separately after
+the build and smoke were terminal. Binary SHA256:
+`0120c2c29820de90f97dc38d3dd96d5260a20da8e384e18fcd3966aa3293f760`.
+
+| Observation | Official 0.8.23 | Main 8ba11735 |
+| --- | --- | --- |
+| Aggregate confirmed rows/s | 20,193.92 | 20,257.06 |
+| Cadence p50/p90/p95/p99, ms | 231.534 / 308.939 / 316.758 / 382.705 | 227.610 / 341.882 / 401.727 / 408.098 |
+| Inverse-cadence p50/p90/p95/p99, rows/s | 21,595 / 16,184 / 15,785 / 13,065 | 21,967 / 14,625 / 12,446 / 12,252 |
+| Estimated allocated bytes/row | 14,442.46 | 24,118.07 |
+| Failed/dropped | 0 / 0 | 0 / 0 |
+
+The stable smoke (24 rows) and measured run (175,000) independently recovered
+against the older ordinary-JSON oracle with exact fields/types/ticks and
+multiplicities. All writer/reader processes exited0. Successful stable datasets
+and build scratch were pruned after that final gate, keeping receipts and both
+runtime binaries once. No workload currently remains active from this campaign.
+
+This sequential pair has matching application/library source, **not** identical
+runtime artifacts or an ABBA population experiment: main used the source-CLI
+boot/link path and stable used its distributed self-contained build path. It
+does not isolate sorted-wrapper code or establish a performance regression's
+cause. It does show no reason yet to adopt main as a whole-pipeline performance
+upgrade: throughput is essentially flat and estimated allocation is higher.
+
 ## Next
 
-Build official 0.8.23 with the **same** canonical SDK/codec/driver graph and
-entrypoint, smoke/recover it, and compare isolated release measurements. Do not
-adopt unmeasured main-only changes or reintroduce the unadopted HAMT/probe code.
-If the allocation increase is real, profile preparation on this matched graph
-before chasing another unrelated encoder micro-optimization. No upstream PR
-has been opened.
+Verify the allocation difference using Chez's cumulative allocation counter,
+then localize preparation costs (projection/normalization/encoding/WAL) on the
+matched graph. Keep working toward 25k/20k rather than running more unchanged
+screens or adopting an unproven runtime upgrade. Preserve the useful dual-layout
+compatibility work and do not reintroduce unadopted HAMT/probe changes. No
+upstream PR has been opened.
