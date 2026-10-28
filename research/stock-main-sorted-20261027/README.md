@@ -74,6 +74,11 @@ the converters/plans, it does not capture a trusted sorted prototype itself.
 
 ## Remaining performance gate
 
+Update: the interrupted build was recovered through lower-memory object
+embedding. A first release screen and independent recovery are now complete;
+see [results and remaining matched-control gate](RELEASE-SCREEN.md). The target
+remains unmet. The paragraph below describes the earlier checkpoint.
+
 One standalone build from the exact upstream main source is in progress at
 this checkpoint. Before any throughput claim: standalone capability/functional
 smoke, then an isolated release measurement with p50/p90/p95/p99 and independent
